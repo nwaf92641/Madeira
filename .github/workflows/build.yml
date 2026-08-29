@@ -5,29 +5,36 @@ on:
   push:
     branches:
       - main
-  pull_request:
 
 permissions:
   contents: read
 
 jobs:
   build:
-    name: Build Madeira iOS
     runs-on: macos-15
 
     steps:
       # ============================================================
       # Checkout
       # ============================================================
-
       - name: Checkout Madeira
         uses: actions/checkout@v4
         with:
           submodules: recursive
           fetch-depth: 0
 
+      - name: Show environment
+        run: |
+          set -euxo pipefail
+
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-path
+          xcrun --sdk iphoneos clang --version
+          cmake --version
+          ninja --version
+          python3 --version
+
       - name: Initialize submodules
-        shell: bash
         run: |
           set -euxo pipefail
 
@@ -35,297 +42,175 @@ jobs:
           git submodule update --init --recursive
 
       # ============================================================
-      # Toolchain
+      # Build FEXCore for iOS ARM64
       # ============================================================
-
-      - name: Show toolchain
-        shell: bash
-        run: |
-          set -euxo pipefail
-
-          sw_vers
-          xcodebuild -version
-          xcrun --sdk iphoneos --show-sdk-path
-          xcrun --sdk iphoneos clang --version
-          cmake --version
-          python3 --version
-          git --version
-
-      - name: Check build scripts
-        shell: bash
-        run: |
-          set -euxo pipefail
-
-          scripts=(
-            build/freetype-ios/build.sh
-            build/gnutls-ios/build.sh
-            build/ntdll-unix/build.sh
-            build/win32u-unix/build.sh
-            build/wineserver/build.sh
-            build/dxmt-ios/build.sh
-            scripts/build-prefix-snapshot.sh
-          )
-
-          for script in "${scripts[@]}"; do
-            if [ ! -f "$script" ]; then
-              echo "MISSING: $script"
-              exit 1
-            fi
-
-            chmod +x "$script"
-            echo "OK: $script"
-          done
-
-      # ============================================================
-      # Host dependencies
-      # ============================================================
-
-      - name: Install build dependencies
-        shell: bash
-        run: |
-          set -euxo pipefail
-
-          brew update
-
-          brew install \
-            cmake \
-            ninja \
-            llvm \
-            pkg-config \
-            python@3
-
-      # ============================================================
-      # FEX
-      #
-      # Madeira uses the iOS/ARM64 FEXCore port.
-      # Build it before verifying the static libraries.
-      # ============================================================
-
       - name: Configure FEXCore
-        shell: bash
         run: |
           set -euxo pipefail
+
+          IOS_SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
 
           mkdir -p FEX/build-ios
 
-          cmake \
-            -S FEX \
-            -B FEX/build-ios \
+          cmake -S FEX -B FEX/build-ios \
             -G Ninja \
             -DCMAKE_SYSTEM_NAME=iOS \
-            -DCMAKE_OSX_SYSROOT="$(xcrun --sdk iphoneos --show-sdk-path)" \
+            -DCMAKE_SYSTEM_PROCESSOR=arm64 \
+            -DCMAKE_OSX_SYSROOT="$IOS_SDK" \
             -DCMAKE_OSX_ARCHITECTURES=arm64 \
             -DCMAKE_OSX_DEPLOYMENT_TARGET=17.0 \
             -DCMAKE_BUILD_TYPE=Release \
             -DBUILD_TESTING=OFF \
-            -DBUILD_STEAM_SUPPORT=ON
+            -DBUILD_STEAM_SUPPORT=ON \
+            -DENABLE_VIXL_DISASSEMBLER=OFF \
+            -DENABLE_VIXL_SIMULATOR=OFF \
+            -DENABLE_ZYDIS=OFF
 
       - name: Build FEXCore
-        shell: bash
         run: |
           set -euxo pipefail
 
           cmake --build FEX/build-ios \
-            --target FEXCore FEXCore_Base JemallocLibs \
-            -j "$(sysctl -n hw.ncpu)"
+            --parallel "$(sysctl -n hw.ncpu)"
 
       # ============================================================
-      # FreeType
+      # Show FEX output
       # ============================================================
-
-      - name: Build FreeType
-        shell: bash
+      - name: Verify FEXCore
         run: |
           set -euxo pipefail
 
-          chmod +x build/freetype-ios/build.sh
+          find FEX/build-ios \
+            -name '*.a' \
+            -type f \
+            -print
+
+      # ============================================================
+      # Build FreeType
+      # ============================================================
+      - name: Build FreeType
+        run: |
+          set -euxo pipefail
+
+          if [ ! -x build/freetype-ios/build.sh ]; then
+            echo "ERROR: build/freetype-ios/build.sh not found"
+            exit 1
+          fi
+
           ./build/freetype-ios/build.sh
 
       # ============================================================
-      # GnuTLS
-      # GMP -> Nettle/Hogweed -> GnuTLS
+      # Build GnuTLS
       # ============================================================
-
-      - name: Prepare GnuTLS sources
-        shell: bash
-        run: |
-          set -euxo pipefail
-
-          mkdir -p build/gnutls-ios/src
-
-          cd build/gnutls-ios/src
-
-          if [ ! -f "gmp-6.3.0.tar.xz" ]; then
-            curl -L \
-              -o gmp-6.3.0.tar.xz \
-              https://gmplib.org/download/gmp/gmp-6.3.0.tar.xz
-          fi
-
-          if [ ! -f "nettle-3.10.1.tar.gz" ]; then
-            curl -L \
-              -o nettle-3.10.1.tar.gz \
-              https://ftp.gnu.org/gnu/nettle/nettle-3.10.1.tar.gz
-          fi
-
-          if [ ! -f "gnutls-3.8.9.tar.xz" ]; then
-            curl -L \
-              -o gnutls-3.8.9.tar.xz \
-              https://www.gnupg.org/ftp/gcrypt/gnutls/v3.8/gnutls-3.8.9.tar.xz
-          fi
-
       - name: Build GnuTLS
-        shell: bash
         run: |
           set -euxo pipefail
 
-          chmod +x build/gnutls-ios/build.sh
+          if [ ! -x build/gnutls-ios/build.sh ]; then
+            echo "ERROR: build/gnutls-ios/build.sh not found"
+            exit 1
+          fi
+
           ./build/gnutls-ios/build.sh
 
       # ============================================================
-      # Wine ntdll Unix
+      # Build ntdll unix
       # ============================================================
-
-      - name: Build ntdll Unix
-        shell: bash
+      - name: Build ntdll unix
         run: |
           set -euxo pipefail
-
-          chmod +x build/ntdll-unix/build.sh
           ./build/ntdll-unix/build.sh
 
       # ============================================================
-      # Wine win32u Unix
+      # Build win32u unix
       # ============================================================
-
-      - name: Build win32u Unix
-        shell: bash
+      - name: Build win32u unix
         run: |
           set -euxo pipefail
-
-          chmod +x build/win32u-unix/build.sh
           ./build/win32u-unix/build.sh
 
       # ============================================================
-      # Wine Server
+      # Build wineserver
       # ============================================================
-
       - name: Build wineserver
-        shell: bash
         run: |
           set -euxo pipefail
-
-          chmod +x build/wineserver/build.sh
-          ./build/wineserver/build.sh all
+          ./build/wineserver/build.sh
 
       # ============================================================
-      # DXMT
-      # DirectX -> Metal
+      # Build DXMT
       # ============================================================
-
-      - name: Build DXMT iOS Unix
-        shell: bash
+      - name: Build DXMT iOS unix
         run: |
           set -euxo pipefail
-
-          chmod +x build/dxmt-ios/build.sh
           ./build/dxmt-ios/build.sh
 
       # ============================================================
       # Verify libraries
       # ============================================================
-
       - name: Verify required libraries
-        shell: bash
         run: |
           set -euxo pipefail
 
+          echo "=== Searching FEX libraries ==="
+
+          find FEX/build-ios \
+            -name '*.a' \
+            -type f \
+            -print
+
+          echo ""
+          echo "=== Required Madeira libraries ==="
+
           required=(
-            "FEX/build-ios/FEXCore/Source/libFEXCore.a"
-            "FEX/build-ios/FEXCore/Source/libFEXCore_Base.a"
-            "FEX/build-ios/FEXCore/Source/libJemallocLibs.a"
-
-            "FEX/build-ios/External/fmt/libfmt.a"
-            "FEX/build-ios/External/cephes/libcephes_128bit.a"
-            "FEX/build-ios/External/xxhash/cmake_unofficial/libxxhash.a"
-            "FEX/build-ios/External/SoftFloat-3e/libsoftfloat_3e.a"
-
             "app/Madeira/libwineserver.a"
             "app/Madeira/libntdll_unix.a"
             "app/Madeira/libwin32u_unix.a"
             "app/Madeira/libdxmt_unix.a"
-
-            "toolchains/gnutls-ios/lib/libgnutls.a"
-            "toolchains/gnutls-ios/lib/libnettle.a"
-            "toolchains/gnutls-ios/lib/libhogweed.a"
-            "toolchains/gnutls-ios/lib/libgmp.a"
-
-            "build/freetype-ios/build/libfreetype.a"
           )
-
-          echo "=== Checking required libraries ==="
 
           for file in "${required[@]}"; do
             if [ ! -f "$file" ]; then
-              echo ""
-              echo "ERROR: Missing:"
-              echo "  $file"
-              echo ""
+              echo "MISSING: $file"
               exit 1
             fi
 
-            echo "OK:"
+            echo "OK: $file"
             ls -lh "$file"
           done
 
       # ============================================================
-      # Inspect architectures
+      # Build prefix snapshot
       # ============================================================
-
-      - name: Verify ARM64 libraries
-        shell: bash
-        run: |
-          set -euxo pipefail
-
-          libraries=(
-            "app/Madeira/libwineserver.a"
-            "app/Madeira/libntdll_unix.a"
-            "app/Madeira/libwin32u_unix.a"
-            "app/Madeira/libdxmt_unix.a"
-            "toolchains/gnutls-ios/lib/libgnutls.a"
-            "build/freetype-ios/build/libfreetype.a"
-          )
-
-          for lib in "${libraries[@]}"; do
-            echo ""
-            echo "=== $lib ==="
-            xcrun lipo -info "$lib" || true
-          done
-
-      # ============================================================
-      # Prefix snapshot
-      # ============================================================
-
       - name: Build prefix snapshot
-        shell: bash
         run: |
           set -euxo pipefail
 
-          chmod +x scripts/build-prefix-snapshot.sh
+          if [ ! -x scripts/build-prefix-snapshot.sh ]; then
+            echo "ERROR: scripts/build-prefix-snapshot.sh not found"
+            exit 1
+          fi
+
           ./scripts/build-prefix-snapshot.sh
+
+      # ============================================================
+      # Verify Xcode project
+      # ============================================================
+      - name: Verify Xcode project
+        run: |
+          set -euxo pipefail
+
+          test -d app/Madeira.xcodeproj
+          test -f app/Madeira.xcodeproj/project.pbxproj
+
+          xcodebuild \
+            -project app/Madeira.xcodeproj \
+            -list
 
       # ============================================================
       # Build Madeira.app
       # ============================================================
-
-      - name: Clean Xcode build directory
-        shell: bash
-        run: |
-          set -euxo pipefail
-
-          rm -rf "$HOME/Library/Developer/Xcode/DerivedData/Madeira-"*
-
       - name: Build Madeira.app
-        shell: bash
         run: |
           set -euxo pipefail
 
@@ -334,122 +219,67 @@ jobs:
             -scheme Madeira \
             -configuration Release \
             -sdk iphoneos \
-            -destination "generic/platform=iOS" \
+            -destination 'generic/platform=iOS' \
+            -arch arm64 \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
             build
 
       # ============================================================
       # Locate app
       # ============================================================
-
       - name: Locate Madeira.app
-        shell: bash
         run: |
           set -euxo pipefail
 
-          APP="$(find "$HOME/Library/Developer/Xcode/DerivedData" \
+          echo "=== Searching for Madeira.app ==="
+
+          find "$HOME/Library/Developer/Xcode/DerivedData" \
             -type d \
-            -path "*/Build/Products/Release-iphoneos/Madeira.app" \
-            -print -quit)"
-
-          if [ -z "$APP" ]; then
-            echo "ERROR: Madeira.app was not found"
-            find "$HOME/Library/Developer/Xcode/DerivedData" \
-              -type d \
-              -name "*.app" \
-              -print
-            exit 1
-          fi
-
-          echo "Madeira app:"
-          echo "$APP"
-
-          echo "MADEIRA_APP=$APP" >> "$GITHUB_ENV"
-
-      # ============================================================
-      # Inspect app
-      # ============================================================
-
-      - name: Inspect Madeira.app
-        shell: bash
-        run: |
-          set -euxo pipefail
-
-          echo "=== App contents ==="
-          find "$MADEIRA_APP" -maxdepth 2 -print
-
-          echo ""
-          echo "=== Main executable ==="
-
-          EXECUTABLE="$MADEIRA_APP/Madeira"
-
-          if [ ! -f "$EXECUTABLE" ]; then
-            echo "ERROR: Madeira executable not found"
-            exit 1
-          fi
-
-          file "$EXECUTABLE"
-
-          xcrun lipo -info "$EXECUTABLE" || true
-
-      # ============================================================
-      # Package .app
-      # ============================================================
-
-      - name: Package Madeira.app
-        shell: bash
-        run: |
-          set -euxo pipefail
-
-          mkdir -p artifacts
-
-          rm -rf artifacts/Madeira.app
-          cp -R "$MADEIRA_APP" artifacts/Madeira.app
-
-          cd artifacts
-
-          zip -qry Madeira.app.zip Madeira.app
+            -name "Madeira.app" \
+            -print
 
       # ============================================================
       # Package IPA
-      #
-      # IPA is simply:
-      #
-      # Payload/
-      #   Madeira.app
-      #
-      # Signing is intentionally disabled above.
       # ============================================================
-
-      - name: Package Madeira IPA
-        shell: bash
+      - name: Create IPA
         run: |
           set -euxo pipefail
 
-          rm -rf ipa
-          mkdir -p ipa/Payload
+          APP="$(
+            find "$HOME/Library/Developer/Xcode/DerivedData" \
+              -type d \
+              -name "Madeira.app" \
+              -print \
+              | head -1
+          )"
 
-          cp -R "$MADEIRA_APP" ipa/Payload/Madeira.app
+          if [ -z "$APP" ]; then
+            echo "ERROR: Madeira.app not found"
+            exit 1
+          fi
 
-          cd ipa
+          echo "Using:"
+          echo "$APP"
 
-          zip -qry ../artifacts/Madeira.ipa Payload
+          rm -rf artifacts
+          mkdir -p artifacts/Payload
 
-          cd ..
+          cp -R "$APP" artifacts/Payload/Madeira.app
 
-          echo "=== IPA ==="
-          ls -lh artifacts/Madeira.ipa
+          cd artifacts
+
+          zip -qry Madeira.ipa Payload
 
           echo ""
-          echo "=== IPA contents ==="
-          unzip -l artifacts/Madeira.ipa | head -100
+          echo "=== IPA CREATED ==="
+          ls -lh Madeira.ipa
 
       # ============================================================
       # Upload IPA
       # ============================================================
-
-      - name: Upload Madeira IPA
+      - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
           name: Madeira-IPA
@@ -458,31 +288,12 @@ jobs:
           retention-days: 7
 
       # ============================================================
-      # Upload .app
+      # Upload app as backup
       # ============================================================
-
       - name: Upload Madeira.app
         uses: actions/upload-artifact@v4
         with:
           name: Madeira-app
-          path: artifacts/Madeira.app.zip
+          path: artifacts/Payload/Madeira.app
           if-no-files-found: error
-          retention-days: 7
-
-      # ============================================================
-      # Upload build logs if something fails
-      # ============================================================
-
-      - name: Upload build diagnostics
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: Madeira-build-diagnostics
-          path: |
-            build/**/*.err
-            build/**/*.log
-            build/**/err-*.txt
-            FEX/build-ios/CMakeCache.txt
-            FEX/build-ios/compile_commands.json
-          if-no-files-found: ignore
-          retention-days: 7
+          retention-days: 7  

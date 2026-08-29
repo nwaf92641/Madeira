@@ -14,16 +14,29 @@ jobs:
     runs-on: macos-15
 
     steps:
+
       # ============================================================
-      # Checkout
+      # CHECKOUT
       # ============================================================
+
       - name: Checkout Madeira
         uses: actions/checkout@v4
         with:
           submodules: recursive
           fetch-depth: 0
 
-      - name: Show environment
+      - name: Initialize submodules
+        run: |
+          set -euxo pipefail
+
+          git submodule sync --recursive
+          git submodule update --init --recursive
+
+      # ============================================================
+      # TOOLCHAIN
+      # ============================================================
+
+      - name: Show toolchain
         run: |
           set -euxo pipefail
 
@@ -34,25 +47,65 @@ jobs:
           ninja --version
           python3 --version
 
-      - name: Initialize submodules
+      # ============================================================
+      # PYTHON DEPENDENCIES
+      # ============================================================
+
+      - name: Install Python dependencies
         run: |
           set -euxo pipefail
 
-          git submodule sync --recursive
-          git submodule update --init --recursive
+          python3 -m pip install --user --upgrade pip
+          python3 -m pip install --user packaging setuptools
+
+          python3 - <<'PY'
+          import packaging
+          print("packaging:", packaging.__version__)
+          PY
 
       # ============================================================
-      # Build FEXCore for iOS ARM64
+      # FEX PATCHES FOR macOS/iOS CONFIGURATION
       # ============================================================
+
+      - name: Prepare FEX for iOS cross compilation
+        run: |
+          set -euxo pipefail
+
+          echo "Preparing FEX..."
+
+          # FEX's NeedDisabledSVE.py expects Linux /proc/cpuinfo.
+          # We are cross compiling on macOS, so provide a harmless
+          # deterministic answer through a temporary replacement.
+
+          cat > FEX/Scripts/NeedDisabledSVE.py <<'PY'
+          import sys
+
+          # iOS ARM64 target.
+          # macOS host has no /proc/cpuinfo, and we don't want host CPU
+          # feature detection to affect the iOS target configuration.
+
+          print("False")
+          sys.exit(0)
+          PY
+
+          echo "FEX preparation complete."
+
+      # ============================================================
+      # FEXCORE
+      # ============================================================
+
       - name: Configure FEXCore
         run: |
           set -euxo pipefail
 
           IOS_SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
 
+          rm -rf FEX/build-ios
           mkdir -p FEX/build-ios
 
-          cmake -S FEX -B FEX/build-ios \
+          cmake \
+            -S FEX \
+            -B FEX/build-ios \
             -G Ninja \
             -DCMAKE_SYSTEM_NAME=iOS \
             -DCMAKE_SYSTEM_PROCESSOR=arm64 \
@@ -61,106 +114,121 @@ jobs:
             -DCMAKE_OSX_DEPLOYMENT_TARGET=17.0 \
             -DCMAKE_BUILD_TYPE=Release \
             -DBUILD_TESTING=OFF \
-            -DBUILD_STEAM_SUPPORT=ON \
+            -DBUILD_STEAM_SUPPORT=OFF \
             -DENABLE_VIXL_DISASSEMBLER=OFF \
             -DENABLE_VIXL_SIMULATOR=OFF \
-            -DENABLE_ZYDIS=OFF
+            -DENABLE_ZYDIS=OFF \
+            -DENABLE_ASSERTIONS=OFF
 
       - name: Build FEXCore
         run: |
           set -euxo pipefail
 
-          cmake --build FEX/build-ios \
+          cmake \
+            --build FEX/build-ios \
             --parallel "$(sysctl -n hw.ncpu)"
 
       # ============================================================
-      # Show FEX output
+      # VERIFY FEX
       # ============================================================
-      - name: Verify FEXCore
+
+      - name: Verify FEX libraries
         run: |
           set -euxo pipefail
 
+          echo "=== FEX static libraries ==="
+
           find FEX/build-ios \
-            -name '*.a' \
             -type f \
+            -name '*.a' \
+            -print
+
+          echo ""
+
+          find FEX/build-ios \
+            -type f \
+            \( \
+              -name 'libFEXCore.a' \
+              -o -name 'libFEXCore_Base.a' \
+              -o -name 'libJemallocLibs.a' \
+              -o -name 'libfmt.a' \
+              -o -name 'libxxhash.a' \
+              -o -name 'libcephes_128bit.a' \
+              -o -name 'libsoftfloat_3e.a' \
+            \) \
             -print
 
       # ============================================================
-      # Build FreeType
+      # FREETYPE
       # ============================================================
+
       - name: Build FreeType
         run: |
           set -euxo pipefail
 
-          if [ ! -x build/freetype-ios/build.sh ]; then
-            echo "ERROR: build/freetype-ios/build.sh not found"
-            exit 1
-          fi
+          test -x build/freetype-ios/build.sh
 
           ./build/freetype-ios/build.sh
 
       # ============================================================
-      # Build GnuTLS
+      # GNUTLS
       # ============================================================
+
       - name: Build GnuTLS
         run: |
           set -euxo pipefail
 
-          if [ ! -x build/gnutls-ios/build.sh ]; then
-            echo "ERROR: build/gnutls-ios/build.sh not found"
-            exit 1
-          fi
+          test -x build/gnutls-ios/build.sh
 
           ./build/gnutls-ios/build.sh
 
       # ============================================================
-      # Build ntdll unix
+      # WINE NTDLL UNIX
       # ============================================================
+
       - name: Build ntdll unix
         run: |
           set -euxo pipefail
+
           ./build/ntdll-unix/build.sh
 
       # ============================================================
-      # Build win32u unix
+      # WINE WIN32U UNIX
       # ============================================================
+
       - name: Build win32u unix
         run: |
           set -euxo pipefail
+
           ./build/win32u-unix/build.sh
 
       # ============================================================
-      # Build wineserver
+      # WINE SERVER
       # ============================================================
+
       - name: Build wineserver
         run: |
           set -euxo pipefail
+
           ./build/wineserver/build.sh
 
       # ============================================================
-      # Build DXMT
+      # DXMT
       # ============================================================
-      - name: Build DXMT iOS unix
+
+      - name: Build DXMT
         run: |
           set -euxo pipefail
+
           ./build/dxmt-ios/build.sh
 
       # ============================================================
-      # Verify libraries
+      # VERIFY MADEIRA LIBRARIES
       # ============================================================
-      - name: Verify required libraries
+
+      - name: Verify Madeira libraries
         run: |
           set -euxo pipefail
-
-          echo "=== Searching FEX libraries ==="
-
-          find FEX/build-ios \
-            -name '*.a' \
-            -type f \
-            -print
-
-          echo ""
-          echo "=== Required Madeira libraries ==="
 
           required=(
             "app/Madeira/libwineserver.a"
@@ -168,6 +236,8 @@ jobs:
             "app/Madeira/libwin32u_unix.a"
             "app/Madeira/libdxmt_unix.a"
           )
+
+          echo "=== Checking Madeira libraries ==="
 
           for file in "${required[@]}"; do
             if [ ! -f "$file" ]; then
@@ -180,23 +250,22 @@ jobs:
           done
 
       # ============================================================
-      # Build prefix snapshot
+      # PREFIX
       # ============================================================
+
       - name: Build prefix snapshot
         run: |
           set -euxo pipefail
 
-          if [ ! -x scripts/build-prefix-snapshot.sh ]; then
-            echo "ERROR: scripts/build-prefix-snapshot.sh not found"
-            exit 1
-          fi
+          test -x scripts/build-prefix-snapshot.sh
 
           ./scripts/build-prefix-snapshot.sh
 
       # ============================================================
-      # Verify Xcode project
+      # XCODE PROJECT
       # ============================================================
-      - name: Verify Xcode project
+
+      - name: Check Xcode project
         run: |
           set -euxo pipefail
 
@@ -208,8 +277,9 @@ jobs:
             -list
 
       # ============================================================
-      # Build Madeira.app
+      # BUILD MADEIRA
       # ============================================================
+
       - name: Build Madeira.app
         run: |
           set -euxo pipefail
@@ -227,28 +297,30 @@ jobs:
             build
 
       # ============================================================
-      # Locate app
+      # FIND APP
       # ============================================================
-      - name: Locate Madeira.app
+
+      - name: Find Madeira.app
         run: |
           set -euxo pipefail
 
-          echo "=== Searching for Madeira.app ==="
-
-          find "$HOME/Library/Developer/Xcode/DerivedData" \
+          find \
+            "$HOME/Library/Developer/Xcode/DerivedData" \
             -type d \
             -name "Madeira.app" \
             -print
 
       # ============================================================
-      # Package IPA
+      # CREATE IPA
       # ============================================================
+
       - name: Create IPA
         run: |
           set -euxo pipefail
 
           APP="$(
-            find "$HOME/Library/Developer/Xcode/DerivedData" \
+            find \
+              "$HOME/Library/Developer/Xcode/DerivedData" \
               -type d \
               -name "Madeira.app" \
               -print \
@@ -256,11 +328,11 @@ jobs:
           )"
 
           if [ -z "$APP" ]; then
-            echo "ERROR: Madeira.app not found"
+            echo "ERROR: Madeira.app was not found"
             exit 1
           fi
 
-          echo "Using:"
+          echo "Found:"
           echo "$APP"
 
           rm -rf artifacts
@@ -273,12 +345,16 @@ jobs:
           zip -qry Madeira.ipa Payload
 
           echo ""
-          echo "=== IPA CREATED ==="
+          echo "======================================"
+          echo "           MADEIRA IPA"
+          echo "======================================"
+
           ls -lh Madeira.ipa
 
       # ============================================================
-      # Upload IPA
+      # UPLOAD IPA
       # ============================================================
+
       - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
@@ -288,12 +364,13 @@ jobs:
           retention-days: 7
 
       # ============================================================
-      # Upload app as backup
+      # UPLOAD APP BACKUP
       # ============================================================
+
       - name: Upload Madeira.app
         uses: actions/upload-artifact@v4
         with:
           name: Madeira-app
           path: artifacts/Payload/Madeira.app
           if-no-files-found: error
-          retention-days: 7  
+          retention-days: 7

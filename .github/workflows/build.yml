@@ -1,525 +1,514 @@
-name: Build Madeira
-
-on:
-  workflow_dispatch:
-  push:
-    branches:
-      - main
-
-permissions:
-  contents: read
-
-jobs:
-  build:
-    runs-on: macos-15
-
-    env:
-      DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
-      IOS_DEPLOYMENT_TARGET: "17.0"
-
-    steps:
-
-      # ============================================================
-      # CHECKOUT
-      # ============================================================
-
-      - name: Checkout Madeira
-        uses: actions/checkout@v4
-        with:
-          submodules: recursive
-          fetch-depth: 0
-
-      # ============================================================
-      # TOOLCHAIN
-      # ============================================================
-
-      - name: Show toolchain
-        shell: bash
-        run: |
-          set -euxo pipefail
-
-          xcodebuild -version
-          xcrun --sdk iphoneos --show-sdk-path
-          xcrun --sdk iphoneos clang --version
-          cmake --version
-          ninja --version
-          python3 --version
-
-      # ============================================================
-      # SUBMODULES
-      # ============================================================
-
-      - name: Initialize submodules
-        shell: bash
-        run: |
-          set -euxo pipefail
-
-          git submodule sync --recursive
-          git submodule update --init --recursive
-
-      # ============================================================
-      # PYTHON VENV
-      # ============================================================
-
-      - name: Setup Python environment
-        shell: bash
-        run: |
-          set -euxo pipefail
-
-          python3 -m venv "$GITHUB_WORKSPACE/.venv"
-
-          source "$GITHUB_WORKSPACE/.venv/bin/activate"
-
-          python -m pip install --upgrade pip setuptools wheel
-          python -m pip install packaging
-
-          echo "$GITHUB_WORKSPACE/.venv/bin" >> "$GITHUB_PATH"
-
-          python --version
-          python -c "import packaging; print('packaging:', packaging.__version__)"
-
-      # ============================================================
-      # VERIFY SOURCE TREE
-      # ============================================================
+env:
+  DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
+  IOS_DEPLOYMENT_TARGET: "17.0"
+
+steps:
+  # ============================================================
+  # CHECKOUT
+  # ============================================================
+
+  - name: Checkout Madeira
+    uses: actions/checkout@v4
+    with:
+      submodules: recursive
+      fetch-depth: 0
+
+  # ============================================================
+  # TOOLCHAIN
+  # ============================================================
+
+  - name: Select Xcode
+    shell: bash
+    run: |
+      set -euxo pipefail
+
+      sudo xcode-select -s "$DEVELOPER_DIR"
+
+      xcodebuild -version
+      xcrun --sdk iphoneos --show-sdk-path
+      xcrun --sdk iphoneos clang --version
+      cmake --version
+      ninja --version
+      python3 --version
+
+  # ============================================================
+  # SUBMODULES
+  # ============================================================
+
+  - name: Initialize submodules
+    shell: bash
+    run: |
+      set -euxo pipefail
+
+      git submodule sync --recursive
+      git submodule update --init --recursive
+
+  # ============================================================
+  # PYTHON
+  # ============================================================
+
+  - name: Create Python virtual environment
+    shell: bash
+    run: |
+      set -euxo pipefail
+
+      python3 -m venv "$GITHUB_WORKSPACE/.venv"
+
+      source "$GITHUB_WORKSPACE/.venv/bin/activate"
+
+      python -m pip install --upgrade pip setuptools wheel
+      python -m pip install packaging
+
+      python -c "import packaging; print(packaging.__version__)"
+
+      echo "$GITHUB_WORKSPACE/.venv/bin" >> "$GITHUB_PATH"
+
+  # ============================================================
+  # SOURCE CHECK
+  # ============================================================
+
+  - name: Verify source tree
+    shell: bash
+    run: |
+      set -euxo pipefail
+
+      required=(
+        "FEX/CMakeLists.txt"
+        "FEX/FEXCore"
+        "FEX/FEXHeaderUtils"
+        "FEX/CodeEmitter"
+        "research/dxmt"
+        "wine"
+        "app/Madeira.xcodeproj"
+        "build/freetype-ios/build.sh"
+        "build/gnutls-ios/build.sh"
+        "build/ntdll-unix/build.sh"
+        "build/win32u-unix/build.sh"
+        "build/wineserver/build.sh"
+        "build/dxmt-ios/build.sh"
+      )
+
+      for item in "${required[@]}"; do
+        test -e "$item"
+        echo "OK: $item"
+      done
+
+  # ============================================================
+  # FREETYPE
+  # ============================================================
+
+  - name: Fetch FreeType
+    shell: bash
+    run: |
+      set -euxo pipefail
+
+      rm -rf research/freetype
+
+      git clone \
+        --depth 1 \
+        --branch VER-2-13-3 \
+        https://github.com/freetype/freetype.git \
+        research/freetype
+
+      test -f research/freetype/CMakeLists.txt
+
+  - name: Build FreeType
+    shell: bash
+    run: |
+      set -euxo pipefail
+
+      chmod +x build/freetype-ios/build.sh
+      ./build/freetype-ios/build.sh
 
-      - name: Verify Madeira source tree
-        shell: bash
-        run: |
-          set -euxo pipefail
+      test -f build/freetype-ios/build/libfreetype.a
 
-          required=(
-            "FEX/CMakeLists.txt"
-            "FEX/FEXCore"
-            "FEX/FEXHeaderUtils"
-            "FEX/CodeEmitter"
-            "research/dxmt"
-            "wine"
-            "app"
-            "build/freetype-ios/build.sh"
-            "build/gnutls-ios/build.sh"
-            "build/ntdll-unix/build.sh"
-            "build/win32u-unix/build.sh"
-            "build/wineserver/build.sh"
-            "build/dxmt-ios/build.sh"
-          )
+  # ============================================================
+  # GNUTLS
+  # ============================================================
+
+  - name: Build GnuTLS
+    shell: bash
+    run: |
+      set -euxo pipefail
+
+      chmod +x build/gnutls-ios/build.sh
+      ./build/gnutls-ios/build.sh
+
+  # ============================================================
+  # FEX ENVIRONMENT
+  #
+  # FEX's configure scripts assume Linux-style /proc/cpuinfo.
+  # macOS runners do not have /proc.
+  #
+  # We provide a deterministic ARM64 cpuinfo file and make the
+  # affected configure scripts consume it when possible.
+  # ============================================================
+
+  - name: Prepare FEX CPU information
+    shell: bash
+    run: |
+      set -euxo pipefail
+
+      mkdir -p "$RUNNER_TEMP/fex"
+
+      cat > "$RUNNER_TEMP/fex/cpuinfo" <<'EOF'
+      processor	: 0
+      BogoMIPS	: 0.00
+      Features	: fp asimd evtstrm aes pmull sha1 sha2 crc32 atomics
+      CPU implementer	: 0x61
+      CPU architecture	: 8
+      CPU variant	: 0x0
+      CPU part	: 0x000
+      CPU revision	: 0
+      EOF
+
+      test -s "$RUNNER_TEMP/fex/cpuinfo"
+
+      echo "FEX_CPUINFO=$RUNNER_TEMP/fex/cpuinfo" >> "$GITHUB_ENV"
+
+  # ============================================================
+  # PATCH ONLY THE BUILD COPY OF FEX
+  #
+  # This does NOT modify the repository permanently.
+  #
+  # The two scripts below hard-code /proc/cpuinfo on Darwin.
+  # Redirect only those reads to our deterministic ARM64 file.
+  # ============================================================
+
+  - name: Prepare FEX configure scripts for macOS
+    shell: bash
+    run: |
+      set -euxo pipefail
+
+      python3 - "$FEX_CPUINFO" <<'PY'
+      import pathlib
+      import sys
+
+      cpuinfo = sys.argv[1]
+
+      files = [
+          pathlib.Path("FEX/Scripts/NeedDisabledSVE.py"),
+          pathlib.Path("FEX/Scripts/aarch64_fit_native.py"),
+      ]
+
+      for path in files:
+          text = path.read_text()
+
+          old = '"/proc/cpuinfo"'
+
+          if old in text:
+              text = text.replace(old, repr(cpuinfo))
+
+          path.write_text(text)
+
+          print("prepared:", path)
+      PY
+
+  # ============================================================
+  # FEX CONFIGURE
+  # ============================================================
+
+  - name: Configure FEXCore
+    shell: bash
+    run: |
+      set -euxo pipefail
+
+      source "$GITHUB_WORKSPACE/.venv/bin/activate"
+
+      IOS_SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
+
+      rm -rf FEX/build-ios
+
+      cmake \
+        -S FEX \
+        -B FEX/build-ios \
+        -G Ninja \
+        -DCMAKE_SYSTEM_NAME=iOS \
+        -DCMAKE_SYSTEM_PROCESSOR=arm64 \
+        -DCMAKE_OSX_SYSROOT="$IOS_SDK" \
+        -DCMAKE_OSX_ARCHITECTURES=arm64 \
+        -DCMAKE_OSX_DEPLOYMENT_TARGET="$IOS_DEPLOYMENT_TARGET" \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DBUILD_TESTING=OFF \
+        -DBUILD_STEAM_SUPPORT=OFF \
+        -DBUILD_FEX_LINUX_TESTS=OFF \
+        -DBUILD_THUNKS=OFF \
+        -DENABLE_VIXL_DISASSEMBLER=OFF \
+        -DENABLE_VIXL_SIMULATOR=OFF \
+        -DENABLE_ZYDIS=OFF \
+        -DENABLE_FEX_ALLOCATOR=OFF \
+        -DENABLE_JEMALLOC_GLIBC_ALLOC=OFF \
+        -DENABLE_CCACHE=OFF
+
+  # ============================================================
+  # BUILD FEXCORE
+  # ============================================================
+
+  - name: Build FEXCore
+    shell: bash
+    run: |
+      set -euxo pipefail
+
+      cmake \
+        --build FEX/build-ios \
+        --target FEXCore FEXCore_Base JemallocLibs \
+        --parallel "$(sysctl -n hw.ncpu)"
+
+  # ============================================================
+  # WINE UNIX LIBRARIES
+  # ============================================================
+
+  - name: Build ntdll unix
+    shell: bash
+    run: |
+      set -euxo pipefail
+
+      chmod +x build/ntdll-unix/build.sh
+      ./build/ntdll-unix/build.sh
+
+  - name: Build win32u unix
+    shell: bash
+    run: |
+      set -euxo pipefail
+
+      chmod +x build/win32u-unix/build.sh
+      ./build/win32u-unix/build.sh
+
+  - name: Build wineserver
+    shell: bash
+    run: |
+      set -euxo pipefail
+
+      chmod +x build/wineserver/build.sh
+      ./build/wineserver/build.sh
+
+  # ============================================================
+  # DXMT
+  # ============================================================
+
+  - name: Build DXMT iOS
+    shell: bash
+    run: |
+      set -euxo pipefail
+
+      chmod +x build/dxmt-ios/build.sh
+      ./build/dxmt-ios/build.sh
+
+  # ============================================================
+  # VERIFY NATIVE OUTPUT
+  # ============================================================
+
+  - name: Verify native libraries
+    shell: bash
+    run: |
+      set -euxo pipefail
+
+      echo "========== FEX =========="
+
+      find FEX/build-ios \
+        -type f \
+        -name "*.a" \
+        -print \
+        | sort
+
+      echo "========== Madeira =========="
+
+      find app/Madeira \
+        -type f \
+        $begin:math:text$ \-name \"\*\.a\" \-o \-name \"\*\.dylib\" $end:math:text$ \
+        -print \
+        | sort || true
+
+      echo "========== FreeType =========="
+
+      test -f build/freetype-ios/build/libfreetype.a
+
+      echo "========== FEXCore =========="
+
+      FEXCORE="$(find FEX/build-ios -type f -name 'libFEXCore.a' -print -quit)"
+      FEXBASE="$(find FEX/build-ios -type f -name 'libFEXCore_Base.a' -print -quit)"
+
+      test -n "$FEXCORE"
+      test -n "$FEXBASE"
+
+      echo "$FEXCORE"
+      echo "$FEXBASE"
+
+      lipo -info "$FEXCORE"
+      lipo -info "$FEXBASE"
+
+  # ============================================================
+  # PREFIX
+  # ============================================================
+
+  - name: Build prefix snapshot
+    shell: bash
+    run: |
+      set -euxo pipefail
+
+      if [ -x scripts/build-prefix-snapshot.sh ]; then
+        ./scripts/build-prefix-snapshot.sh
+      else
+        echo "Prefix snapshot script not present; continuing."
+      fi
+
+  # ============================================================
+  # XCODE PROJECT
+  # ============================================================
+
+  - name: Inspect Xcode project
+    shell: bash
+    run: |
+      set -euxo pipefail
+
+      test -f app/Madeira.xcodeproj/project.pbxproj
+
+      xcodebuild \
+        -project app/Madeira.xcodeproj \
+        -list
+
+  # ============================================================
+  # BUILD APP
+  # ============================================================
+
+  - name: Build Madeira.app
+    shell: bash
+    run: |
+      set -euxo pipefail
+
+      rm -rf build/xcode
 
-          for item in "${required[@]}"; do
-            if [ ! -e "$item" ]; then
-              echo "MISSING: $item"
-              exit 1
-            fi
+      xcodebuild \
+        -project app/Madeira.xcodeproj \
+        -scheme Madeira \
+        -configuration Release \
+        -sdk iphoneos \
+        -destination 'generic/platform=iOS' \
+        -derivedDataPath build/xcode \
+        CODE_SIGNING_ALLOWED=NO \
+        CODE_SIGNING_REQUIRED=NO \
+        ONLY_ACTIVE_ARCH=NO \
+        ARCHS=arm64 \
+        build
+
+  # ============================================================
+  # LOCATE APP
+  # ============================================================
+
+  - name: Locate Madeira.app
+    shell: bash
+    run: |
+      set -euxo pipefail
+
+      APP="$(find build/xcode \
+        -type d \
+        -name "Madeira.app" \
+        -print \
+        -quit)"
 
-            echo "OK: $item"
-          done
-
-      # ============================================================
-      # CLONE FREETYPE
-      #
-      # build/freetype-ios/build.sh explicitly requires:
-      #
-      # research/freetype
-      #
-      # and expects FreeType 2.13.3.
-      # ============================================================
-
-      - name: Fetch FreeType 2.13.3
-        shell: bash
-        run: |
-          set -euxo pipefail
-
-          if [ -d "research/freetype/.git" ]; then
-            echo "FreeType repository already exists."
-
-            cd research/freetype
-
-            git fetch --depth 1 origin \
-              tag VER-2-13-3
-
-            git checkout --force VER-2-13-3
-
-            cd ../..
-
-          elif [ -d "research/freetype" ]; then
-            echo "research/freetype exists but is not a git repository."
-
-            rm -rf research/freetype
-
-            git clone \
-              --depth 1 \
-              --branch VER-2-13-3 \
-              https://github.com/freetype/freetype.git \
-              research/freetype
-
-          else
-            mkdir -p research
-
-            git clone \
-              --depth 1 \
-              --branch VER-2-13-3 \
-              https://github.com/freetype/freetype.git \
-              research/freetype
-          fi
-
-          test -f research/freetype/CMakeLists.txt
-
-          git -C research/freetype rev-parse --short HEAD
-
-      # ============================================================
-      # BUILD FREETYPE
-      # ============================================================
-
-      - name: Build FreeType
-        shell: bash
-        run: |
-          set -euxo pipefail
-
-          chmod +x build/freetype-ios/build.sh
-
-          ./build/freetype-ios/build.sh
-
-          test -f build/freetype-ios/build/libfreetype.a
-
-          ls -lh build/freetype-ios/build/libfreetype.a
-
-      # ============================================================
-      # BUILD GNUTLS
-      # ============================================================
-
-      - name: Build GnuTLS
-        shell: bash
-        run: |
-          set -euxo pipefail
-
-          chmod +x build/gnutls-ios/build.sh
-
-          ./build/gnutls-ios/build.sh
-
-      # ============================================================
-      # BUILD FEXCORE
-      #
-      # Do not enable Steam support.
-      #
-      # FEX's Steam support creates host-side executables and was
-      # responsible for:
-      #
-      # no BUNDLE DESTINATION for MACOSX_BUNDLE executable
-      # ============================================================
-
-      - name: Configure FEXCore
-        shell: bash
-        run: |
-          set -euxo pipefail
-
-          source "$GITHUB_WORKSPACE/.venv/bin/activate"
-
-          IOS_SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
-
-          rm -rf FEX/build-ios
-
-          mkdir -p FEX/build-ios
-
-          cmake \
-            -S FEX \
-            -B FEX/build-ios \
-            -G Ninja \
-            -DCMAKE_SYSTEM_NAME=iOS \
-            -DCMAKE_SYSTEM_PROCESSOR=arm64 \
-            -DCMAKE_OSX_SYSROOT="$IOS_SDK" \
-            -DCMAKE_OSX_ARCHITECTURES=arm64 \
-            -DCMAKE_OSX_DEPLOYMENT_TARGET="$IOS_DEPLOYMENT_TARGET" \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DBUILD_TESTING=OFF \
-            -DBUILD_STEAM_SUPPORT=OFF \
-            -DBUILD_FEX_LINUX_TESTS=OFF \
-            -DBUILD_THUNKS=OFF \
-            -DENABLE_VIXL_DISASSEMBLER=OFF \
-            -DENABLE_VIXL_SIMULATOR=OFF \
-            -DENABLE_ZYDIS=OFF \
-            -DENABLE_FEX_ALLOCATOR=OFF \
-            -DENABLE_JEMALLOC_GLIBC_ALLOC=OFF \
-            -DENABLE_CCACHE=OFF
-
-      # ============================================================
-      # BUILD FEXCORE
-      # ============================================================
-
-      - name: Build FEXCore
-        shell: bash
-        run: |
-          set -euxo pipefail
-
-          cmake \
-            --build FEX/build-ios \
-            --target FEXCore FEXCore_Base JemallocLibs \
-            --parallel "$(sysctl -n hw.ncpu)"
-
-      # ============================================================
-      # BUILD WINE UNIX COMPONENTS
-      # ============================================================
-
-      - name: Build ntdll unix
-        shell: bash
-        run: |
-          set -euxo pipefail
-
-          chmod +x build/ntdll-unix/build.sh
-          ./build/ntdll-unix/build.sh
-
-      - name: Build win32u unix
-        shell: bash
-        run: |
-          set -euxo pipefail
-
-          chmod +x build/win32u-unix/build.sh
-          ./build/win32u-unix/build.sh
-
-      - name: Build wineserver
-        shell: bash
-        run: |
-          set -euxo pipefail
-
-          chmod +x build/wineserver/build.sh
-          ./build/wineserver/build.sh
-
-      # ============================================================
-      # BUILD DXMT
-      # ============================================================
-
-      - name: Build DXMT iOS
-        shell: bash
-        run: |
-          set -euxo pipefail
-
-          chmod +x build/dxmt-ios/build.sh
-          ./build/dxmt-ios/build.sh
-
-      # ============================================================
-      # VERIFY LIBRARIES
-      # ============================================================
-
-      - name: Verify required libraries
-        shell: bash
-        run: |
-          set -euxo pipefail
-
-          echo "========== FEX =========="
-
-          find FEX/build-ios \
-            -type f \
-            -name "*.a" \
-            -print \
-            | sort
-
-          echo "========== Madeira =========="
-
-          find app/Madeira \
-            -type f \
-            \( -name "*.a" -o -name "*.dylib" \) \
-            -print \
-            | sort || true
-
-          echo "========== FreeType =========="
-
-          test -f build/freetype-ios/build/libfreetype.a
-
-          echo "========== Required =========="
-
-          required=(
-            "build/freetype-ios/build/libfreetype.a"
-          )
-
-          for file in "${required[@]}"; do
-            test -f "$file"
-            echo "OK: $file"
-            ls -lh "$file"
-          done
-
-          echo "FEXCore:"
-          find FEX/build-ios -type f -name "libFEXCore.a" -print
-
-          echo "FEXCore_Base:"
-          find FEX/build-ios -type f -name "libFEXCore_Base.a" -print
-
-          test "$(find FEX/build-ios -type f -name 'libFEXCore.a' | wc -l)" -gt 0
-          test "$(find FEX/build-ios -type f -name 'libFEXCore_Base.a' | wc -l)" -gt 0
-
-      # ============================================================
-      # PREFIX
-      # ============================================================
-
-      - name: Build prefix snapshot
-        shell: bash
-        run: |
-          set -euxo pipefail
-
-          if [ -x scripts/build-prefix-snapshot.sh ]; then
-            ./scripts/build-prefix-snapshot.sh
-          else
-            echo "Prefix snapshot script not present."
-          fi
-
-      # ============================================================
-      # XCODE PROJECT
-      # ============================================================
-
-      - name: Verify Xcode project
-        shell: bash
-        run: |
-          set -euxo pipefail
-
-          test -f app/Madeira.xcodeproj/project.pbxproj
-
-          xcodebuild \
-            -project app/Madeira.xcodeproj \
-            -list
-
-      # ============================================================
-      # BUILD MADEIRA
-      # ============================================================
-
-      - name: Build Madeira.app
-        shell: bash
-        run: |
-          set -euxo pipefail
-
-          rm -rf build/xcode
-
-          xcodebuild \
-            -project app/Madeira.xcodeproj \
-            -scheme Madeira \
-            -configuration Release \
-            -sdk iphoneos \
-            -destination 'generic/platform=iOS' \
-            -derivedDataPath build/xcode \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO \
-            ONLY_ACTIVE_ARCH=NO \
-            ARCHS=arm64 \
-            build
-
-      # ============================================================
-      # LOCATE APP
-      # ============================================================
-
-      - name: Locate Madeira.app
-        shell: bash
-        run: |
-          set -euxo pipefail
-
-          APP="$(find build/xcode \
-            -type d \
-            -name "Madeira.app" \
-            -print \
-            -quit)"
-
-          if [ -z "$APP" ]; then
-            echo "ERROR: Madeira.app was not produced."
-            exit 1
-          fi
-
-          echo "Madeira.app:"
-          echo "$APP"
-
-          echo "APP=$APP" >> "$GITHUB_ENV"
-
-          find "$APP" -maxdepth 2 -type f | head -100
-
-      # ============================================================
-      # VERIFY ARM64
-      # ============================================================
-
-      - name: Verify app architecture
-        shell: bash
-        run: |
-          set -euxo pipefail
-
-          test -d "$APP"
-
-          file "$APP/Madeira"
-
-          lipo -info "$APP/Madeira"
-
-      # ============================================================
-      # CREATE IPA
-      # ============================================================
-
-      - name: Create IPA
-        shell: bash
-        run: |
-          set -euxo pipefail
-
-          rm -rf ipa artifacts
-
-          mkdir -p ipa/Payload
-          mkdir -p artifacts
-
-          cp -R "$APP" ipa/Payload/Madeira.app
-
-          cd ipa
-
-          zip -qry ../artifacts/Madeira.ipa Payload
-
-          cd ..
-
-          test -f artifacts/Madeira.ipa
-
-          ls -lh artifacts/Madeira.ipa
-
-      # ============================================================
-      # VERIFY IPA
-      # ============================================================
-
-      - name: Verify IPA
-        shell: bash
-        run: |
-          set -euxo pipefail
-
-          test -f artifacts/Madeira.ipa
-
-          echo "========== IPA CONTENTS =========="
-
-          unzip -l artifacts/Madeira.ipa
-
-          echo "========== VERIFY PAYLOAD =========="
-
-          unzip -l artifacts/Madeira.ipa \
-            | grep -q "Payload/Madeira.app/"
-
-          echo "IPA OK"
-
-      # ============================================================
-      # ALSO CREATE APP ZIP
-      # ============================================================
-
-      - name: Create app archive
-        shell: bash
-        run: |
-          set -euxo pipefail
-
-          cd artifacts
-
-          zip -qry Madeira.app.zip Madeira.app 2>/dev/null || true
-
-      # ============================================================
-      # UPLOAD IPA
-      # ============================================================
-
-      - name: Upload Madeira IPA
-        uses: actions/upload-artifact@v4
-        with:
-          name: Madeira-IPA
-          path: artifacts/Madeira.ipa
-          if-no-files-found: error
-          retention-days: 7
-
-      # ============================================================
-      # UPLOAD APP
-      # ============================================================
-
-      - name: Upload Madeira app
-        uses: actions/upload-artifact@v4
-        with:
-          name: Madeira-app
-          path: artifacts/Madeira.app.zip
-          if-no-files-found: ignore
-          retention-days: 7
+      if [ -z "$APP" ]; then
+        echo "ERROR: Madeira.app was not produced."
+        find build/xcode -maxdepth 6 -type d -name "*.app" -print || true
+        exit 1
+      fi
+
+      echo "APP=$APP" >> "$GITHUB_ENV"
+
+      echo "Found:"
+      echo "$APP"
+
+  # ============================================================
+  # VERIFY APP
+  # ============================================================
+
+  - name: Verify Madeira architecture
+    shell: bash
+    run: |
+      set -euxo pipefail
+
+      test -d "$APP"
+      test -f "$APP/Madeira"
+
+      file "$APP/Madeira"
+      lipo -info "$APP/Madeira"
+
+  # ============================================================
+  # CREATE IPA
+  # ============================================================
+
+  - name: Create IPA
+    shell: bash
+    run: |
+      set -euxo pipefail
+
+      rm -rf ipa artifacts
+
+      mkdir -p ipa/Payload
+      mkdir -p artifacts
+
+      cp -R "$APP" ipa/Payload/Madeira.app
+
+      cd ipa
+
+      zip -qry ../artifacts/Madeira.ipa Payload
+
+      cd ..
+
+      test -f artifacts/Madeira.ipa
+
+      ls -lh artifacts/Madeira.ipa
+
+  # ============================================================
+  # VERIFY IPA
+  # ============================================================
+
+  - name: Verify IPA
+    shell: bash
+    run: |
+      set -euxo pipefail
+
+      test -f artifacts/Madeira.ipa
+
+      unzip -t artifacts/Madeira.ipa
+
+      unzip -l artifacts/Madeira.ipa \
+        | grep -q "Payload/Madeira.app/"
+
+      echo "IPA CREATED SUCCESSFULLY"
+
+  # ============================================================
+  # UPLOAD IPA
+  # ============================================================
+
+  - name: Upload Madeira IPA
+    uses: actions/upload-artifact@v4
+    with:
+      name: Madeira-IPA
+      path: artifacts/Madeira.ipa
+      if-no-files-found: error
+      retention-days: 7
+
+  # ============================================================
+  # ALSO UPLOAD APP
+  # ============================================================
+
+  - name: Create app archive
+    shell: bash
+    run: |
+      set -euxo pipefail
+
+      mkdir -p artifacts
+
+      cd "$(dirname "$APP")"
+
+      ditto -c -k --sequesterRsrc --keepParent \
+        "$(basename "$APP")" \
+        "$GITHUB_WORKSPACE/artifacts/Madeira.app.zip"
+
+  - name: Upload Madeira app
+    uses: actions/upload-artifact@v4
+    with:
+      name: Madeira-app
+      path: artifacts/Madeira.app.zip
+      if-no-files-found: error
+      retention-days: 7

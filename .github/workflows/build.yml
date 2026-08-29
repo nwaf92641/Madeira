@@ -1,0 +1,83 @@
+name: Build Madeira
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-15
+
+    steps:
+      - name: Checkout Madeira
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Select Xcode
+        run: |
+          sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+          xcodebuild -version
+          xcodebuild -showsdks
+
+      - name: Make build scripts executable
+        run: |
+          find build -name build.sh -exec chmod +x {} \;
+          find build -name compile_patched.sh -exec chmod +x {} \; || true
+
+      - name: Build native components
+        shell: bash
+        run: |
+          set -e
+
+          for dir in build/*; do
+            if [ -f "$dir/build.sh" ]; then
+              echo "===== Building $dir ====="
+              (
+                cd "$dir"
+                ./build.sh
+              )
+            fi
+          done
+
+      - name: List Xcode project
+        run: |
+          xcodebuild \
+            -project app/Madeira.xcodeproj \
+            -list
+
+      - name: Build Madeira
+        run: |
+          xcodebuild \
+            -project app/Madeira.xcodeproj \
+            -scheme Madeira \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath build/DerivedData \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            build
+
+      - name: Find Madeira.app
+        run: |
+          find build/DerivedData -name "Madeira.app" -print
+
+      - name: Package IPA
+        run: |
+          mkdir -p Payload
+
+          APP=$(find build/DerivedData -name "Madeira.app" -type d | head -n 1)
+
+          if [ -z "$APP" ]; then
+            echo "Madeira.app was not found"
+            exit 1
+          fi
+
+          cp -R "$APP" Payload/Madeira.app
+          zip -r Madeira.ipa Payload
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: Madeira-IPA
+          path: Madeira.ipa

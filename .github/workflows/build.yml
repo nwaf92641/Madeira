@@ -8,157 +8,74 @@ jobs:
     runs-on: macos-14
 
     steps:
-      - name: Checkout Madeira + submodules
+      - name: Checkout
         uses: actions/checkout@v4
         with:
           submodules: recursive
           fetch-depth: 1
 
-      - name: Show repository layout
-        run: |
-          set -euxo pipefail
-          pwd
-          find . -maxdepth 3 -type f | head -300
-
-      - name: Check Xcode
-        run: |
-          set -euxo pipefail
-          xcodebuild -version
-          xcodebuild -showsdks
-
-      - name: Check FEX
+      - name: Verify project
         run: |
           set -euo pipefail
 
-          echo "Checking ../FEX..."
+          test -f app/Madeira.xcodeproj/project.pbxproj
+          test -f app/Madeira/MadeiraApp.swift
+          test -f app/Madeira/Info.plist
 
-          if [ ! -d "../FEX" ]; then
-            echo "::error::FEX directory is missing at ../FEX"
-            echo "Current directories:"
-            find .. -maxdepth 2 -type d
+          echo "Project OK"
+
+      - name: Check FEX libraries
+        run: |
+          set -euo pipefail
+
+          files=(
+            "FEX/build-ios/FEXCore/Source/libFEXCore.a"
+            "FEX/build-ios/FEXCore/Source/libFEXCore_Base.a"
+            "FEX/build-ios/FEXCore/Source/libJemallocLibs.a"
+            "FEX/build-ios/External/fmt/libfmt.a"
+            "FEX/build-ios/External/cephes/libcephes_128bit.a"
+            "FEX/build-ios/External/xxhash/cmake_unofficial/libxxhash.a"
+            "FEX/build-ios/External/SoftFloat-3e/libsoftfloat_3e.a"
+            "app/Madeira/libwineserver.a"
+            "app/Madeira/libntdll_unix.a"
+            "app/Madeira/libwin32u_unix.a"
+            "app/Madeira/libdxmt_combined.a"
+          )
+
+          missing=0
+
+          for file in "${files[@]}"; do
+            if [ -f "$file" ]; then
+              echo "OK $file"
+            else
+              echo "MISSING $file"
+              missing=1
+            fi
+          done
+
+          if [ "$missing" -ne 0 ]; then
+            echo "Required libraries are missing."
             exit 1
           fi
 
-          REQUIRED=(
-            "../FEX/FEXCore/include"
-            "../FEX/FEXHeaderUtils"
-            "../FEX/CodeEmitter"
-            "../FEX/build-ios"
-            "../FEX/build-ios/FEXCore/Source/libFEXCore.a"
-            "../FEX/build-ios/FEXCore/Source/libFEXCore_Base.a"
-            "../FEX/build-ios/FEXCore/Source/libJemallocLibs.a"
-            "../FEX/build-ios/External/fmt/libfmt.a"
-            "../FEX/build-ios/External/cephes/libcephes_128bit.a"
-            "../FEX/build-ios/External/xxhash/cmake_unofficial/libxxhash.a"
-            "../FEX/build-ios/External/SoftFloat-3e/libsoftfloat_3e.a"
-          )
-
-          for f in "${REQUIRED[@]}"; do
-            if [ ! -e "$f" ]; then
-              echo "::error::Missing: $f"
-              exit 1
-            fi
-          done
-
-          echo "FEX dependencies OK."
-
-      - name: Check Madeira files
-        run: |
-          set -euo pipefail
-
-          cd Madeira
-
-          REQUIRED=(
-            "Madeira.xcodeproj"
-            "Madeira/MadeiraApp.swift"
-            "Madeira/ContentView.swift"
-            "Madeira/FEXBridge.mm"
-            "Madeira/JITAllocator.c"
-            "Madeira/WineProcessBridge.m"
-            "Madeira/WineServerBridge.m"
-            "Madeira/libwineserver.a"
-            "Madeira/libntdll_unix.a"
-            "Madeira/libwin32u_unix.a"
-            "Madeira/libgnutls.a"
-            "Madeira/libhogweed.a"
-            "Madeira/libnettle.a"
-            "Madeira/libgmp.a"
-          )
-
-          for f in "${REQUIRED[@]}"; do
-            if [ ! -e "$f" ]; then
-              echo "::error::Missing Madeira file: $f"
-              exit 1
-            fi
-          done
-
-          # pbxproj expects this exact filename
-          if [ ! -f "Madeira/libdxmt_combined.a" ]; then
-            if [ -f "Madeira/libdxmt_unix.a" ]; then
-              echo "::error::Found libdxmt_unix.a but project expects libdxmt_combined.a"
-              exit 1
-            else
-              echo "::error::Missing libdxmt_combined.a"
-              exit 1
-            fi
-          fi
-
-          echo "Madeira files OK."
-
-      - name: Validate Xcode project
-        working-directory: Madeira
-        run: |
-          set -euxo pipefail
-
-          xcodebuild \
-            -project Madeira.xcodeproj \
-            -list
-
       - name: Build Madeira
-        working-directory: Madeira
         run: |
           set -o pipefail
 
           xcodebuild \
-            -project Madeira.xcodeproj \
+            -project app/Madeira.xcodeproj \
             -scheme Madeira \
             -configuration Release \
             -sdk iphoneos \
             -destination "generic/platform=iOS" \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY="" \
-            clean build \
-            | tee ../xcodebuild.log
+            build \
+            2>&1 | tee xcodebuild.log
 
-      - name: Package IPA
-        run: |
-          set -euxo pipefail
-
-          APP=$(find "$RUNNER_TEMP" "$GITHUB_WORKSPACE" \
-            -type d \
-            -path "*/Release-iphoneos/Madeira.app" \
-            -print -quit)
-
-          if [ -z "$APP" ]; then
-            echo "::error::Madeira.app was not produced"
-            exit 1
-          fi
-
-          mkdir -p Payload
-          cp -R "$APP" Payload/Madeira.app
-
-          zip -r Madeira.ipa Payload
-
-      - name: Upload IPA
-        uses: actions/upload-artifact@v4
-        with:
-          name: Madeira-IPA
-          path: Madeira.ipa
-
-      - name: Upload build log
+      - name: Upload log
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Madeira-build-log
+          name: madeira-build-log
           path: xcodebuild.log

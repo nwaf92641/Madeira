@@ -14,72 +14,66 @@ jobs:
           submodules: recursive
           fetch-depth: 0
 
-      - name: Install dependencies
+      - name: Install build dependencies
         run: |
-          brew update
-          brew install cmake ninja meson python3 pkg-config
+          brew install cmake ninja meson pkg-config python
 
-      - name: Install llvm-mingw
-        run: |
-          git clone --depth 1 https://github.com/mstorsjo/llvm-mingw.git /tmp/llvm-mingw
-
-          cd /tmp/llvm-mingw
-          ./build-all.sh /tmp/llvm-mingw-build
-
-      - name: Locate llvm-mingw
-        run: |
-          find /tmp/llvm-mingw-build -type f \
-            -name 'x86_64-w64-mingw32-clang' \
-            -print
-
-      - name: Prepare Madeira toolchain
-        run: |
-          mkdir -p toolchains
-          cp -R /tmp/llvm-mingw-build toolchains/llvm-mingw-20260421-ucrt-macos-universal
-
-      - name: Verify toolchain
-        run: |
-          TOOLCHAIN="toolchains/llvm-mingw-20260421-ucrt-macos-universal/bin/x86_64-w64-mingw32-clang"
-
-          if [ ! -f "$TOOLCHAIN" ]; then
-            echo "ERROR: llvm-mingw clang was not found:"
-            echo "$TOOLCHAIN"
-            find toolchains -maxdepth 5 -type f | head -200
-            exit 1
-          fi
-
-          chmod +x "$TOOLCHAIN"
-          "$TOOLCHAIN" --version
-
-      - name: Build Madeira
+      - name: Download prebuilt llvm-mingw
         run: |
           set -e
+
+          VERSION=20260421
+          URL="https://github.com/mstorsjo/llvm-mingw/releases/download/${VERSION}/llvm-mingw-${VERSION}-ucrt-macos-universal.tar.xz"
+
+          curl -L --fail --retry 3 "$URL" -o llvm-mingw.tar.xz
+
+          mkdir -p toolchains
+          tar -xf llvm-mingw.tar.xz -C toolchains
+
+          DIR=$(find toolchains -maxdepth 1 -type d -name "llvm-mingw-*" | head -1)
+
+          mv "$DIR" toolchains/llvm-mingw-20260421-ucrt-macos-universal
+
+      - name: Verify llvm-mingw
+        run: |
+          set -e
+
+          TOOLCHAIN="$GITHUB_WORKSPACE/toolchains/llvm-mingw-20260421-ucrt-macos-universal"
+
+          echo "Toolchain:"
+          find "$TOOLCHAIN/bin" -maxdepth 1 -type f | head -30
+
+          test -x "$TOOLCHAIN/bin/x86_64-w64-mingw32-clang"
+
+          "$TOOLCHAIN/bin/x86_64-w64-mingw32-clang" --version
+
+      - name: Build Madeira native components
+        run: |
+          set -e
+
           chmod +x build/*/build.sh 2>/dev/null || true
+          chmod +x build/*/compile_patched.sh 2>/dev/null || true
+
           ./build/d3d11-triangle/build.sh
 
-      - name: Build iOS app
+      - name: Show build result
+        if: always()
         run: |
-          set -e
-          xcodebuild \
-            -project app/Madeira/Madeira.xcodeproj \
-            -scheme Madeira \
-            -sdk iphoneos \
-            -configuration Release \
-            -archivePath "$RUNNER_TEMP/Madeira.xcarchive" \
-            archive
+          echo "=== Built files ==="
+          find . \
+            -type f \
+            \( -name "*.a" -o -name "*.dylib" -o -name "*.framework" -o -name "*.app" \) \
+            -not -path "./.git/*" \
+            | head -200
 
-      - name: Package IPA
-        run: |
-          mkdir -p Payload
-
-          cp -R \
-            "$RUNNER_TEMP/Madeira.xcarchive/Products/Applications/Madeira.app" \
-            Payload/
-
-          zip -r Madeira.ipa Payload
-
-      - name: Upload IPA
+      - name: Upload build artifacts
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Madeira-IPA
-          path: Madeira.ipa
+          name: madeira-build
+          path: |
+            build/**/*.a
+            build/**/*.dylib
+            build/**/*.framework
+            app/**/*.app
+          if-no-files-found: warn    

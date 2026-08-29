@@ -5,9 +5,7 @@ on:
   push:
     branches:
       - main
-
-permissions:
-  contents: read
+  pull_request:
 
 jobs:
   build:
@@ -48,60 +46,182 @@ jobs:
           python3 --version
 
       # ============================================================
-      # PYTHON DEPENDENCIES
+      # PYTHON VENV
+      #
+      # macOS 15 Homebrew Python uses PEP 668.
+      # Never use `pip install --user`.
       # ============================================================
 
-      - name: Install Python dependencies
+      - name: Setup Python environment
+        shell: bash
         run: |
           set -euxo pipefail
 
-          python3 -m pip install --user --upgrade pip
-          python3 -m pip install --user packaging setuptools
+          python3 -m venv "$GITHUB_WORKSPACE/.venv"
 
-          python3 - <<'PY'
+          source "$GITHUB_WORKSPACE/.venv/bin/activate"
+
+          python -m pip install --upgrade pip
+          python -m pip install packaging setuptools
+
+          python - <<'PY'
           import packaging
           print("packaging:", packaging.__version__)
+
+          try:
+              import pkg_resources
+              print("pkg_resources: OK")
+          except Exception as e:
+              print("pkg_resources unavailable:", e)
           PY
 
       # ============================================================
-      # FEX PATCHES FOR macOS/iOS CONFIGURATION
+      # PATCH FEX FOR IOS CROSS BUILD
+      #
+      # The upstream FEX build scripts contain Linux-host assumptions:
+      #
+      #   /proc/cpuinfo
+      #   native CPU detection
+      #   Linux-oriented CPU probing
+      #
+      # Madeira only needs FEXCore on iOS ARM64.
+      #
+      # We therefore bypass the host CPU probing and use a stable
+      # ARM64 target instead.
       # ============================================================
 
-      - name: Prepare FEX for iOS cross compilation
+      - name: Patch FEX for iOS
+        shell: bash
         run: |
           set -euxo pipefail
 
-          echo "Preparing FEX..."
+          FEX_CMAKE="FEX/CMakeLists.txt"
 
-          # FEX's NeedDisabledSVE.py expects Linux /proc/cpuinfo.
-          # We are cross compiling on macOS, so provide a harmless
-          # deterministic answer through a temporary replacement.
+          test -f "$FEX_CMAKE"
 
-          cat > FEX/Scripts/NeedDisabledSVE.py <<'PY'
+          cp "$FEX_CMAKE" "$FEX_CMAKE.original"
+
+          python3 - "$FEX_CMAKE" <<'PY'
           import sys
+          from pathlib import Path
 
-          # iOS ARM64 target.
-          # macOS host has no /proc/cpuinfo, and we don't want host CPU
-          # feature detection to affect the iOS target configuration.
+          path = Path(sys.argv[1])
+          text = path.read_text()
 
-          print("False")
-          sys.exit(0)
+          old = """if (ENABLE_JEMALLOC_GLIBC_ALLOC)
+          # Clang 12.0 fixed the -mcpu=native bug with mixed big.little implementers
+          # Clang can not currently check for native Apple M1 type in hypervisor. Currently disabled
+          check_cxx_compiler_flag("-mcpu=native" COMPILER_SUPPORTS_CPU_TYPE)
+
+          if(COMPILER_SUPPORTS_CPU_TYPE)
+
+          list(APPEND FEX_TUNE_COMPILE_FLAGS "-mcpu=native")
+
+          endif()
+
+          else()
+          execute_process(COMMAND python3 "${PROJECT_SOURCE_DIR}/Scripts/aarch64_fit_native.py" "/proc/cpuinfo" "${CMAKE_CXX_COMPILER_VERSION}"
+          OUTPUT_VARIABLE AARCH64_CPU)
+
+          string(STRIP ${AARCH64_CPU} AARCH64_CPU)
+
+          execute_process(COMMAND python3 "${PROJECT_SOURCE_DIR}/Scripts/NeedDisabledSVE.py"
+          RESULT_VARIABLE NEEDS_SVE_DISABLED)
+
+          if (NEEDS_SVE_DISABLED)
+          message(STATUS "Platform has bugged SVE. Disabling")
+
+          set(AARCH64_CPU "cortex-a78")
+
+          endif()
+
+          check_cxx_compiler_flag("-mcpu=${AARCH64_CPU}" COMPILER_SUPPORTS_CPU_TYPE)
+
+          if(COMPILER_SUPPORTS_CPU_TYPE)
+
+          list(APPEND FEX_TUNE_COMPILE_FLAGS "-mcpu=${AARCH64_CPU}")
+
+          endif()
+
+          endif()
+          """
+
+          new = """if (APPLE OR CMAKE_SYSTEM_NAME STREQUAL "iOS")
+
+          message(STATUS "Madeira iOS build: using fixed ARM64 CPU target")
+
+          set(AARCH64_CPU "cortex-a78")
+
+          check_cxx_compiler_flag("-mcpu=${AARCH64_CPU}" COMPILER_SUPPORTS_CPU_TYPE)
+
+          if(COMPILER_SUPPORTS_CPU_TYPE)
+            list(APPEND FEX_TUNE_COMPILE_FLAGS "-mcpu=${AARCH64_CPU}")
+          endif()
+
+          elseif (ENABLE_JEMALLOC_GLIBC_ALLOC)
+
+          check_cxx_compiler_flag("-mcpu=native" COMPILER_SUPPORTS_CPU_TYPE)
+
+          if(COMPILER_SUPPORTS_CPU_TYPE)
+            list(APPEND FEX_TUNE_COMPILE_FLAGS "-mcpu=native")
+          endif()
+
+          else()
+
+          execute_process(
+            COMMAND python3 "${PROJECT_SOURCE_DIR}/Scripts/aarch64_fit_native.py"
+                    "/proc/cpuinfo"
+                    "${CMAKE_CXX_COMPILER_VERSION}"
+            OUTPUT_VARIABLE AARCH64_CPU
+          )
+
+          string(STRIP "${AARCH64_CPU}" AARCH64_CPU)
+
+          execute_process(
+            COMMAND python3 "${PROJECT_SOURCE_DIR}/Scripts/NeedDisabledSVE.py"
+            RESULT_VARIABLE NEEDS_SVE_DISABLED
+          )
+
+          if (NEEDS_SVE_DISABLED)
+            message(STATUS "Platform has bugged SVE. Disabling")
+            set(AARCH64_CPU "cortex-a78")
+          endif()
+
+          check_cxx_compiler_flag(
+            "-mcpu=${AARCH64_CPU}"
+            COMPILER_SUPPORTS_CPU_TYPE
+          )
+
+          if(COMPILER_SUPPORTS_CPU_TYPE)
+            list(APPEND FEX_TUNE_COMPILE_FLAGS "-mcpu=${AARCH64_CPU}")
+          endif()
+
+          endif()
+          """
+
+          if old not in text:
+              print("ERROR: expected FEX CPU block was not found")
+              sys.exit(1)
+
+          path.write_text(text.replace(old, new))
+
+          print("FEX CMake iOS CPU handling patched successfully")
           PY
 
-          echo "FEX preparation complete."
-
       # ============================================================
-      # FEXCORE
+      # BUILD FEXCORE
       # ============================================================
 
       - name: Configure FEXCore
+        shell: bash
         run: |
           set -euxo pipefail
+
+          source "$GITHUB_WORKSPACE/.venv/bin/activate"
 
           IOS_SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
 
           rm -rf FEX/build-ios
-          mkdir -p FEX/build-ios
 
           cmake \
             -S FEX \
@@ -115,35 +235,48 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release \
             -DBUILD_TESTING=OFF \
             -DBUILD_STEAM_SUPPORT=OFF \
+            -DBUILD_FEX_LINUX_TESTS=OFF \
+            -DBUILD_THUNKS=OFF \
             -DENABLE_VIXL_DISASSEMBLER=OFF \
             -DENABLE_VIXL_SIMULATOR=OFF \
             -DENABLE_ZYDIS=OFF \
-            -DENABLE_ASSERTIONS=OFF
+            -DENABLE_FEX_ALLOCATOR=OFF \
+            -DENABLE_JEMALLOC_GLIBC_ALLOC=OFF \
+            -DENABLE_GDB_SYMBOLS=OFF \
+            -DENABLE_ASSERTIONS=OFF \
+            -DENABLE_ASAN=OFF \
+            -DENABLE_TSAN=OFF \
+            -DENABLE_UBSAN=OFF \
+            -DENABLE_COVERAGE=OFF \
+            -DENABLE_XRAY=OFF \
+            -DENABLE_COMPILE_TIME_TRACE=OFF \
+            -DENABLE_CCACHE=OFF \
+            -DENABLE_LTO=OFF \
+            -DENABLE_OFFLINE_TELEMETRY=OFF \
+            -DTUNE_CPU=cortex-a78 \
+            -DTUNE_ARCH=generic \
+            -DOVERRIDE_VERSION=Madeira \
+            -DOVERRIDE_HASH=Madeira
 
       - name: Build FEXCore
+        shell: bash
         run: |
           set -euxo pipefail
 
           cmake \
             --build FEX/build-ios \
-            --parallel "$(sysctl -n hw.ncpu)"
+            --parallel "$(sysctl -n hw.logicalcpu)"
 
       # ============================================================
       # VERIFY FEX
       # ============================================================
 
-      - name: Verify FEX libraries
+      - name: Verify FEXCore
+        shell: bash
         run: |
           set -euxo pipefail
 
-          echo "=== FEX static libraries ==="
-
-          find FEX/build-ios \
-            -type f \
-            -name '*.a' \
-            -print
-
-          echo ""
+          echo "Searching FEX libraries..."
 
           find FEX/build-ios \
             -type f \
@@ -158,11 +291,15 @@ jobs:
             \) \
             -print
 
+          test -f FEX/build-ios/FEXCore/Source/libFEXCore.a
+          test -f FEX/build-ios/FEXCore/Source/libFEXCore_Base.a
+
       # ============================================================
       # FREETYPE
       # ============================================================
 
       - name: Build FreeType
+        shell: bash
         run: |
           set -euxo pipefail
 
@@ -175,6 +312,7 @@ jobs:
       # ============================================================
 
       - name: Build GnuTLS
+        shell: bash
         run: |
           set -euxo pipefail
 
@@ -183,77 +321,63 @@ jobs:
           ./build/gnutls-ios/build.sh
 
       # ============================================================
-      # WINE NTDLL UNIX
+      # NTDLL UNIX
       # ============================================================
 
       - name: Build ntdll unix
+        shell: bash
         run: |
           set -euxo pipefail
+
+          test -x build/ntdll-unix/build.sh
 
           ./build/ntdll-unix/build.sh
 
       # ============================================================
-      # WINE WIN32U UNIX
+      # WIN32U UNIX
       # ============================================================
 
       - name: Build win32u unix
+        shell: bash
         run: |
           set -euxo pipefail
+
+          test -x build/win32u-unix/build.sh
 
           ./build/win32u-unix/build.sh
 
       # ============================================================
-      # WINE SERVER
+      # WINESERVER
       # ============================================================
 
       - name: Build wineserver
+        shell: bash
         run: |
           set -euxo pipefail
 
-          ./build/wineserver/build.sh
+          test -x build/wineserver/build.sh
+
+          ./build/wineserver/build.sh all
 
       # ============================================================
       # DXMT
       # ============================================================
 
-      - name: Build DXMT
+      - name: Build DXMT iOS
+        shell: bash
         run: |
           set -euxo pipefail
+
+          test -x build/dxmt-ios/build.sh
 
           ./build/dxmt-ios/build.sh
-
-      # ============================================================
-      # VERIFY MADEIRA LIBRARIES
-      # ============================================================
-
-      - name: Verify Madeira libraries
-        run: |
-          set -euxo pipefail
-
-          required=(
-            "app/Madeira/libwineserver.a"
-            "app/Madeira/libntdll_unix.a"
-            "app/Madeira/libwin32u_unix.a"
-            "app/Madeira/libdxmt_unix.a"
-          )
-
-          echo "=== Checking Madeira libraries ==="
-
-          for file in "${required[@]}"; do
-            if [ ! -f "$file" ]; then
-              echo "MISSING: $file"
-              exit 1
-            fi
-
-            echo "OK: $file"
-            ls -lh "$file"
-          done
 
       # ============================================================
       # PREFIX
       # ============================================================
 
       - name: Build prefix snapshot
+        shell: bash
         run: |
           set -euxo pipefail
 
@@ -262,25 +386,54 @@ jobs:
           ./scripts/build-prefix-snapshot.sh
 
       # ============================================================
-      # XCODE PROJECT
+      # VERIFY ALL MADEIRA LIBRARIES
       # ============================================================
 
-      - name: Check Xcode project
+      - name: Verify required libraries
+        shell: bash
         run: |
           set -euxo pipefail
 
-          test -d app/Madeira.xcodeproj
-          test -f app/Madeira.xcodeproj/project.pbxproj
+          required=(
+            "FEX/build-ios/FEXCore/Source/libFEXCore.a"
+            "FEX/build-ios/FEXCore/Source/libFEXCore_Base.a"
+            "FEX/build-ios/External/fmt/libfmt.a"
+            "FEX/build-ios/External/cephes/libcephes_128bit.a"
+            "FEX/build-ios/External/xxhash/cmake_unofficial/libxxhash.a"
+            "FEX/build-ios/External/SoftFloat-3e/libsoftfloat_3e.a"
+            "app/Madeira/libwineserver.a"
+            "app/Madeira/libntdll_unix.a"
+            "app/Madeira/libwin32u_unix.a"
+            "app/Madeira/libdxmt_unix.a"
+          )
 
-          xcodebuild \
-            -project app/Madeira.xcodeproj \
-            -list
+          for file in "${required[@]}"; do
+            if [ ! -f "$file" ]; then
+              echo ""
+              echo "========================================"
+              echo "MISSING REQUIRED LIBRARY"
+              echo "$file"
+              echo "========================================"
+              echo ""
+
+              find "$(dirname "$file" | cut -d/ -f1)" \
+                -type f \
+                -name '*.a' \
+                -print 2>/dev/null || true
+
+              exit 1
+            fi
+
+            echo "OK: $file"
+            ls -lh "$file"
+          done
 
       # ============================================================
-      # BUILD MADEIRA
+      # BUILD MADEIRA APP
       # ============================================================
 
       - name: Build Madeira.app
+        shell: bash
         run: |
           set -euxo pipefail
 
@@ -290,72 +443,88 @@ jobs:
             -configuration Release \
             -sdk iphoneos \
             -destination 'generic/platform=iOS' \
-            -arch arm64 \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
             build
 
       # ============================================================
-      # FIND APP
+      # LOCATE APP
       # ============================================================
 
-      - name: Find Madeira.app
+      - name: Locate Madeira.app
+        shell: bash
         run: |
           set -euxo pipefail
 
-          find \
-            "$HOME/Library/Developer/Xcode/DerivedData" \
+          APP="$(find "$HOME/Library/Developer/Xcode/DerivedData" \
             -type d \
             -name "Madeira.app" \
-            -print
-
-      # ============================================================
-      # CREATE IPA
-      # ============================================================
-
-      - name: Create IPA
-        run: |
-          set -euxo pipefail
-
-          APP="$(
-            find \
-              "$HOME/Library/Developer/Xcode/DerivedData" \
-              -type d \
-              -name "Madeira.app" \
-              -print \
-              | head -1
-          )"
+            -print -quit)"
 
           if [ -z "$APP" ]; then
-            echo "ERROR: Madeira.app was not found"
+            echo "Madeira.app not found"
             exit 1
           fi
+
+          echo "MADEIRA_APP=$APP" >> "$GITHUB_ENV"
 
           echo "Found:"
           echo "$APP"
 
+      # ============================================================
+      # PACKAGE IPA
+      #
+      # An unsigned iOS app is packaged as:
+      #
+      # Payload/Madeira.app
+      #
+      # then Payload is zipped to Madeira.ipa.
+      #
+      # Signing is intentionally NOT done here.
+      # ============================================================
+
+      - name: Package unsigned IPA
+        shell: bash
+        run: |
+          set -euxo pipefail
+
           rm -rf artifacts
           mkdir -p artifacts/Payload
 
-          cp -R "$APP" artifacts/Payload/Madeira.app
+          cp -R "$MADEIRA_APP" artifacts/Payload/Madeira.app
 
-          cd artifacts
+          # Remove existing code signatures if Xcode happened to leave any.
+          find artifacts/Payload/Madeira.app \
+            -type d \
+            -name "_CodeSignature" \
+            -prune \
+            -exec rm -rf {} + || true
 
-          zip -qry Madeira.ipa Payload
+          rm -f artifacts/Madeira.ipa
+
+          (
+            cd artifacts
+            /usr/bin/zip \
+              -qry \
+              Madeira.ipa \
+              Payload
+          )
+
+          test -f artifacts/Madeira.ipa
 
           echo ""
-          echo "======================================"
-          echo "           MADEIRA IPA"
-          echo "======================================"
+          echo "========================================"
+          echo "IPA CREATED"
+          echo "========================================"
 
-          ls -lh Madeira.ipa
+          ls -lh artifacts/Madeira.ipa
 
       # ============================================================
       # UPLOAD IPA
       # ============================================================
 
-      - name: Upload IPA
+      - name: Upload Madeira IPA
         uses: actions/upload-artifact@v4
         with:
           name: Madeira-IPA
@@ -364,13 +533,30 @@ jobs:
           retention-days: 7
 
       # ============================================================
-      # UPLOAD APP BACKUP
+      # ALSO UPLOAD APP FOR DEBUGGING
       # ============================================================
+
+      - name: Package Madeira.app
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          rm -f artifacts/Madeira.app.zip
+
+          (
+            cd artifacts
+            /usr/bin/zip \
+              -qry \
+              Madeira.app.zip \
+              Payload/Madeira.app
+          )
+
+          test -f artifacts/Madeira.app.zip
 
       - name: Upload Madeira.app
         uses: actions/upload-artifact@v4
         with:
           name: Madeira-app
-          path: artifacts/Payload/Madeira.app
+          path: artifacts/Madeira.app.zip
           if-no-files-found: error
           retention-days: 7

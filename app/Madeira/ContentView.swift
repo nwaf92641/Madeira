@@ -805,6 +805,12 @@ final class InputSettings: ObservableObject {
     /// ml649: heavy diagnostics. Default OFF so the shipped default is the fast
     /// path; flip it on only when a run needs to be explainable.
     @Published var diagnostics = false { didSet { madeira_set_diag_enabled(diagnostics ? 1 : 0); save() } }
+    /// ml790: fullscreen game layout, i.e. `LayoutPolicy`'s user toggle.
+    /// Persisted like the rest because it is a preference, not a transient: an
+    /// iPad has no rotation to discover fullscreen with, so re-tapping it every
+    /// launch would be the only chore standing between the user and playing.
+    /// Ignored where immersion is forced (an iPhone in landscape).
+    @Published var immersive = false { didSet { save() } }
 
     /// didSet fires for assignments made in init() because the properties are
     /// already initialised by then; without this the first launch would write
@@ -824,6 +830,7 @@ final class InputSettings: ObservableObject {
             sensAbs  = j["sensAbs"]  as? Double ?? 2.0
             sensRel  = j["sensRel"]  as? Double ?? 2.0
             diagnostics = j["diagnostics"] as? Bool ?? false
+            immersive   = j["immersive"]   as? Bool ?? false
         }
         loading = false
         madeira_set_diag_enabled(diagnostics ? 1 : 0)   // push the restored value down
@@ -831,7 +838,7 @@ final class InputSettings: ObservableObject {
 
     private func save() {
         guard !loading else { return }
-        let j: [String: Any] = ["relative": relative, "sensAbs": sensAbs, "sensRel": sensRel, "diagnostics": diagnostics]
+        let j: [String: Any] = ["relative": relative, "sensAbs": sensAbs, "sensRel": sensRel, "diagnostics": diagnostics, "immersive": immersive]
         guard let d = try? JSONSerialization.data(withJSONObject: j) else { return }
         try? d.write(to: Self.url, options: .atomic)
     }
@@ -863,6 +870,37 @@ struct ContentView: View {
         case unavailable
     }
 
+    /// iPad is a shipping target (TARGETED_DEVICE_FAMILY is "1,2") and is the
+    /// only reason LayoutPolicy needs the idiom: an iPad reports a REGULAR
+    /// vertical size class in both orientations, so before ml790 every iPad was
+    /// pinned to `toolingBody` and the game could not be enlarged past its
+    /// 240pt strip. See AppLayout.swift.
+    private var isPad: Bool { UIDevice.current.userInterfaceIdiom == .pad }
+
+    private var layout: AppLayout {
+        LayoutPolicy.resolve(verticalCompact: vSizeClass == .compact,
+                             isPad: isPad,
+                             userWantsImmersive: input.immersive)
+    }
+
+    /// Whether the immersive layout reserves a strip for its own exit control.
+    ///
+    /// False for an iPhone in landscape, where immersion is forced: there is
+    /// nowhere to return to and the surface stays full-bleed, exactly as it
+    /// always has there. True everywhere else, which is the case an iPad could
+    /// never reach before ml790.
+    private var showImmersiveBar: Bool {
+        layout == .immersive
+            && LayoutPolicy.needsExitAffordance(verticalCompact: vSizeClass == .compact,
+                                                isPad: isPad)
+    }
+
+    /// Mirror the layout onto the shared object the window-level overlays read.
+    private func publishChromeState() {
+        GameChromeState.shared.immersive = (layout == .immersive)
+        GameChromeState.shared.topInset = showImmersiveBar ? GameChromeState.barHeight : 0
+    }
+
     var body: some View {
         /* ml658: was NavigationView, which is deprecated and — the reason this
          * matters — defaults to a SPLIT VIEW on iPad. TARGETED_DEVICE_FAMILY is
@@ -873,10 +911,10 @@ struct ContentView: View {
          * two-column selection behaviour. */
         NavigationStack {
             Group {
-                if vSizeClass == .compact {
-                    landscapeBody
+                if layout == .immersive {
+                    immersiveBody
                 } else {
-                    portraitBody
+                    toolingBody
                 }
             }
             // Rotation destroys/recreates the UIViewRepresentable across
@@ -885,18 +923,41 @@ struct ContentView: View {
             // a fresh placeholder only re-parents the same CAMetalLayer.
             .navigationTitle("Madeira")
             .navigationBarTitleDisplayMode(.inline)
-            .navigationBarHidden(vSizeClass == .compact)
+            .navigationBarHidden(layout == .immersive)
+            .toolbar {
+                // Always declared, never conditional: the immersive layout
+                // hides the whole bar, so this is unreachable there. Taking the
+                // expand action is the ONLY way an iPad reaches fullscreen.
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                        withAnimation(.easeInOut(duration: 0.25)) { input.immersive = true }
+                    } label: {
+                        Image(systemName: "arrow.up.left.and.arrow.down.right")
+                    }
+                    .accessibilityLabel("Play fullscreen")
+                }
+            }
             .onAppear {
+                publishChromeState()
                 jit_install_trap_handler()
                 entitlements = EntitlementStatus.check()
                 logEntitlementStatus()
             }
+            // The window-level touch-controls overlay cannot read this state,
+            // so it is mirrored onto a shared object every time it changes.
+            .onChange(of: layout) { _, _ in publishChromeState() }
+            .onChange(of: showImmersiveBar) { _, _ in publishChromeState() }
         }
     }
 
-    /// Portrait: classic tooling layout — header, badges, 240pt game strip,
-    /// key row, action buttons, log console.
-    private var portraitBody: some View {
+    /// Tooling layout: badge header, a game strip, the key row, action buttons
+    /// and the log console.
+    ///
+    /// Used on an iPhone in portrait and on an iPad in BOTH orientations — the
+    /// latter only until the expand button is tapped. Whenever the space is too
+    /// small for these rows, `immersiveBody` takes over instead.
+    private var toolingBody: some View {
         VStack(spacing: 0) {
             // Readouts sit ABOVE the game strip, closest to the surface they
             // describe: entitlement indicators, then the present/FPS readout,
@@ -962,32 +1023,85 @@ struct ContentView: View {
         }
     }
 
-    /// Landscape: game mode. Full-height 4:3 surface centered (aspect-fit
-    /// happens in MetalBackedView); ALL controls live in the pillarbox
-    /// bars left/right of the game — the window-level surface would cover
-    /// anything drawn over the game area itself. No header/log/nav chrome.
-    private var landscapeBody: some View {
-        GeometryReader { geo in
-            let gameW = min(geo.size.width, geo.size.height * 4.0 / 3.0)
-            let barW = max((geo.size.width - gameW) / 2.0, 44)
-            ZStack {
-                Color.black
-                MadeiraMetalView()
-                // Controls removed for now (ml586): game-only landscape.
-                // The FPS readout stays, pinned in the right pillarbox bar —
-                // the window-level surface covers anything drawn over the
-                // game area itself, so it cannot ride on the game view.
-                HStack(spacing: 0) {
-                    Spacer(minLength: 0)
-                    VStack {
-                        FPSOverlay(compact: true)
-                        Spacer()
+    /// Fullscreen game. The 4:3 surface is aspect-fit and centred (the fit
+    /// happens in MetalBackedView); no header, log or nav chrome.
+    ///
+    /// Reached two ways: an iPhone in landscape, where the tooling rows simply
+    /// do not fit, and any device that turned the expand toggle on — the only
+    /// route an iPad has, since it is never compact vertically.
+    ///
+    /// The exit control lives in a reserved strip ABOVE the surface rather than
+    /// floating over it. That is not a style choice: the surface is a
+    /// window-level view inserted above this hierarchy, so SwiftUI content laid
+    /// over the game rect is invisible. On a 4:3 iPad the surface fills the
+    /// screen and there is no letterbox to hide a button in, so an overlaid
+    /// button would be dead there — exactly the device this is for.
+    private var immersiveBody: some View {
+        VStack(spacing: 0) {
+            if showImmersiveBar { immersiveBar }
+            GeometryReader { geo in
+                let gameW = min(geo.size.width, geo.size.height * 4.0 / 3.0)
+                let barW = max((geo.size.width - gameW) / 2.0, 44)
+                ZStack {
+                    Color.black
+                    MadeiraMetalView()
+                        // Frames measured before the window exists are the
+                        // placeholder's; attaching here re-frames the overlays
+                        // to the real bounds. Rotation re-attaches for the
+                        // same reason.
+                        .onAppear { TouchControlsHost.attach() }
+                        .onReceive(NotificationCenter.default.publisher(
+                            for: UIDevice.orientationDidChangeNotification)) { _ in
+                            TouchControlsHost.attach()
+                        }
+                    if !showImmersiveBar {
+                        // Controls removed for now (ml586): game-only
+                        // landscape. The FPS readout stays, pinned in the right
+                        // pillarbox bar. With a chrome bar present the readout
+                        // moves up into that instead, because a 4:3 device
+                        // leaves no pillarbox to pin it in.
+                        HStack(spacing: 0) {
+                            Spacer(minLength: 0)
+                            VStack {
+                                FPSOverlay(compact: true)
+                                Spacer()
+                            }
+                            .frame(width: barW)
+                        }
                     }
-                    .frame(width: barW)
                 }
             }
         }
-        .ignoresSafeArea()
+        // Forced immersion keeps the old full-bleed behaviour. With a bar, the
+        // top safe area stays respected so the bar is not laid under the
+        // Dynamic Island; only the bottom inset is reclaimed for the game.
+        .ignoresSafeArea(edges: showImmersiveBar ? .bottom : .all)
+        .background(Color.black)
+    }
+
+    /// Chrome strip for the immersive layout: a way out on the left, the live
+    /// readout on the right. Kept to 44pt — enough to hit without a letterbox
+    /// to hide in, small enough that "fullscreen" still means it.
+    private var immersiveBar: some View {
+        HStack(spacing: 10) {
+            Button {
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                withAnimation(.easeInOut(duration: 0.25)) { input.immersive = false }
+            } label: {
+                Image(systemName: "arrow.down.right.and.arrow.up.left")
+                    .font(.system(size: 16, weight: .medium))
+                    .foregroundStyle(.white)
+                    .frame(width: 44, height: 32)
+                    .background(Color.secondary.opacity(0.3))
+                    .cornerRadius(6)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Leave fullscreen")
+            Spacer()
+            FPSOverlay(compact: true)
+        }
+        .padding(.horizontal, 10)
+        .frame(height: GameChromeState.barHeight)
         .background(Color.black)
     }
 
@@ -2620,12 +2734,18 @@ final class TouchControlsModel: ObservableObject {
     /// touch in the window. Nothing responded, and edit mode — whose branch
     /// captured everything — could never be entered to mask it.
     func hitsInteractive(_ p: CGPoint, in bounds: CGRect) -> Bool {
-        // Top bar: two 44pt buttons 10pt apart in play mode, centred, 10pt down.
-        // Padded generously; a few points of slop costs nothing and a missed tap
+        // Top bar: up to three 44pt buttons 10pt apart, centred. Padded
+        // generously; a few points of slop costs nothing and a missed tap
         // costs a build.
-        let barW: CGFloat = 2 * 44 + 10
-        if CGRect(x: bounds.midX - barW / 2 - 10, y: 0,
-                  width: barW + 20, height: 68).contains(p) { return true }
+        //
+        // It starts BELOW the immersive chrome strip, never at y=0: this window
+        // is above the one drawing that strip, so claiming those points would
+        // swallow the taps meant for the exit button and strand the user.
+        let top = GameChromeState.shared.topInset + 10
+        let buttons = editing ? 3 : 2
+        let barW = CGFloat(buttons) * 44 + CGFloat(buttons - 1) * 10
+        if CGRect(x: bounds.midX - barW / 2 - 10, y: top,
+                  width: barW + 20, height: 58).contains(p) { return true }
         guard visible else { return false }
         for c in controls {
             let r = Self.baseDiameter * CGFloat(c.scale) / 2
@@ -2635,6 +2755,32 @@ final class TouchControlsModel: ObservableObject {
         }
         return false
     }
+}
+
+/// Layout state the window-level overlays share with `ContentView`.
+///
+/// `TouchControlsOverlay` and the joystick pad are hosted in their own windows
+/// so they can draw above the Metal surface, which also means they cannot read
+/// any of `ContentView`'s SwiftUI state. They used to infer "the game is on
+/// screen" from `width > height`, which is wrong in one direction that matters:
+/// a device held in portrait with the game fullscreen reported nothing, so
+/// every control vanished. This is the shared answer instead.
+final class GameChromeState: ObservableObject {
+    static let shared = GameChromeState()
+
+    /// Height of the immersive chrome strip. Shared because the touch-controls
+    /// overlay is in another window and must start below it rather than
+    /// drawing over the exit button.
+    static let barHeight: CGFloat = 44
+
+    @Published var immersive = false
+
+    /// Points the immersive layout reserves at the top, 0 when it reserves
+    /// none (tooling, or full-bleed forced immersion). Distinct from
+    /// `immersive` because the overlay's own bar has to move down for the
+    /// chrome strip but must NOT move for a full-bleed landscape, and the two
+    /// are different immersive cases on the same device.
+    @Published var topInset: CGFloat = 0
 }
 
 /// Click-through EXCEPT where a control actually is.
@@ -2649,8 +2795,10 @@ final class ControlsWindow: UIWindow {
         // Edit mode owns the whole screen: drags and the scale pinch must not
         // leak through and swing the camera while you are arranging buttons.
         if m.editing { return super.hitTest(point, with: event) }
-        // Portrait draws nothing here, so it must consume nothing.
-        guard bounds.width > bounds.height else { return nil }
+        // Tooling portrait draws nothing here, so it must consume nothing.
+        // Immersive portrait DOES draw, which is why this is not a plain
+        // orientation test any more.
+        guard GameChromeState.shared.immersive || bounds.width > bounds.height else { return nil }
         guard m.hitsInteractive(point, in: bounds) else { return nil }
         return super.hitTest(point, with: event)
     }
@@ -2687,14 +2835,19 @@ enum TouchControlsHost {
 
 struct TouchControlsOverlay: View {
     @ObservedObject private var m = TouchControlsModel.shared
+    /// ml790: the game is on screen in any orientation once immersive is on, so
+    /// the gate cannot be orientation alone. See GameChromeState.
+    @ObservedObject private var chrome = GameChromeState.shared
     @State private var pinchBase: Double?
 
     var body: some View {
         GeometryReader { geo in
-            // Landscape only; portrait keeps the existing key row and joystick.
-            let landscape = geo.size.width > geo.size.height
+            // Drawn wherever there is a game to control: the immersive layout on
+            // any device and orientation, or the old landscape case. Tooling
+            // portrait keeps the key row instead and needs none of this.
+            let gameZone = chrome.immersive || geo.size.width > geo.size.height
             ZStack(alignment: .top) {
-                if landscape {
+                if gameZone {
                     if m.visible || m.editing {
                         ForEach(m.controls) { c in
                             TouchControlButton(control: c, screen: geo.size)
@@ -2732,7 +2885,9 @@ struct TouchControlsOverlay: View {
                 .transition(.opacity.combined(with: .scale))
             }
         }
-        .padding(.top, 10)
+        // Below the immersive chrome strip when there is one — it holds the
+        // exit button, and this window is above the one drawing it.
+        .padding(.top, chrome.topInset + 10)
         .animation(.easeInOut(duration: 0.22), value: m.editing)
     }
 

@@ -17,6 +17,11 @@
 #     call sites. Both are pure functions with a table of expected values; the
 #     harness only needs swiftc, which a release build has anyway. It skips
 #     (exit 0) rather than fails when no toolchain is present.
+#   - test-app-ui: same idea for LayoutPolicy. That one comparison is what kept
+#     every iPad out of fullscreen, and it is invisible until a device is held.
+#   - check-swift-syntax: `swiftc -parse` every app source. The UI is SwiftUI,
+#     so nothing in it can be type-checked off a Mac; this at least proves the
+#     files parse, which is what a dropped brace costs a build for.
 #
 # Run from the repo root before tagging/packaging a release. Exits non-zero on
 # the first failure.
@@ -33,5 +38,11 @@ tools/check-prefix-template.sh
 echo "== xcode project =="
 tools/check-xcodeproj.py
 
+echo "== swift syntax =="
+tools/check-swift-syntax.sh
+
 echo "== device capabilities =="
 tools/test-device-capabilities.sh
+
+echo "== app layout =="
+tools/test-app-ui.sh

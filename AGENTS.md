@@ -230,9 +230,19 @@ one on-iPad confirmation.
     This catches syntax only, NOT types: a misspelled property still parses.
     `ContentView.swift` needs SwiftUI and cannot be type-checked off-device, so
     type errors there are still caught by nothing until a Mac or a build.
-- No `.github` workflows exist. The gates in `tools/` are run manually (or by
-  whatever CI you add) — nothing runs them automatically, which is how the
-  stale-embedded-script and prefix-symlink bugs shipped.
+- `.github/workflows/gates.yml` runs `tools/check-all.sh` on every push and PR,
+  on `macos-15` because two gates need `swiftc`. It is the only CI.
+- `.github/workflows/ipa.yml` builds an unsigned IPA, but **cannot run on a
+  clean checkout**: 11 of the 15 archives the link step needs are gitignored
+  build products (FEX, wineserver/ntdll/win32u, DXMT) and the three submodules
+  are not checked out. `tools/check-build-inputs.sh` parses the required list
+  out of `project.pbxproj` and reports what is missing and which script makes
+  each one; the workflow runs it first so the failure names the real problem
+  instead of surfacing as `ld: library not found`. It needs a runner whose tree
+  is already built — self-hosted macOS, or the archives published as an asset.
+- `build/wineserver/build.sh` patches an existing `app/Madeira/libwineserver.a`;
+  it does not produce one, and that base archive is gitignored too. There is no
+  script in this repo that builds `libwineserver.a` from scratch.
 - `node` and `python3` are available and are the way to sanity-check
   `madeira-jit.js` (syntax + unit-test the pure helpers).
 - `build/*-tests` ship prebuilt `.exe`/binaries; they are not runnable on the

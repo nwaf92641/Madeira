@@ -1,0 +1,88 @@
+name: ipa
+
+# Builds an UNSIGNED Madeira.ipa for sideloading.
+#
+# Read this before expecting it to work:
+#
+#   Most of what this app links is NOT in the repository. FEX, the wineserver /
+#   ntdll / win32u layer and DXMT are gitignored build products (see
+#   .gitignore, "Compiled libraries"), and the three submodules they come from
+#   are not checked out in the source tree either. tools/check-build-inputs.sh
+#   reports 11 of 15 linked archives missing on a clean clone.
+#
+#   So this workflow CANNOT produce an IPA from a fresh checkout of this repo.
+#   The preflight step below stops it before xcodebuild with a report naming
+#   each missing archive and the script that produces it, instead of letting
+#   ld fail with a wall of "library not found".
+#
+# To make it work, run it on a runner whose working tree already has the
+# archives -- `workflow_dispatch` takes a runner label for exactly that, and a
+# self-hosted runner on a Mac that has already built the app is the realistic
+# choice. Publishing the built archives as a release asset and restoring them
+# before the build would also do it.
+#
+# Why unsigned: this app cannot ship through the App Store (JIT needs a
+# debugger attach), so it is installed by sideloading, and the sideloader signs
+# it with the user's own Apple ID. That re-sign is also where the JIT
+# entitlements have to come from -- see app/Madeira/Madeira.entitlements and
+# note the README's warning that `extended-virtual-addressing` cannot be
+# provisioned by a free Apple ID.
+
+on:
+  workflow_dispatch:
+    inputs:
+      runner:
+        description: >-
+          Runner label. Must be a machine whose working tree has the prebuilt
+          archives (self-hosted macOS), not a clean GitHub runner.
+        required: false
+        default: macos-15
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  unsigned-ipa:
+    name: unsigned ipa
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      # Fails with the real reason before any compiler runs.
+      - name: Preflight -- is this tree linkable?
+        run: tools/check-build-inputs.sh
+
+      - name: Build (unsigned)
+        run: |
+          xcodebuild \
+            -project app/Madeira.xcodeproj \
+            -target Madeira \
+            -configuration Release \
+            -sdk iphoneos \
+            -arch arm64 \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            CONFIGURATION_BUILD_DIR="$PWD/build/unsigned" \
+            build
+
+      - name: Package Payload/Madeira.app into an .ipa
+        run: |
+          set -eu
+          APP=build/unsigned/Madeira.app
+          test -d "$APP" || { echo "no app built at $APP" >&2; exit 1; }
+          rm -rf build/ipa Madeira-unsigned.ipa
+          mkdir -p build/ipa/Payload
+          cp -R "$APP" build/ipa/Payload/
+          ( cd build/ipa && zip -qry "$OLDPWD/Madeira-unsigned.ipa" Payload )
+          ls -lh Madeira-unsigned.ipa
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Madeira-unsigned-ipa
+          path: Madeira-unsigned.ipa
+          if-no-files-found: error

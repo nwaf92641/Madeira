@@ -40,6 +40,17 @@ git clone --recurse-submodules <this repo>
 Note that `FEX`, `wine` and `research/dxmt` are submodules pointing at forks
 containing the iOS work; upstream clones will not build here.
 
+Before shipping a build, run the release gates:
+
+```sh
+tools/check-all.sh
+```
+
+They fail if the JIT script embedded in `StikJITHelper.swift` has drifted from
+`app/Madeira/madeira-jit.js` (that file is not in the Xcode target, so the
+embedded copy is what actually runs — an unregenerated edit silently ships
+nothing) or if `prefix-template.tar.gz` contains absolute host symlinks.
+
 ## License
 
 **GPL-3.0-or-later** — see [`LICENSE`](LICENSE). Derivatives that are

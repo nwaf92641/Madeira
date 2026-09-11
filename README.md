@@ -17,7 +17,8 @@ breaking changes.
 
 ## Requirements
 
-- A non-jailbroken iPhone. Development has been on an A15 (iPhone 13 Pro).
+- A non-jailbroken iPhone or iPad. Development has been on an A15 (iPhone 13
+  Pro); the iPad layout is newer and has had less time on hardware.
 - JIT, which on iOS requires a debugger to attach —
   [StikDebug](https://github.com/0-Blu/StikJIT) is what this project uses.
 - An Apple ID for signing. A free account works; its provisioning profiles
@@ -67,7 +68,7 @@ before it has to evict. That is a plausible win rather than a measured one: it
 has not yet been benchmarked on an A17/A18 or an M-series device. Devices at or
 below 4096 MB behave exactly as before.
 
-Three files in the app's Documents directory override behaviour without a
+Four files in the app's Documents directory override behaviour without a
 rebuild, which matters because installing requires a cable and a debugger:
 
 | File | Effect |
@@ -75,10 +76,54 @@ rebuild, which matters because installing requires a cable and a debugger:
 | `madeira-pool.txt` | JIT pool size in MB (256–3072) |
 | `madeira-resolution.txt` | Desktop size, `WIDTHxHEIGHT` (e.g. `1280x720`) |
 | `madeira-fex.txt` | `KEY=VALUE` lines, exported as `FEX_<KEY>` for the translator |
+| `madeira-gamepad.txt` | Controller: `ENABLED=0`, `MOUSE_SPEED=1.0`, `<BUTTON>=0xNN\|VK0xNN\|LMB\|RMB\|NONE` |
 
-Deleting a file restores the default. Malformed entries in `madeira-fex.txt` are
-reported in the log rather than applied, because a wrong translator setting does
-not fail loudly — it produces a bad run.
+Deleting a file restores the default. Malformed entries in `madeira-fex.txt` and
+`madeira-gamepad.txt` are reported in the log rather than applied, because a
+wrong translator setting does not fail loudly — it produces a bad run.
+
+## Fullscreen and iPad
+
+The app has two layouts: tooling (badge header, a game strip, the key row, the
+log console) and fullscreen (the game surface and nothing else). An iPhone in
+landscape is always fullscreen, because the tooling rows do not fit there. Any
+other configuration — including an iPad in either orientation — shows the
+tooling layout until you tap the expand button in the navigation bar. A 44pt
+strip at the top of the fullscreen layout holds the button that goes back.
+
+iPad support was the point of ml790. Before it, every iPad was locked out of
+fullscreen: the decision was `verticalSizeClass == .compact`, which is true only
+for an iPhone on its side, and an iPad reports `.regular` vertically in both
+orientations. The game ran in a 240pt strip with no way to enlarge it. The app
+also opts out of iPad multitasking, so it is never handed a window too small for
+its tooling rows.
+
+## Controllers
+
+There is no XInput in this build. The guest sees a gamepad only if something on
+the Wine side presents a HID device or an XInput stub, and that work belongs in
+the `wine/` submodule — nothing in this repository does it today. The
+mapping panel's controller tab reflects that: its `.pad` bindings save with your
+layout and do nothing when pressed.
+
+A physical controller is still usable. `GamepadBridge` maps it onto virtual keys
+and relative pointer motion, which is the same path the on-screen buttons and
+the trackpad already use, so any game that accepts keyboard and mouse accepts
+the controller — mouse-look on the right stick included:
+
+| Input | Sends |
+|---|---|
+| Left stick, D-pad | Arrow keys (eight-way, diagonals hold two) |
+| Right stick | Pointer motion (mouse-look) |
+| A | Space |
+| B | Escape |
+| X / Y | Left / right mouse button |
+| LB / RB | Tab / R |
+| LT / RT | Shift / Ctrl |
+| Menu / View | Escape / Tab |
+
+Everything except movement is rebindable in `madeira-gamepad.txt`. A connected
+controller is used by default; set `ENABLED = 0` to stop it.
 
 ## License
 

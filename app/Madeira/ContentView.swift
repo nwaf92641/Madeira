@@ -940,6 +940,11 @@ struct ContentView: View {
             }
             .onAppear {
                 publishChromeState()
+                // Idempotent. Started here rather than in the app delegate so
+                // it cannot post into a Wine session that has not come up yet:
+                // this view exists before any run does, and a controller that
+                // connects early still gets picked up by the connect observer.
+                GamepadBridge.shared.start()
                 jit_install_trap_handler()
                 entitlements = EntitlementStatus.check()
                 logEntitlementStatus()
@@ -3213,8 +3218,15 @@ struct MappingPanel: View {
 
     private var controllerTab: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("XInput isn't wired up yet. These save with your layout but do "
-                 + "nothing when pressed — controller support lands with the Wine HID stack.")
+            Text("XInput is not wired up and cannot be from this side: the guest "
+                 + "sees a gamepad only once Wine presents a HID device or an "
+                 + "XInput stub, and that stack is not in this build. So these "
+                 + "save with your layout but do nothing when pressed.\n\n"
+                 + "A PHYSICAL controller does work. It drives the keyboard and "
+                 + "pointer instead — GamepadBridge — so any game that accepts "
+                 + "keyboard and mouse will accept it. Bindings and an off "
+                 + "switch live in madeira-gamepad.txt in the app's Documents "
+                 + "folder.")
                 .font(.system(size: 11))
                 .foregroundStyle(.orange.opacity(0.95))
                 .fixedSize(horizontal: false, vertical: true)

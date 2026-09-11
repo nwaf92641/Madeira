@@ -37,7 +37,14 @@ on:
           otherwise use a self-hosted macOS machine that already built the app.
         required: false
         default: macos-15
-        type: string
+        # A free-text label was a trap: dispatching with a label that matches no
+        # runner leaves the job queued forever with no error, which is not a
+        # failure anyone can diagnose from the run page.
+        type: choice
+        options:
+          - macos-15
+          - macos-14
+          - self-hosted
       libs_tag:
         description: >-
           Release tag holding madeira-build-libs.tar.gz. Publish it once with

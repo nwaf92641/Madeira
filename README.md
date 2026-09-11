@@ -54,6 +54,29 @@ nothing), if `prefix-template.tar.gz` contains absolute host symlinks, if a
 source file exists without being registered in the Xcode project, or if the
 device-capability policy tables regress.
 
+## Making an IPA
+
+```sh
+scripts/make-ipa.sh                 # -> Madeira-unsigned.ipa
+```
+
+The IPA is deliberately unsigned: JIT needs a debugger to attach, so the app
+cannot go through the App Store, and the sideloader re-signs it with your Apple
+ID — which is also where the JIT entitlements come from.
+
+This has to run on a machine that has already built the app. Most of what the
+link step needs is not in the repository: FEX, the `wineserver`/`ntdll`/`win32u`
+layer and DXMT are gitignored build products, and the submodules they come from
+are empty in a clean clone. On a fresh checkout 11 of the 15 required archives
+are missing and the app cannot be linked at all. `tools/check-build-inputs.sh`
+parses that list out of the Xcode project and reports what is missing and which
+`build/*/build.sh` produces it; `make-ipa.sh` runs it first so the failure is
+the real one rather than `ld: library not found`.
+
+`.github/workflows/ipa.yml` runs the same script. Because of the above it only
+succeeds on a self-hosted runner whose tree has already been built, so it takes
+a runner label.
+
 ## Per-device tuning
 
 The emulator was developed on an A15, but the guest translator is not pinned to

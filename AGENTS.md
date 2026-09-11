@@ -232,14 +232,18 @@ one on-iPad confirmation.
     type errors there are still caught by nothing until a Mac or a build.
 - `.github/workflows/gates.yml` runs `tools/check-all.sh` on every push and PR,
   on `macos-15` because two gates need `swiftc`. It is the only CI.
-- `.github/workflows/ipa.yml` builds an unsigned IPA, but **cannot run on a
-  clean checkout**: 11 of the 15 archives the link step needs are gitignored
-  build products (FEX, wineserver/ntdll/win32u, DXMT) and the three submodules
-  are not checked out. `tools/check-build-inputs.sh` parses the required list
-  out of `project.pbxproj` and reports what is missing and which script makes
-  each one; the workflow runs it first so the failure names the real problem
-  instead of surfacing as `ld: library not found`. It needs a runner whose tree
-  is already built — self-hosted macOS, or the archives published as an asset.
+- `scripts/make-ipa.sh` builds and packages the unsigned `Madeira-unsigned.ipa`.
+  It runs `tools/check-build-inputs.sh` first, because a clean clone cannot be
+  linked. `--output`, `--configuration`, `--keep-build`.
+- `.github/workflows/ipa.yml` builds an unsigned IPA by calling the same script,
+  but **cannot run on a clean checkout**: 11 of the 15 archives the link step
+  needs are gitignored build products (FEX, wineserver/ntdll/win32u, DXMT) and
+  the three submodules are not checked out. `tools/check-build-inputs.sh`
+  parses the required list out of `project.pbxproj` and reports what is missing
+  and which script makes each one; it runs first so the failure names the real
+  problem instead of surfacing as `ld: library not found`. The workflow needs a
+  runner whose tree is already built — self-hosted macOS, or the archives
+  published as an asset.
 - `build/wineserver/build.sh` patches an existing `app/Madeira/libwineserver.a`;
   it does not produce one, and that base archive is gitignored too. There is no
   script in this repo that builds `libwineserver.a` from scratch.

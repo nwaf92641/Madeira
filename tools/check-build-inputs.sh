@@ -98,6 +98,7 @@ def linked_archives(pbxproj_text):
 
 def main():
     quiet = "--quiet" in sys.argv
+    listing = "--list" in sys.argv
     with open(PBXPROJ, encoding="utf-8") as fh:
         archives = linked_archives(fh.read())
 
@@ -105,6 +106,15 @@ def main():
     for base, path in sorted(set(archives)):
         target = os.path.normpath(os.path.join(GROUP_DIR, path))
         (present if os.path.exists(target) else missing).append((base, target))
+
+    # --list prints the required paths relative to the repo root, one per line.
+    # scripts/publish-build-libs.sh tars exactly this set and the IPA workflow
+    # restores it, so the list has one definition instead of three. Relative,
+    # because tar and the restore step both run from the repo root.
+    if listing:
+        for _base, path in sorted(set(archives)):
+            print(os.path.relpath(os.path.normpath(os.path.join(GROUP_DIR, path)), ROOT))
+        return 0
 
     submodules = []
     for name in ("FEX", "wine", "research/dxmt"):
@@ -139,6 +149,12 @@ def main():
         print("  clone cannot build this app; see build/dxmt-ios/README.md for the")
         print("  DXMT toolchain, and note that build/wineserver/build.sh patches a")
         print("  prebuilt app/Madeira/libwineserver.a rather than producing one.")
+        print("")
+        print("  To make CI work, publish them once from a Mac that already builds")
+        print("  the app:")
+        print("      scripts/publish-build-libs.sh")
+        print("  .github/workflows/ipa.yml restores that asset on an ordinary")
+        print("  macOS runner.")
         return 1
 
     if not quiet:

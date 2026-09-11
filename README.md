@@ -73,9 +73,25 @@ parses that list out of the Xcode project and reports what is missing and which
 `build/*/build.sh` produces it; `make-ipa.sh` runs it first so the failure is
 the real one rather than `ld: library not found`.
 
-`.github/workflows/ipa.yml` runs the same script. Because of the above it only
-succeeds on a self-hosted runner whose tree has already been built, so it takes
-a runner label.
+`.github/workflows/ipa.yml` runs the same script, unsigned, and uploads the
+result as an artifact. It needs the archives too, so it supports two modes:
+
+1. **Hosted runner.** Publish the archives once from a Mac that already builds
+   the app:
+
+   ```sh
+   scripts/publish-build-libs.sh
+   ```
+
+   That uploads `madeira-build-libs.tar.gz` to a `build-libs` release, which the
+   workflow restores before building. Re-publish whenever the toolchain or the
+   core commit changes, or the IPA links a stale core against new app code.
+
+2. **Self-hosted runner.** Pass `runner: self-hosted` to use a macOS machine
+   whose tree is already built.
+
+To dispatch the workflow it has to exist on the default branch, so merge this
+branch into `main` first.
 
 ## Per-device tuning
 

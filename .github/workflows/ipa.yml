@@ -3,22 +3,26 @@ name: ipa
 # Builds an UNSIGNED Madeira.ipa by calling scripts/make-ipa.sh -- the same
 # script you run locally, so CI and a local build cannot drift.
 #
-# Read this before expecting it to work on a GitHub-hosted runner:
+# Important: most of what this app links is NOT in the repository. FEX, the
+# wineserver / ntdll / win32u layer and DXMT are gitignored build products (see
+# .gitignore, "Compiled libraries"), and the three submodules they come from are
+# empty in a clean clone. On a fresh checkout 11 of the 15 required archives are
+# absent and the link step cannot run at all.
 #
-#   Most of what this app links is NOT in the repository. FEX, the wineserver /
-#   ntdll / win32u layer and DXMT are gitignored build products (see
-#   .gitignore, "Compiled libraries"), and the three submodules they come from
-#   are empty in a clean clone. On a fresh checkout the link step cannot run at
-#   all: 11 of the 15 required archives are absent.
+# Two ways to satisfy that, both supported here:
 #
-#   So this workflow only succeeds on a runner whose working tree has already
-#   been built -- a self-hosted Mac that has built the app. That is what the
-#   `runner` input is for. A GitHub-hosted runner will stop at the preflight in
-#   make-ipa.sh, which names each missing archive and the script that produces
-#   it, instead of failing inside ld.
+#   1. Publish the archives once from a Mac that already builds the app:
+#        scripts/publish-build-libs.sh
+#      That uploads madeira-build-libs.tar.gz to a `build-libs` release, and the
+#      restore step below unpacks it. An ordinary macos-15 runner then works.
+#      Re-publish when the toolchain or the core commit changes, or the IPA
+#      links a stale core against new app code.
 #
-#   Publishing the built archives as a release asset and restoring them before
-#   the build is the other way to make this work on a hosted runner.
+#   2. Run on a self-hosted macOS runner whose tree is already built, via the
+#      `runner` input.
+#
+# With neither, scripts/make-ipa.sh stops at its preflight and names each
+# missing archive and the script that produces it, instead of failing inside ld.
 #
 # Why unsigned: this app cannot ship through the App Store (JIT needs a debugger
 # attach), so it is sideloaded, and the sideloader re-signs it with the user's
@@ -29,10 +33,18 @@ on:
     inputs:
       runner:
         description: >-
-          Runner label. Must be a machine whose tree has the prebuilt archives
-          (self-hosted macOS), or a hosted runner will stop at the preflight.
+          Runner label. macos-15 works once the build-libs release exists;
+          otherwise use a self-hosted macOS machine that already built the app.
         required: false
         default: macos-15
+        type: string
+      libs_tag:
+        description: >-
+          Release tag holding madeira-build-libs.tar.gz. Publish it once with
+          scripts/publish-build-libs.sh. If it is absent, the preflight stops
+          the build and names every archive that is missing.
+        required: false
+        default: build-libs
         type: string
 
 permissions:
@@ -47,6 +59,25 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+
+      # Most of what the link step needs is gitignored, so it has to come from
+      # somewhere. The release asset is that somewhere. If it is missing this is
+      # left as a no-op and the preflight in make-ipa.sh reports the real gap.
+      - name: Restore prebuilt archives
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if gh release download "${{ inputs.libs_tag }}" \
+               --repo "${{ github.repository }}" \
+               --pattern madeira-build-libs.tar.gz --clobber 2>/dev/null; then
+            echo "Restored madeira-build-libs.tar.gz"
+            tar xzf madeira-build-libs.tar.gz
+          else
+            echo "No '${{ inputs.libs_tag }}' release asset in ${{ github.repository }}."
+            echo "Publish it with scripts/publish-build-libs.sh on a built Mac,"
+            echo "or run this on a self-hosted runner whose tree is already built."
+          fi
 
       - name: Build and package
         run: scripts/make-ipa.sh --output Madeira-unsigned.ipa

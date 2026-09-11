@@ -49,7 +49,36 @@ tools/check-all.sh
 They fail if the JIT script embedded in `StikJITHelper.swift` has drifted from
 `app/Madeira/madeira-jit.js` (that file is not in the Xcode target, so the
 embedded copy is what actually runs — an unregenerated edit silently ships
-nothing) or if `prefix-template.tar.gz` contains absolute host symlinks.
+nothing), if `prefix-template.tar.gz` contains absolute host symlinks, if a
+source file exists without being registered in the Xcode project, or if the
+device-capability policy tables regress.
+
+## Per-device tuning
+
+The emulator was developed on an A15, but the guest translator is not pinned to
+it: `xtajit64.dll` reads the real chip's features at runtime. What *was* fixed
+to the development device is the allocation the app makes before Wine starts.
+
+`DeviceCapabilities` derives the JIT translation-cache size from the device's
+jetsam budget. It stays at exactly 896 MB at or below the A15's 4096 MB budget —
+the only configuration that has been validated on hardware — and scales up to
+1792 MB on devices with more memory, so the cache can hold more translated code
+before it has to evict. That is a plausible win rather than a measured one: it
+has not yet been benchmarked on an A17/A18 or an M-series device. Devices at or
+below 4096 MB behave exactly as before.
+
+Three files in the app's Documents directory override behaviour without a
+rebuild, which matters because installing requires a cable and a debugger:
+
+| File | Effect |
+|---|---|
+| `madeira-pool.txt` | JIT pool size in MB (256–3072) |
+| `madeira-resolution.txt` | Desktop size, `WIDTHxHEIGHT` (e.g. `1280x720`) |
+| `madeira-fex.txt` | `KEY=VALUE` lines, exported as `FEX_<KEY>` for the translator |
+
+Deleting a file restores the default. Malformed entries in `madeira-fex.txt` are
+reported in the log rather than applied, because a wrong translator setting does
+not fail loudly — it produces a bad run.
 
 ## License
 

@@ -1154,7 +1154,9 @@ struct ContentView: View {
                     // render), -console (Steam's own log → our stderr). Steam
                     // WILL try to self-update through our GnuTLS stack — that
                     // attempt is itself an informative S0 re-test.
-                    let deskW = 1024, deskH = 768
+                    // ml787: override channel; defaults unchanged (see
+                    // DeviceCapabilities.desktopResolution).
+                    let (deskW, deskH) = DeviceCapabilities.desktopResolution(fallback: (1024, 768))
                     // ml589: find Steam and (re)write the launch batch. Returns
                     // false — having logged why — when there is nothing to run.
                     guard prepareSteamLaunch() else { return }
@@ -1426,7 +1428,7 @@ struct ContentView: View {
                     // Known risk: if shellwindows_init beats services.exe's
                     // RPC_Init, OpenSCManager fails → watch whether that
                     // fails fast or hits the RaiseException→CS wedge again.
-                    let deskW = 960, deskH = 540
+                    let (deskW, deskH) = DeviceCapabilities.desktopResolution(fallback: (960, 540))
                     setenv("MADEIRA_EXE", "explorer.exe", 1)
                     setenv("MADEIRA_ARGS",
                            "/desktop=shell,\(deskW)x\(deskH) C:\\windows\\system32\\services.exe", 1)
@@ -1849,13 +1851,41 @@ struct ContentView: View {
             // so it can be swapped between runs without a rebuild, and deleting
             // the file reverts to the proven default. Clamped to sane values --
             // a typo here would otherwise move the VA floor with it.
-            var poolSizeMB = 896
+            // ml787: that 896 is the A15's number, not necessarily this
+            // device's. Derive it from the measured jetsam budget so a device
+            // with more memory gets a proportionally larger translation cache
+            // instead of the development device's; see DeviceCapabilities for
+            // the ratio and its bounds. At or below a 4096MB budget this
+            // returns exactly 896, so the whole previously-validated device set
+            // is unchanged.
+            logStore.log("Device: \(DeviceCapabilities.summary())")
+            var poolSizeMB = DeviceCapabilities.recommendedPoolMB()
             if let d = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first,
                let txt = try? String(contentsOf: d.appendingPathComponent("madeira-pool.txt"), encoding: .utf8),
                let mb = Int(txt.trimmingCharacters(in: .whitespacesAndNewlines)),
-               mb >= 256, mb <= 1152 {
+               mb >= 256, mb <= 3072 {
                 poolSizeMB = mb
                 logStore.log("JIT pool overridden to \(mb)MB via madeira-pool.txt")
+            }
+            // ml787: FEX config passthrough. Documents/madeira-fex.txt holds
+            // KEY=VALUE pairs -- one per line, or comma-separated -- each
+            // exported as FEX_<KEY>. The translator's own switches (TSO
+            // lowering, cache sizing, block JIT) are compiled-in defaults today,
+            // so A/B-ing one meant a rebuild per run, and the chip where it
+            // matters most is the one the developer may not own. Same
+            // no-rebuild channel as madeira-dxmt.txt on the renderer side.
+            // Parsing (and its rules) live in DeviceCapabilities, where they
+            // are unit-tested rather than re-derived at each call site.
+            if let txt = documentsFile("madeira-fex.txt") {
+                let config = DeviceCapabilities.fexConfigEntries(from: txt)
+                for (key, value) in config.applied {
+                    setenv(key, value, 1)
+                    logStore.log("FEX config: \(key)=\(value) via madeira-fex.txt")
+                }
+                for entry in config.rejected {
+                    logStore.log("FEX config: skipped malformed entry \"\(entry)\" "
+                                 + "in madeira-fex.txt (want KEY=VALUE)", level: .error)
+                }
             }
             // ml694: W^X A/B switch. Documents/madeira-wx.txt containing "0"
             // disables page demotion for the SAME binary, so the on/off

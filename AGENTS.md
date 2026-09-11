@@ -50,7 +50,11 @@ tools/jit-script-sync.py            # check (exit 1 if drifted)
 
 This is enforced by `tools/check-all.sh`, which is the pre-release gate. Run it
 before shipping. (Same idea as `tools/check-prefix-template.sh`, which exists
-because the prefix template once shipped absolute host symlinks.)
+because the prefix template once shipped absolute host symlinks, and
+`tools/check-xcodeproj.py`, which exists because a source file that is not
+registered in the Sources phase is silently not part of the app — invisible on
+any machine that cannot open Xcode. `tools/test-device-capabilities.sh` covers
+the JIT pool and override-parser policy; see Build / test constraints.)
 
 ## JIT lifecycle (app 896 MB pool)
 
@@ -109,16 +113,26 @@ No. The gameplay translator does not use the hardcoded A15 block. Evidence:
 - Nothing sets `FEX_HOSTFEATURES` or `FEX_FORCESVEWIDTH`. Core count is not
   pinned either — Wine derives `peb->NumberOfProcessors` from the host.
 
-What *does* make every device behave alike, and is the real lever to pull:
+What *does* make every device behave alike, and is the real lever to pull. As of
+ml787 the first two have a device-aware default plus a no-rebuild override:
 
-- Desktop resolution is hardcoded: `1024x768` (`ContentView.swift:1157`) and
-  `960x540` for the services path (`:1429`). Pixel work is therefore identical
-  on an A15 and an A18, so a faster GPU buys nothing.
-- The JIT pool is a fixed `896 MB` (`ContentView.swift:1852`), so the
-  translation cache is the same size regardless of device RAM.
+- Desktop resolution was hardcoded: `1024x768` (`ContentView.swift:1159`) and
+  `960x540` for the services path (`:1431`). Pixel work was therefore identical
+  on an A15 and an A18, so a faster GPU bought nothing. The defaults are still
+  those two — they are load-bearing for window fitting and unvalidated
+  elsewhere — and `Documents/madeira-resolution.txt` (`WIDTHxHEIGHT`) overrides
+  them per run.
+- The JIT pool was a fixed `896 MB` (`ContentView.swift:1862`), so the
+  translation cache was the same size regardless of device RAM.
+  `DeviceCapabilities.recommendedPoolMB()` now derives it from the measured
+  jetsam budget: exactly 896 MB at or below the 4096 MB budget of the device
+  this was developed against (so nothing already validated moves), scaling
+  above it and capping at 1792 MB. `Documents/madeira-pool.txt` still overrides.
 - FEX has no per-microarchitecture tuning; it targets an ARMv8 baseline plus
   detected features. A15→A18 ISA gains are minor, so the translator gains
-  little from the newer part.
+  little from the newer part. What switches exist are compiled in, so
+  `Documents/madeira-fex.txt` exports `KEY=VALUE` pairs as `FEX_<KEY>` — the
+  same no-rebuild channel as `madeira-dxmt.txt` on the renderer side.
 
 To confirm on-device, read the startup log line the fork emits:
 `FEX: HostFeatures={} (ml538: ...)`. Identical content on two different chips
@@ -127,8 +141,11 @@ would be the smoking gun; it should differ.
 ## Build / test constraints in this environment
 
 - The iOS app builds only with `xcodebuild` on macOS. There is no Linux build.
-- No Swift toolchain here, so Swift changes cannot be compile-checked; review
-  carefully and keep edits minimal.
+- Swift can still be *checked* without a Mac: `tools/test-device-capabilities.sh`
+  installs nothing, adapts the one Apple-only import, shims `sysctl`, type-checks
+  `DeviceCapabilities.swift` and asserts the pool/override policy tables. It
+  covers that file only — `ContentView.swift` needs SwiftUI and cannot be
+  compiled off-device, so changes there still need careful review.
 - No `.github` workflows exist. The gates in `tools/` are run manually (or by
   whatever CI you add) — nothing runs them automatically, which is how the
   stale-embedded-script and prefix-symlink bugs shipped.

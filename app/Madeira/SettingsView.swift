@@ -150,19 +150,41 @@ struct SettingsView: View {
             Toggle(isOn: $store.settings.clampCompressedMips) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Clamp compressed mip levels")
-                    Text("Sets d3d11.mipClampBC. This GPU cannot sample block-compressed "
-                        + "textures directly, so DXMT expands them at 2–8× their shipped "
-                        + "size; clamping bounds how much of the mip chain is expanded.")
+                    Text("Sets d3d11.mipClampBC. On a GPU that cannot sample "
+                        + "block-compressed textures, DXMT expands them to "
+                        + "uncompressed at 2–8× their shipped size and this bounds "
+                        + "how much of the mip chain is expanded. On a GPU that "
+                        + "*can* sample them it only costs detail, so check the "
+                        + "startup log: `[gpu-caps] ml709 BC=1` means leave it off.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
+
+            Picker("MetalFX upscaling", selection: $store.settings.metalFXUpscale) {
+                ForEach(MetalFXUpscale.allCases) { step in
+                    Text(step.label).tag(step)
+                }
+            }
+            if let presented = store.settings.presentedResolution {
+                Text("Rendered at \(store.settings.width)×\(store.settings.height), "
+                    + "presented at \(presented.width)×\(presented.height).")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         } header: {
             Text("Graphics")
         } footer: {
-            Text("Leave off unless a title is running out of memory. It trades texture "
-                + "sharpness at distance for headroom.")
+            Text("Upscaling is the GPU-side trade: the title keeps rendering at the "
+                + "desktop size in Profile, and MetalFX scales the finished image up "
+                + "to the panel. Shading fewer pixels is the saving; the upscale pass "
+                + "costs real GPU time but far less than shading another million, and "
+                + "it is sharper than the display's own stretch. Pair it with a smaller "
+                + "desktop — 960×540 at 2× presents 1920×1080. Devices without MetalFX "
+                + "spatial scaling (older than A14) ignore it and present normally."
+                + "\n\nMip clamping is a memory workaround and stays separate for that "
+                + "reason: leave it off unless a title is running out of memory.")
         }
     }
 

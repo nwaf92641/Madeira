@@ -403,6 +403,9 @@ static void *wine_process_thread(void *arg) {
             const char *verbose = getenv("MADEIRA_DEBUG_VERBOSE");
             if (verbose && *verbose && *verbose != '0') {
                 setenv("WINEDEBUG", "err+all,fixme+all,warn+module,warn+file,trace+process,trace+module,trace+loaddll,trace+loadorder,trace+win,trace+user32,trace+syscall,trace+file", 1);
+                /* The renderer's own logger is separate from Wine's, so a debug
+                 * run must clear a level a previous run in this process set. */
+                unsetenv("DXMT_LOG_LEVEL");
                 LOG("WINEDEBUG = verbose (MADEIRA_DEBUG_VERBOSE set)");
             } else {
                 /* err+all keeps real failure messages, but subtract err+virtual
@@ -429,6 +432,27 @@ static void *wine_process_thread(void *arg) {
                     setenv("WINEDEBUG", "err+all,err-virtual", 1);
                     LOG("WINEDEBUG = err+all,err-virtual (perf default — set MADEIRA_DEBUG_VERBOSE=1 for full trace)");
                 }
+                /* ml803: WINEDEBUG does not reach the renderer's own logger.
+                 *
+                 * DXMT resolves __wine_dbg_output in ntdll and writes every
+                 * warn/info line through it, which bypasses Wine's channel
+                 * filtering entirely -- so a run with WINEDEBUG=-all still
+                 * formats a string, takes a mutex and writes to stderr for
+                 * every "unsupported format"-style warning, and those warnings
+                 * are per-occurrence, so they land in the middle of a frame.
+                 * DXMT_LOG_LEVEL is its own gate: the level names are
+                 * trace/debug/info/warn/error/none and the default is info.
+                 *
+                 * Asking for a silent log means the renderer too, but errors
+                 * stay: they are the lines that explain a black screen.
+                 *
+                 * Cleared in the other branch as well -- this environment
+                 * outlives a run, so the level must follow the setting rather
+                 * than reflect whichever run set it last. */
+                if ([body isEqualToString:@"-all"])
+                    setenv("DXMT_LOG_LEVEL", "error", 1);
+                else
+                    unsetenv("DXMT_LOG_LEVEL");
             }
         }
 

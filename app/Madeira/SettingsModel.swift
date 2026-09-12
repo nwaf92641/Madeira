@@ -258,6 +258,50 @@ enum EngineSwitches {
     ]
 }
 
+/// How far the renderer is allowed to upscale before the picture reaches the
+/// panel.
+///
+/// This is the one renderer knob that is about spending the *GPU* rather than
+/// saving the CPU. DXMT renders the title at the desktop size and, with this on,
+/// runs MetalFX spatial upscaling over the result, so `960x540` can be presented
+/// at `1920x1080`. The pixels the title shades stay at 960x540 — that is the
+/// saving — while the upscale pass is cheap next to shading another 1.5 million
+/// of them, and far sharper than the compositor's own bilinear stretch to the
+/// panel. It is a trade, not free speed: the upscale pass costs real GPU time,
+/// so it belongs with a smaller desktop rather than on top of a large one.
+///
+/// Only Apple GPUs that implement MetalFX spatial scaling (A14 and later, all
+/// M-series) can do it. DXMT checks that itself and falls back to a plain
+/// present on anything older, so this is safe to leave on everywhere.
+enum MetalFXUpscale: Int, CaseIterable, Identifiable, Codable, Hashable {
+    case off = 0
+    case x1_33 = 1
+    case x1_5 = 2
+    case x2 = 3
+
+    var id: Int { rawValue }
+
+    /// The value written as `d3d11.metalSpatialUpscaleFactor`. DXMT clamps it
+    /// with `max(factor, 1.0)`, so 1.0 is exactly the behaviour of `off`.
+    var factor: Double {
+        switch self {
+        case .off: return 1.0
+        case .x1_33: return 1.33
+        case .x1_5: return 1.5
+        case .x2: return 2.0
+        }
+    }
+
+    var label: String {
+        switch self {
+        case .off: return "Off"
+        case .x1_33: return "1.33×"
+        case .x1_5: return "1.5×"
+        case .x2: return "2×"
+        }
+    }
+}
+
 /// Everything the settings screen can change.
 ///
 /// Pure data: no UserDefaults, no UIKit. `overrideFiles` is the whole contract
@@ -277,6 +321,10 @@ struct MadeiraSettings: Equatable, Codable {
     var poolMB: Int = 0
     /// Clamp the expanded mip chain for block-compressed textures.
     var clampCompressedMips: Bool = false
+    /// MetalFX spatial upscaling of the rendered image. Off by default: it is a
+    /// GPU-side trade rather than a saving, and it only pays off alongside a
+    /// desktop the panel would otherwise stretch badly.
+    var metalFXUpscale: MetalFXUpscale = .off
     /// The on-screen controller. Defaults to on, because it exists to replace
     /// the system keyboard and a user who has to find the switch first has not
     /// been helped.
@@ -310,7 +358,7 @@ struct MadeiraSettings: Equatable, Codable {
     private enum CodingKeys: String, CodingKey {
         case width, height, frameRate, poolMB, clampCompressedMips
         case virtualPad, virtualPadOpacity, remoteHost, remoteToken, switches
-        case x87FastMath, disableWineLogging
+        case x87FastMath, disableWineLogging, metalFXUpscale
     }
 
     /// Decode with every field defaulted.
@@ -335,6 +383,7 @@ struct MadeiraSettings: Equatable, Codable {
         switches = try c.decodeIfPresent(Set<String>.self, forKey: .switches) ?? []
         x87FastMath = try c.decodeIfPresent(Bool.self, forKey: .x87FastMath) ?? false
         disableWineLogging = try c.decodeIfPresent(Bool.self, forKey: .disableWineLogging) ?? false
+        metalFXUpscale = try c.decodeIfPresent(MetalFXUpscale.self, forKey: .metalFXUpscale) ?? .off
     }
 
     static let empty = MadeiraSettings()
@@ -380,6 +429,16 @@ struct MadeiraSettings: Equatable, Codable {
         ResolutionPolicy.clamped(width: width, height: height)
     }
 
+    /// What the panel actually receives when MetalFX is on: the desktop the
+    /// title renders at, multiplied by the upscale factor. Nil when there is
+    /// nothing to say — no explicit desktop, or no upscaling — so the settings
+    /// screen shows a real pair of numbers or none at all.
+    var presentedResolution: (width: Int, height: Int)? {
+        guard metalFXUpscale != .off, let rendered = resolution else { return nil }
+        return (Int((Double(rendered.width) * metalFXUpscale.factor).rounded()),
+                Int((Double(rendered.height) * metalFXUpscale.factor).rounded()))
+    }
+
     /// Remote Metal is only meaningful with both halves of the credential.
     var remoteMetalConfigured: Bool {
         !remoteHost.trimmingCharacters(in: .whitespaces).isEmpty
@@ -410,9 +469,17 @@ struct MadeiraSettings: Equatable, Codable {
         // option worth surfacing: this GPU cannot sample block-compressed textures,
         // so they are expanded at 2-8x their shipped size, and clamping the mip
         // chain is what bounds that cost. The file only exists while it is on.
+        //
+        // MetalFX goes through the same file, but needs a second half: DXMT gates
+        // the scaler on DXMT_METALFX_SPATIAL_SWAPCHAIN and would ignore the factor
+        // without it. The launch sequence derives that variable from this text
+        // (DeviceCapabilities.dxmtConfigArmsMetalFX) so the two cannot drift.
         var dxmt: [String] = []
         if clampCompressedMips {
             dxmt.append("d3d11.mipClampBC=1")
+        }
+        if metalFXUpscale != .off {
+            dxmt.append("d3d11.metalSpatialUpscaleFactor=\(metalFXUpscale.factor)")
         }
         files.append(("madeira-dxmt.txt", dxmt.isEmpty ? nil : dxmt.joined(separator: "\n")))
 

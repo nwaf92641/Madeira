@@ -276,6 +276,61 @@ check("x87 writes no other file",
       body(fast, "madeira-resolution.txt") == nil
           && body(fast, "madeira-dxmt.txt") == nil, true)
 
+// MetalFX: the factor goes in the DXMT config, and the launch sequence derives
+// the separate environment variable from that same text. The renderer ignores
+// the factor without the variable, so the pair has to agree.
+print("MetalFX upscaling:")
+check("off writes no dxmt key", body(.empty, "madeira-dxmt.txt"), nil)
+check("off presents nothing", MadeiraSettings().presentedResolution == nil, true)
+
+var fx = MadeiraSettings()
+fx.width = 960
+fx.height = 540
+fx.metalFXUpscale = .x2
+check("2x writes the factor",
+      body(fx, "madeira-dxmt.txt"), "d3d11.metalSpatialUpscaleFactor=2.0")
+check("2x presents the panel size",
+      fx.presentedResolution.map { "\($0.width)x\($0.height)" } ?? "nil", "1920x1080")
+// The parser that turns this text into DXMT_METALFX_SPATIAL_SWAPCHAIN lives in
+// DeviceCapabilities, where it has its own table in
+// test-device-capabilities.sh. This side only has to prove the writer produces
+// text the reader accepts, which that table pins down.
+fx.metalFXUpscale = .x1_5
+check("1.5x writes its own factor",
+      body(fx, "madeira-dxmt.txt"), "d3d11.metalSpatialUpscaleFactor=1.5")
+check("1.5x presents a rounded panel size",
+      fx.presentedResolution.map { "\($0.width)x\($0.height)" } ?? "nil", "1440x810")
+check("1.33x presents a rounded panel size", {
+    var f = MadeiraSettings()
+    f.width = 1280
+    f.height = 720
+    f.metalFXUpscale = .x1_33
+    guard let p = f.presentedResolution else { return "nil" }
+    return "\(p.width)x\(p.height)"
+}(), "1702x958")
+// Both renderer keys share one file; the order is what the log line reads as.
+fx.metalFXUpscale = .x2
+fx.clampCompressedMips = true
+check("both renderer keys land in one file",
+      body(fx, "madeira-dxmt.txt"),
+      "d3d11.mipClampBC=1\nd3d11.metalSpatialUpscaleFactor=2.0")
+
+// Upscaling is deliberately outside the preset, like the pool and the pad: the
+// picker compares only the fields a profile owns, so turning upscaling on
+// cannot make it claim a preset the other fields do not spell, and applying a
+// preset cannot change the upscaling the user chose.
+var fxProfile = MadeiraSettings()
+fxProfile.metalFXUpscale = .x2
+fxProfile.apply(.performance)
+check("applying a profile leaves upscaling alone", fxProfile.metalFXUpscale, .x2)
+check("and upscaling does not disturb the profile match",
+      fxProfile.matchingProfile, .performance)
+
+let fxRoundTrip = try? JSONDecoder().decode(MadeiraSettings.self,
+                                            from: JSONEncoder().encode(fx))
+check("the upscaling choice survives a save and load",
+      fxRoundTrip?.metalFXUpscale ?? .off, .x2)
+
 // A settings blob from a build that predates the new keys must still decode.
 // The synthesized decoder demands every key, and SettingsStore treats a throw
 // as "no saved settings" — so a decode failure silently resets the user's
@@ -288,6 +343,7 @@ check("and keeps its desktop size", legacyDecoded?.width ?? -1, 1280)
 check("and keeps its pool", legacyDecoded?.poolMB ?? -1, 512)
 check("and keeps its mip clamp", legacyDecoded?.clampCompressedMips ?? false, true)
 check("and defaults the new switches", legacyDecoded?.x87FastMath ?? true, false)
+check("and defaults MetalFX off", legacyDecoded?.metalFXUpscale ?? .x2, .off)
 // The fields it did carry must be read back faithfully, so its clamp keeps it
 // out of the Quality preset rather than being quietly dropped on load.
 check("and does not read as a preset", legacyDecoded?.matchingProfile ?? nil, nil)

@@ -165,6 +165,163 @@ enum DeviceCapabilities {
         return (applied, rejected)
     }
 
+    /// Does a `madeira-dxmt.txt` body ask for MetalFX upscaling?
+    ///
+    /// DXMT gates its MetalFX spatial scaler on the `DXMT_METALFX_SPATIAL_SWAPCHAIN`
+    /// environment variable and reads the *factor* from `DXMT_CONFIG`, so the
+    /// documented option is inert on its own: a user who writes
+    /// `d3d11.metalSpatialUpscaleFactor=1.5` into the file gets nothing, silently,
+    /// because the two halves arrive through different channels. The launch
+    /// sequence asks this function and exports the variable to match, which makes
+    /// the file channel whole and the Settings toggle possible.
+    ///
+    /// True only for a value above 1.0: DXMT clamps the factor with
+    /// `max(factor, 1.0)`, so `=1` means "no upscale" and arming the variable for
+    /// it would take the scaler path to do a 1:1 blit and nothing else.
+    ///
+    /// The split accepts both separators because it is called with either form:
+    /// the raw file body, which is one option per line, or the folded inline
+    /// form from `dxmtConfigInline`, which is what actually reaches DXMT (it
+    /// splits on `;`). A comment line cannot match either way, since DXMT's
+    /// config grammar has no comments and the leading `#` is not part of the key.
+    static func dxmtConfigArmsMetalFX(_ text: String) -> Bool {
+        for entry in text.split(whereSeparator: { $0 == "\n" || $0 == ";" }) {
+            let parts = entry.split(separator: "=", maxSplits: 1,
+                                    omittingEmptySubsequences: false)
+            guard parts.count == 2 else { continue }
+            let key = parts[0].trimmingCharacters(in: .whitespaces)
+            guard key == "d3d11.metalSpatialUpscaleFactor" else { continue }
+            let value = parts[1].trimmingCharacters(in: .whitespaces)
+            if let factor = Double(value), factor > 1.0 { return true }
+        }
+        return false
+    }
+
+    /// Fold a `madeira-dxmt.txt` body into the single line DXMT expects in
+    /// `DXMT_CONFIG`.
+    ///
+    /// The file is written one option per line, which is what a person reading
+    /// it in the Files app needs, but DXMT's inline form is not line-based: it
+    /// splits the variable on `;` and its parser takes one `key=value` per
+    /// chunk, ending the value at the first whitespace. Handed the file
+    /// verbatim, the first line is applied and every line after it is discarded
+    /// without a word -- so the moment a second option was added to this file,
+    /// it would silently do nothing. Joining on `;` is the whole translation.
+    static func dxmtConfigInline(_ text: String) -> String {
+        text.split(whereSeparator: { $0 == "\n" || $0 == ";" })
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+            .joined(separator: ";")
+    }
+
+    // MARK: - Renderer caches
+
+    /// Where DXMT keeps its compiled shaders, and why it is not where it
+    /// defaults to.
+    ///
+    /// DXMT compiles every shader twice: DXBC to AIR through its own
+    /// LLVM-based translator, then AIR to a Metal library. Both halves are
+    /// expensive, and both are cached keyed by the shader's SHA-1 -- but the
+    /// cache's default location is a path relative to
+    /// `_CS_DARWIN_USER_CACHE_DIR`, i.e. `Library/Caches`, which iOS is free to
+    /// empty whenever the device is short of storage and never restores. A
+    /// title with a few thousand shaders pays for that in load time, and again
+    /// as a multi-second hitch the first time each effect appears on screen.
+    ///
+    /// Application Support is the correct home for data that is regenerable but
+    /// must persist: iOS does not purge it. It *is* backed up, and a
+    /// compiled-shader database can reach hundreds of megabytes, so the
+    /// directory is excluded from backup explicitly.
+    ///
+    /// DXMT treats a path beginning with `/` as an absolute directory and
+    /// appends `shaders_<version>.db` to it itself, which is why this hands back
+    /// a directory rather than a file.
+    enum DXMTShaderCache {
+        static let directoryName = "DXMT"
+        static let pathVariable = "DXMT_SHADER_CACHE_PATH"
+
+        /// The directory, whether or not it exists yet. Nil only when the
+        /// container has no Application Support directory to point at.
+        static func directoryURL() -> URL? {
+            FileManager.default.urls(for: .applicationSupportDirectory,
+                                     in: .userDomainMask).first?
+                .appendingPathComponent(directoryName, isDirectory: true)
+        }
+
+        /// Create the directory and return its absolute path for the
+        /// environment, or nil if it could not be prepared. A nil answer means
+        /// the caller leaves the variable unset, so DXMT falls back to its own
+        /// default instead of being pointed at a directory that is not there --
+        /// which would disable the cache entirely rather than relocate it.
+        static func preparedPath() -> String? {
+            guard let url = directoryURL() else { return nil }
+            do {
+                try FileManager.default.createDirectory(at: url,
+                                                        withIntermediateDirectories: true)
+            } catch {
+                return nil
+            }
+            // Darwin-only: corelibs-foundation has no URL resource values, and
+            // the off-device gate compiles this file, so it must not be a
+            // reference the Linux toolchain cannot resolve.
+            #if canImport(Darwin)
+            var scoped = url
+            try? scoped.setResourceValue(true, forKey: .isExcludedFromBackupKey)
+            #endif
+            return url.path
+        }
+
+        /// SQLite's file header. Its presence is the whole test below.
+        private static let sqliteMagic = Data("SQLite format 3\0".utf8)
+
+        /// Delete any shader database in `directory` that is not a readable
+        /// SQLite file, and return the names removed.
+        ///
+        /// DXMT opens the database read-only for lookups and treats a failure to
+        /// open as "no cache": every shader then misses and is recompiled. That
+        /// is the right failure mode, but it is not a self-healing one -- the
+        /// bad file is simply ignored forever. In the default location that
+        /// matters little, because iOS eventually empties Library/Caches and the
+        /// next launch starts clean. A directory that survives by design has no
+        /// such reset, so a database truncated by a jetsam kill mid-write (the
+        /// normal way this app dies, per the JIT-pool notes) would silently cost
+        /// a recompile of every shader on every launch from then on.
+        ///
+        /// A header check is enough to catch exactly that case: a partial write
+        /// leaves either nothing or a short/invalid header, and no valid SQLite
+        /// file starts with anything else. Anything unreadable is deleted, which
+        /// is safe because every byte in this directory is derived from the
+        /// game's own shaders and can be rebuilt.
+        @discardableResult
+        static func discardUnreadableDatabases(in directory: URL) -> [String] {
+            let fm = FileManager.default
+            guard let entries = try? fm.contentsOfDirectory(at: directory,
+                                                            includingPropertiesForKeys: nil)
+            else { return [] }
+            var discarded: [String] = []
+            for entry in entries {
+                let name = entry.lastPathComponent
+                guard name.hasPrefix("shaders_"), name.hasSuffix(".db") else { continue }
+                let header = try? FileHandle(forReadingFrom: entry)
+                let magic = header.map { handle -> Data in
+                    defer { try? handle.close() }
+                    return (try? handle.read(upToCount: sqliteMagic.count)) ?? Data()
+                }
+                if magic != sqliteMagic {
+                    // DXMT runs the database in WAL mode, so the file is only
+                    // part of it: a fresh database left next to a stale write-ahead
+                    // log is how this ends up failing again on the next launch.
+                    // The -lock file is a plain flock target and can stay.
+                    for suffix in ["", "-wal", "-shm"] {
+                        try? fm.removeItem(at: directory.appendingPathComponent(name + suffix))
+                    }
+                    discarded.append(name)
+                }
+            }
+            return discarded.sorted()
+        }
+    }
+
     // MARK: - Reporting
 
     /// One-line device summary. A bug report that includes this says which

@@ -262,6 +262,63 @@ The user-facing half of the same work lives in Settings → Performance:
   "no saved settings" — so adding a field used to silently reset the user's
   choices. Adding one is now a compatible change; keep it that way.
 
+### The D3D11 (DXMT) lever surface
+
+The renderer is a submodule (`research/dxmt` → `willfaust/dxmt`, `ios-port`), so
+a change there needs a fork push, a rebuild of four PE DLLs and a device run.
+The levers reachable from the app are these, and the traps in each:
+
+- **`madeira-dxmt.txt` is NOT line-based, whatever the file looks like.** DXMT
+  reads `DXMT_CONFIG` as inline `key=value` chunks split on `;`, and its parser
+  takes one option per chunk with the value ending at the first whitespace.
+  Handed a multi-line file verbatim it applies the *first* line and drops the
+  rest in silence. `DeviceCapabilities.dxmtConfigInline` folds the file into the
+  inline form before it becomes the environment; keep the file one-option-per-
+  line (that is what a person reading it in the Files app needs) and let the
+  normalizer do the translation. This was invisible while the file held exactly
+  one option and would have broken the moment it held two.
+- **MetalFX upscaling needs two channels.** `d3d11.metalSpatialUpscaleFactor`
+  alone does nothing: DXMT gates the spatial scaler on
+  `DXMT_METALFX_SPATIAL_SWAPCHAIN`. The launch sequence derives that variable
+  from the same text via `DeviceCapabilities.dxmtConfigArmsMetalFX` (true only
+  above 1.0, because DXMT clamps to `max(factor, 1.0)` and arming at 1 buys a
+  1:1 blit), which also makes a hand-edited file work. It is a GPU-side *trade*,
+  not free speed: the title keeps rendering at the desktop size and MetalFX
+  scales the finished image up, so it pays off next to a desktop the panel would
+  otherwise stretch badly (`960x540` at 2× presents `1920x1080`). It is
+  deliberately outside every profile, like the pool and the pad — the picker
+  compares only the fields a preset owns.
+- **The compiled-shader cache is now in Application Support, not
+  `Library/Caches`.** DXMT caches every DXBC→AIR→metallib it builds, keyed by
+  SHA-1, under `_CS_DARWIN_USER_CACHE_DIR` by default — which iOS may empty at
+  will, so a title could recompile thousands of shaders every launch and hitch
+  for seconds on each first appearance. `DXMTShaderCache.preparedPath` exports
+  `DXMT_SHADER_CACHE_PATH` (DXMT only honours an absolute path, and appends
+  `shaders_<metalVersion>.db` itself), excludes the directory from backup
+  (`#if canImport(Darwin)` — corelibs-foundation has no URL resource values and
+  the off-device gate compiles that file), and
+  `discardUnreadableDatabases` deletes a database whose SQLite header is not
+  intact. That last part is not optional: a location iOS cannot purge is also
+  one nothing else clears, so a database truncated by a jetsam kill mid-write
+  would cost a full recompile on every launch from then on. The trade named in
+  the comment is real — every title now shares one database, which is safe
+  because the keys are content hashes, but it does grow with the library.
+- **`WINEDEBUG` does not reach DXMT's logger.** DXMT resolves
+  `__wine_dbg_output` in ntdll and writes warn/info lines through it, bypassing
+  Wine's channel filtering — a `WINEDEBUG=-all` run still formatted a string and
+  took a mutex per warning, and those warnings are per-occurrence so they land
+  mid-frame. `WineProcessBridge` now sets `DXMT_LOG_LEVEL=error` when
+  `madeira-winlog.txt` says `-all` (levels: trace/debug/info/warn/error/none;
+  default info). Errors stay, because they are what explains a black screen.
+- **`d3d11.mipClampBC` is not gated on the GPU's BC support.** DXMT's clamp
+  site (`d3d11_texture_device.cpp`) does not check
+  `supportsBCTextureCompression`, so on a device that *can* sample BC the clamp
+  only throws away texture detail. It is still in the Performance preset for the
+  A15-class case it was written for — the preset is applied explicitly, never
+  automatically — and the Settings copy sends a BC-capable user to the startup
+  log line `[gpu-caps] ml709 BC=1`. If that ever costs a real device, the fix
+  belongs in DXMT (add the capability test to the eligibility), not in a preset.
+
 The FPS overlay also reports **whole-task CPU%** now (a delta over the same
 250ms tick as the footprint). Every Windows "process" here is a thread of one
 Mach task, so this is the emulator's total, and red CPU with low FPS is the

@@ -2088,19 +2088,68 @@ struct ContentView: View {
                 }
             }
 
-            // ml744: DXMT options passthrough. Documents/madeira-dxmt.txt is copied
-            // verbatim into DXMT_CONFIG, which the renderer's config parser reads as
-            // inline "key=value" lines, so options can be tried without a rebuild.
-            // d3d11.mipClampBC=N is the one that matters for memory: this GPU cannot
-            // sample BC, so those textures are expanded to uncompressed and cost 2-8x
-            // their shipped size.
-            if let d = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first,
-               let txt = try? String(contentsOf: d.appendingPathComponent("madeira-dxmt.txt"), encoding: .utf8) {
-                let v = txt.trimmingCharacters(in: .whitespacesAndNewlines)
-                if !v.isEmpty {
-                    setenv("DXMT_CONFIG", v, 1)
-                    logStore.log("DXMT config: \(v) via madeira-dxmt.txt")
+            // ml744: DXMT options passthrough. Documents/madeira-dxmt.txt is a
+            // one-option-per-line file that becomes DXMT_CONFIG, which the renderer's
+            // config parser reads as inline "key=value" chunks. d3d11.mipClampBC=N is
+            // the one that matters for memory: this GPU cannot sample BC, so those
+            // textures are expanded to uncompressed and cost 2-8x their shipped size.
+            //
+            // ml803: the file's line breaks are for the reader, not for DXMT. Its
+            // inline form splits on ";" and takes one option per chunk, so a
+            // multi-line body handed over verbatim applies its first line and drops
+            // the rest in silence -- invisible while this file held a single option,
+            // and wrong the moment it held two.
+            let dxmtConfig = documentsFile("madeira-dxmt.txt")
+                .map(DeviceCapabilities.dxmtConfigInline) ?? ""
+            if dxmtConfig.isEmpty {
+                // The environment outlives a run: this same process can start a
+                // second one, and Settings removes this file when the user turns
+                // its options back off. Without this, the previous run's renderer
+                // config would silently carry over into the next.
+                unsetenv("DXMT_CONFIG")
+                unsetenv("DXMT_METALFX_SPATIAL_SWAPCHAIN")
+            } else {
+                setenv("DXMT_CONFIG", dxmtConfig, 1)
+                logStore.log("DXMT config: \(dxmtConfig) via madeira-dxmt.txt")
+                // MetalFX needs two channels and only one of them is the config
+                // file: the renderer gates the scaler on this variable and would
+                // ignore the factor without it. Deriving the variable from the text
+                // keeps a hand-edited file as capable as the Settings toggle --
+                // today the documented option is inert on its own.
+                if DeviceCapabilities.dxmtConfigArmsMetalFX(dxmtConfig) {
+                    setenv("DXMT_METALFX_SPATIAL_SWAPCHAIN", "1", 1)
+                    logStore.log("MetalFX spatial upscaling armed")
+                } else {
+                    unsetenv("DXMT_METALFX_SPATIAL_SWAPCHAIN")
                 }
+            }
+            // ml803: keep the compiled-shader cache where iOS will not empty it.
+            // DXMT caches every translated and compiled shader keyed by its SHA-1,
+            // but its default location is under Library/Caches, which the system is
+            // free to purge and does not restore -- so a title can recompile
+            // thousands of shaders every launch, and hitch for seconds the first
+            // time each effect appears. Application Support is not purged; the
+            // directory is excluded from backup because the database gets large.
+            // An absolute path is required for DXMT to use it at all.
+            if let cachePath = DeviceCapabilities.DXMTShaderCache.preparedPath() {
+                if let cacheDir = DeviceCapabilities.DXMTShaderCache.directoryURL() {
+                    // A cache that iOS cannot purge is also a cache nothing else
+                    // clears, so a database truncated by a kill mid-write would
+                    // cost a full recompile every launch from then on. Nothing
+                    // here is worth keeping if it cannot be read.
+                    let discarded = DeviceCapabilities.DXMTShaderCache.discardUnreadableDatabases(in: cacheDir)
+                    if !discarded.isEmpty {
+                        logStore.log("Discarded unreadable shader cache: "
+                            + discarded.joined(separator: ", "))
+                    }
+                }
+                setenv(DeviceCapabilities.DXMTShaderCache.pathVariable, cachePath, 1)
+                logStore.log("DXMT shader cache: \(cachePath)")
+            } else {
+                // Never leave a previous run's path in place: if the directory
+                // could not be prepared, DXMT must fall back to its own default
+                // rather than be handed a path that no longer exists.
+                unsetenv(DeviceCapabilities.DXMTShaderCache.pathVariable)
             }
 
             // ml734: Theorafile call tracer. Documents/madeira-tf-trace.txt == "1"

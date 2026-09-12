@@ -9,10 +9,10 @@ import UIKit
 /// covered. The pad is therefore hosted in its own window — which also means it
 /// cannot read `ContentView`'s state, and needs somewhere shared to live.
 ///
-/// Both the overlay (which draws and takes touches) and `VirtualPadWindow`
-/// (which decides whether a touch belongs to the pad or to the game) read this
-/// same object, so the drawn button and the claimed touch region cannot drift
-/// apart.
+/// Three readers, one object: the overlay draws from it,
+/// `VirtualPadTouchView` assigns fingers from it, and `VirtualPadWindow`
+/// decides whether a touch belongs to the pad or to the game with it. The
+/// drawn button and the claimed touch region therefore cannot drift apart.
 final class VirtualPadState: ObservableObject {
     static let shared = VirtualPadState()
 

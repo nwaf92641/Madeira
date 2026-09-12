@@ -282,9 +282,16 @@ a needless way to break D3D". So:
 
 - Editing `src/d3d11/*` or `src/dxmt/*` changes **nothing** in the IPA until the
   DLLs are cross-built by `build/dxmt-ios/build-pe.sh` and committed.
-- `build-pe.sh` needs macOS (`xcrun`), the llvm-mingw `aarch64-w64-mingw32`
-  toolchain, a completed Wine macOS build with its aarch64-windows import
-  archives, meson and ninja. None of it exists in a Linux container.
+- `build-pe.sh` calls `xcrun` for exactly one thing: compiling `src/dxmt/*.metal`
+  into `.air`/`.metallib` (`xcrun -sdk macosx metal`), which is embedded in the
+  committed DLLs. That step is genuinely macOS-only. The rest of the PE build is
+  portable, and this was verified rather than assumed: llvm-mingw publishes a
+  Linux `aarch64-w64-mingw32` build of the pinned version, Wine 11.4 configures
+  on Linux with `--enable-win64 --enable-archs=aarch64 --with-mingw=llvm-mingw`
+  and yields `tools/winebuild/winebuild` plus the `aarch64-windows` import
+  archives (`libwinecrt0.a`, `libntdll.a`, `libdbghelp.a`), and meson/ninja then
+  cross-compile the DLLs. The Linux PE tree builds until `dxmt_command.air` and
+  stops there -- the single macOS step.
 - `build-llvm.sh` exits on non-Darwin by design, so airconv — the one
   D3D11-path component the workflow *does* compile — cannot be built here
   either, and it also needs `xcrun metal` for its three embedded `.metal`
@@ -292,18 +299,57 @@ a needless way to break D3D". So:
 - Nothing in-tree validates a renderer change off-device: `tests/dx11/*.cpp` are
   rendering integration tests needing a real device, and the `wmt_api_census`
   counters are already `DXMT_API_CENSUS`-gated so they do not distort a run.
-- There is no DXMT fork under the user's account; the submodule points at
-  `willfaust/dxmt`, so a change also needs a fork and a `.gitmodules` repoint.
+- `research/dxmt` stays pinned at its tested revision. Fixes go in
+  `patches/dxmt-*.patch` and are applied by `build/dxmt-ios/build-all.sh`, so no
+  fork and no `.gitmodules` repoint are needed.
 
-A D3D11 performance or compatibility change is therefore only worth making where
-it can be compiled and run — on a Mac with a device in hand. Say that plainly
-instead of landing unverifiable renderer edits; a wrong format or state mapping
-does not fail a build, it produces a black screen that only a game reveals.
+What a Linux container can do, and what to use it for:
+
+- **Compile-check a changed translation unit exactly as CI will.** `meson setup`
+  writes `compile_commands.json` during configuration, before any compile, so
+  the real command for a file is available even though the build later stops on
+  the Metal step. Extract it, swap `-o` to a scratch path, and run it.
+- **Check a patch applies, and that it still applies later.** `git apply
+  --check` against the pinned revision, plus `--reverse --check` to tell
+  "already applied" from "no longer applies".
+
+A renderer change still cannot be run off-device: a wrong format or state
+mapping does not fail a build, it produces a black screen that only a game
+reveals. Compile-verification narrows the risk to semantics, not correctness, so
+say which of the two a change has actually had.
+
+### Shipping a DXMT change
+
+`build-all.sh` hashes the patch set into
+`app/Madeira/aarch64-windows/.dxmt-pe-stamp`, committed beside the DLLs. A run
+whose patches match the stamp skips the PE build; a new or edited patch forces
+one. The stamp exists because the previous rule -- rebuild only when the DLLs
+are missing -- silently shipped unpatched binaries the moment a patch was added
+to an already-populated tree.
+
+A patch that neither applies nor is already applied is fatal, not a warning.
+Skipping it would compile the unpatched source and still report success, which
+is the one failure mode that reaches a device undetected.
+
+CI does not commit, so after a new patch the runner rebuilds the DLLs and the
+committed copies stay stale until they are refreshed from the produced IPA.
+Until that refresh lands, the repo's DLLs and its source disagree; the stamp is
+what makes that state visible rather than assumed.
 
 Two capability facts worth having before promising "full game support":
 
-- **Feature level is not uniform.** `d3d11.cpp` reports 11_1 only where the GPU
-  is `supportsFamily(Apple7)` (A14/M1 and later); everything older gets 11_0.
+- **Feature level is not uniform, and reporting it was broken.** `d3d11.cpp`
+  only considers 11_1 where the GPU is `supportsFamily(Apple7)` (A14/M1 and
+  later); everything older caps at 11_0. But the default probe list started at
+  `11_0` and never contained `11_1`, so an application that passed NULL feature
+  levels -- the common case -- was handed 11_0 *even on Apple7*, while every
+  11_1 interface (`ID3D11Device1`, `ID3D11DeviceContext1/2`, `ClearView`,
+  `DiscardView1`) and every 11_1 option in `D3D11_FEATURE_D3D11_OPTIONS`
+  (`MapNoOverwriteOnDynamicConstantBuffer`, `MapNoOverwriteOnDynamicBufferSRV`)
+  was already implemented. Nothing inside DXMT branches on the feature level, so
+  this is a pure reporting fix: it changes what a title is told, which is what
+  decides whether it takes its faster buffer-update path. Patch:
+  `patches/dxmt-11-1-default-feature-level.patch`.
 - **BC decode is a gap only on older devices.** Hardware BC arrives with Apple9
   (A17 Pro and later); "some" Apple7/Apple8 iPads have it and Apple6-and-older
   do not. The fork's unfinished "tier-3 CPU decompression" — `remap_unsupported_bc`

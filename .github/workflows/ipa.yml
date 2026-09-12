@@ -40,7 +40,10 @@ jobs:
         shell: bash
     env:
       BUILD_JOBS: 3
-      IOS_DEPLOYMENT_TARGET: "17.0"
+      # The value the LLVM, DXMT and FEX recipes were proven with. FreeType,
+      # GnuTLS and the Wine unix libs hardcode 17.0 in their own scripts and
+      # ignore this, so it does not silently retarget the Wine kernel layer.
+      IOS_DEPLOYMENT_TARGET: "18.0"
     steps:
       - uses: actions/checkout@v5
         with:
@@ -81,6 +84,7 @@ jobs:
           echo "fex=$(git -C FEX rev-parse HEAD)" >> "$GITHUB_OUTPUT"
           echo "wine=$(git -C wine rev-parse HEAD)" >> "$GITHUB_OUTPUT"
           echo "dxmt=$(git -C research/dxmt rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "deployment=$IOS_DEPLOYMENT_TARGET" >> "$GITHUB_OUTPUT"
 
       - name: Restore native dependency cache
         id: native-cache
@@ -206,7 +210,7 @@ jobs:
             toolchains/llvm-project
             toolchains/llvm-host-build
             toolchains/llvm-ios-build
-          key: ipa-llvm15-${{ runner.arch }}-${{ hashFiles('build/dxmt-ios/build-llvm.sh') }}
+          key: ipa-llvm15-${{ runner.arch }}-ios${{ steps.revisions.outputs.deployment }}-${{ hashFiles('build/dxmt-ios/build-llvm.sh') }}
 
       - name: Build LLVM for iOS
         run: bash build/dxmt-ios/build-llvm.sh 2>&1 | tee llvm-build.log
@@ -225,41 +229,36 @@ jobs:
         id: dxmt-cache
         uses: actions/cache/restore@v4
         with:
-          # Final outputs only. The DXMT PE build consumes Wine import
-          # archives and the native build consumes LLVM archives, so both
-          # revisions are key inputs alongside the DXMT sources.
+          # Final output only: the native build consumes LLVM archives, so the
+          # LLVM recipe is a key input alongside the DXMT and Wine revisions.
+          #
+          # The four PE DLLs are deliberately NOT cached. They are committed
+          # and shipped with the app, and a cache restore would write over the
+          # checked-in copies with whatever an earlier run happened to build.
           path: |
             build/dxmt-ios/libdxmt_combined.a
             app/Madeira/libdxmt_combined.a
-            app/Madeira/aarch64-windows/d3d11.dll
-            app/Madeira/aarch64-windows/dxgi.dll
-            app/Madeira/aarch64-windows/winemetal.dll
-            app/Madeira/aarch64-windows/d3d10core.dll
-          key: ipa-dxmt-${{ runner.arch }}-${{ steps.revisions.outputs.dxmt }}-${{ steps.revisions.outputs.wine }}-${{ hashFiles('build/dxmt-ios/*.sh', 'build/dxmt-ios/*.md', 'scripts/prepare-wine-ios.sh', 'tools/validate-ios-bundle.py') }}
+          key: ipa-dxmt-${{ runner.arch }}-ios${{ steps.revisions.outputs.deployment }}-${{ steps.revisions.outputs.dxmt }}-${{ steps.revisions.outputs.wine }}-${{ hashFiles('build/dxmt-ios/*.sh', 'build/dxmt-ios/*.md', 'scripts/prepare-wine-ios.sh', 'tools/validate-ios-bundle.py') }}
 
-      - name: Build DXMT native library and ARM64 PE modules
+      - name: Build the DXMT native library
         if: steps.dxmt-cache.outputs.cache-hit != 'true'
         run: bash build/dxmt-ios/build-all.sh 2>&1 | tee dxmt-build.log
 
-      - name: Validate DXMT builds
+      - name: Validate DXMT output and the shipped PE modules
         run: |
           set -euo pipefail
           python3 tools/validate-ios-bundle.py --archive app/Madeira/libdxmt_combined.a
           for dll in d3d11 dxgi winemetal d3d10core; do
-            [[ -s "app/Madeira/aarch64-windows/$dll.dll" ]] || { echo "ERROR: missing DXMT output: $dll.dll" >&2; exit 1; }
+            [[ -s "app/Madeira/aarch64-windows/$dll.dll" ]] || { echo "ERROR: DXMT PE module not shipped: $dll.dll" >&2; exit 1; }
           done
 
-      - name: Save DXMT builds
+      - name: Save the DXMT native library
         if: steps.dxmt-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
           path: |
             build/dxmt-ios/libdxmt_combined.a
             app/Madeira/libdxmt_combined.a
-            app/Madeira/aarch64-windows/d3d11.dll
-            app/Madeira/aarch64-windows/dxgi.dll
-            app/Madeira/aarch64-windows/winemetal.dll
-            app/Madeira/aarch64-windows/d3d10core.dll
           key: ${{ steps.dxmt-cache.outputs.cache-primary-key }}
 
       - name: Validate every link input before Xcode runs

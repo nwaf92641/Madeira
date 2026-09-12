@@ -244,6 +244,12 @@ one on-iPad confirmation.
   SDK because `ContentView.swift` calls `glassEffect()`. Triggered by pushes
   touching `scripts/`, `build/`, `tools/`, `patches/` or the workflow itself,
   and by `workflow_dispatch`.
+- `build/dxmt-ios/build-all.sh` rebuilds DXMT's four PE DLLs (`d3d11`, `dxgi`,
+  `winemetal`, `d3d10core`) **only when they are missing**: they are committed,
+  they were built against the same Wine revision the submodule pins, and a
+  from-scratch rebuild would swap shipped binaries for a second opinion. The
+  caches must never carry them either — a restore would write over the
+  checked-in copies.
 - `scripts/prepare-wine-ios.sh` downloads llvm-mingw, configures Wine for macOS
   (`wine/build-macos`, including the generated headers) and builds FreeType.
   `build/wineserver/build.sh`, `build/ntdll-unix/build.sh` and

@@ -855,7 +855,6 @@ struct ContentView: View {
     @StateObject private var logStore = LogStore.shared
     @State private var jitStatus: JITStatus = .unknown
     @State private var entitlements: EntitlementStatus?
-    @State private var debuggerAttached = isDebuggerAttached()
     @ObservedObject private var input = InputSettings.shared
     @State private var pointerPanel = false
     @State private var showSettings = false
@@ -947,6 +946,11 @@ struct ContentView: View {
                 // connects early still gets picked up by the connect observer.
                 GamepadBridge.shared.start()
                 jit_install_trap_handler()
+                // Owns the JIT chip's state: CS_DEBUGGED for "JIT works" and
+                // P_TRACED for "the debugger is still here". Polling both is the
+                // point — StikDebug attaches from another process, so there is no
+                // in-app event for it.
+                JITState.shared.start()
                 entitlements = EntitlementStatus.check()
                 logEntitlementStatus()
             }
@@ -979,19 +983,11 @@ struct ContentView: View {
             // things worth starting from here; the tools strip below the
             // surface keeps the individual test titles. The entitlement row it
             // replaces was the fourth place the same JIT state was rendered.
-            HomeView(debuggerAttached: debuggerAttached,
-                     entitlements: entitlements,
+            HomeView(entitlements: entitlements,
                      onEnableJIT: { enableJITViaStikDebug() },
                      onLaunchDesktop: { launchWineDesktop() },
                      onLaunchSteam: { launchSteamTesting() },
                      onOpenSettings: { showSettings = true })
-                // The JIT chip must track a debugger that attaches after this
-                // row is built, which is the normal order: StikDebug comes up in
-                // response to the button press. The poll used to live in the
-                // badge row this replaced.
-                .onReceive(Timer.publish(every: 2, on: .main, in: .common).autoconnect()) { _ in
-                    debuggerAttached = isDebuggerAttached()
-                }
             HStack(spacing: 6) {
                 FPSOverlay()
                 Spacer()
@@ -1801,11 +1797,44 @@ struct ContentView: View {
     }
 
     /// Full sequence: allocate JIT pool, start wineserver, start Wine.
-    /// Debugger stays attached during PE loading so mprotect_exec can use BRK
-    /// to prepare code pages. Detach happens after Wine finishes + recovery.
-    private func runWineFullSequence() {
+    private func runWineFullSequence(reattachAttempted: Bool = false) {
+        // Two separate requirements, and only the first one is "is JIT on":
+        //
+        // - CS_DEBUGGED must be set at all.
+        // - StikDebug must be ATTACHED, because the pool is allocated with a
+        //   BRK that only a live debugger answers. Without it our own SIGTRAP
+        //   handler skips the instruction, the allocation comes back zero, and
+        //   the launch dies deep in the allocator complaining about placement —
+        //   a message that has nothing to do with the cause.
+        //
+        // After the first run the app has detached BY DESIGN, so the second
+        // requirement is the normal state of a second launch, not an error.
+        // Re-attaching here rather than asking the user to work out why it
+        // stopped working is what makes JIT feel stable across runs.
         guard jit_check_debugged() else {
-            logStore.log("JIT not enabled. Press 'Enable JIT' first.", level: .error)
+            logStore.log("JIT is off (CS_DEBUGGED clear) — press Enable JIT first.", level: .error)
+            RunStatus.shared.fail("JIT is off. Press Enable JIT, then launch again.")
+            return
+        }
+        guard isDebuggerAttached() else {
+            guard !reattachAttempted else {
+                logStore.log("StikDebug did not re-attach — refusing to launch without a pool.", level: .error)
+                RunStatus.shared.fail("JIT is enabled but StikDebug is detached, and it would not re-attach. Open StikDebug, press Enable JIT, then launch again.")
+                return
+            }
+            logStore.log("JIT is enabled but StikDebug has detached (it does that after "
+                         + "every run) — re-attaching before this launch...", level: .info)
+            RunStatus.shared.begin(preparing: true)
+            StikJITHelper.enableJIT { ok in
+                DispatchQueue.main.async {
+                    guard ok else {
+                        RunStatus.shared.fail("JIT is enabled but StikDebug is detached, and it could not be re-attached. Open StikDebug, press Enable JIT, then launch again.")
+                        return
+                    }
+                    JITState.shared.refresh()
+                    self.runWineFullSequence(reattachAttempted: true)
+                }
+            }
             return
         }
 

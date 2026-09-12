@@ -115,8 +115,8 @@ struct SecondaryActionStyle: ButtonStyle {
 /// here is state you need to see before pressing anything.
 struct HomeView: View {
     @ObservedObject private var status = RunStatus.shared
+    @ObservedObject private var jit = JITState.shared
 
-    let debuggerAttached: Bool
     let entitlements: EntitlementStatus?
     let onEnableJIT: () -> Void
     let onLaunchDesktop: () -> Void
@@ -176,9 +176,15 @@ struct HomeView: View {
         // width than the four chips want, and a clipped status chip is worse
         // than a second line.
         FlowRow(spacing: 6) {
-            StatusChip(icon: debuggerAttached ? "bolt.fill" : "bolt.slash.fill",
-                       text: debuggerAttached ? "JIT ready" : "JIT off",
-                       tint: debuggerAttached ? AppTheme.good : AppTheme.warn)
+            // Two facts, one chip. `capable` is CS_DEBUGGED and is what "JIT
+            // works" means; it stays set after the app deliberately detaches.
+            // The old chip showed P_TRACED instead, so it flipped to "JIT off"
+            // a second or two into every run while JIT was still working. The
+            // detached suffix is the other, less alarming fact: a new pool needs
+            // the debugger back, which the next launch does for itself.
+            StatusChip(icon: jit.capable ? "bolt.fill" : "bolt.slash.fill",
+                       text: jit.chipText,
+                       tint: jit.capable ? AppTheme.good : AppTheme.warn)
             if let ents = entitlements {
                 StatusChip(icon: "memorychip",
                            text: ents.increasedMemory ? "Memory+" : "No memory+",

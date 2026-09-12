@@ -107,23 +107,101 @@ final class RunStatus: ObservableObject {
     /// The pool that was actually allocated, in MB. Zero until a run starts.
     @Published var poolMB: Int = 0
 
+    /// Polls `wine_process_is_running()`, which is the only honest answer to
+    /// "is a session on screen?".
+    ///
+    /// `phase` used to be written only by the launch sequence, which meant
+    /// `.running` lasted until the app was relaunched: for a game the sequence
+    /// deliberately returns while Wine is still going, and nothing else ever
+    /// cleared it. Two visible consequences — the home screen kept saying
+    /// "Running" and kept its launch buttons disabled, and the on-screen pad
+    /// (which keys off the same flag) stayed up over the tooling screens. Wine
+    /// exiting is the real end of a session, so watch for it.
+    private var watcher: Timer?
+    private var sawWine = false
+    private var watchingSince: CFAbsoluteTime = 0
+
+    /// How long to wait for the Wine thread to appear before calling the launch
+    /// a failure. `g_wine_running` flips as soon as the thread is created, so
+    /// this only has to cover wineserver coming up plus the sequence's own 2s
+    /// settle; 90s is slack for a cold prefix, and well under the 1200s cap.
+    private static let startTimeout: CFAbsoluteTime = 90
+
     private init() {}
 
     func begin(preparing: Bool) {
-        phase = preparing ? .preparing : .running
+        onMain {
+            self.phase = preparing ? .preparing : .running
+            self.watchingSince = CFAbsoluteTimeGetCurrent()
+            self.sawWine = false
+            self.startWatching()
+        }
     }
 
     func succeed(poolMB: Int) {
-        self.poolMB = poolMB
-        phase = .running
+        onMain {
+            self.poolMB = poolMB
+            self.phase = .running
+        }
     }
 
     func fail(_ message: String) {
-        phase = .failed(message)
+        onMain {
+            self.phase = .failed(message)
+            self.stopWatching()
+        }
     }
 
     func reset() {
+        onMain {
+            self.phase = .idle
+            self.poolMB = 0
+            self.stopWatching()
+        }
+    }
+
+    /// The session ended. `poolMB` deliberately survives: the chip that shows
+    /// it is describing the pool this process still has mapped, not the run.
+    private func end() {
+        stopWatching()
+        sawWine = false
         phase = .idle
-        poolMB = 0
+        LogStore.shared.log("Wine exited — session over.", level: .info)
+    }
+
+    private func onMain(_ body: @escaping () -> Void) {
+        if Thread.isMainThread { body() } else { DispatchQueue.main.async(execute: body) }
+    }
+
+    private func startWatching() {
+        guard watcher == nil else { return }
+        if watchingSince == 0 { watchingSince = CFAbsoluteTimeGetCurrent() }
+        let t = Timer(timeInterval: 1.0, repeats: true) { [weak self] _ in self?.watch() }
+        RunLoop.main.add(t, forMode: .common)
+        watcher = t
+    }
+
+    private func stopWatching() {
+        watcher?.invalidate()
+        watcher = nil
+    }
+
+    private func watch() {
+        if wine_process_is_running() != 0 {
+            if !sawWine {
+                sawWine = true
+                LogStore.shared.log("Wine is running — session live.", level: .success)
+            }
+            if phase != .running { phase = .running }
+            return
+        }
+        if sawWine {
+            end()
+            return
+        }
+        if watchingSince > 0, CFAbsoluteTimeGetCurrent() - watchingSince > Self.startTimeout {
+            stopWatching()
+            phase = .failed("Wine never started. Check the log, then launch again.")
+        }
     }
 }

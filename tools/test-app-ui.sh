@@ -416,6 +416,32 @@ touches.begin(.stick(.left), touch: 3)
 touches.endAll()
 check("everything is released at once", touches.isIdle, true)
 
+print("thumb sliding:")
+// The rule the touch layer asks before it moves a finger from one control to
+// another. A d-pad is unusable without the first case, and the third is how a
+// press meant as "jump" would silently become camera panning.
+check("a thumb may slide between face buttons",
+      PadHit.canReassign(from: .button(.a), to: .button(.b)), true)
+check("a thumb may slide from one d-pad direction to another",
+      PadHit.canReassign(from: .button(.up), to: .button(.right)), true)
+check("a thumb may not re-declare the same button",
+      PadHit.canReassign(from: .button(.a), to: .button(.a)), false)
+check("a thumb may not slide from a button onto a stick",
+      PadHit.canReassign(from: .button(.a), to: .stick(.left)), false)
+check("a thumb may not slide from a stick onto a button",
+      PadHit.canReassign(from: .stick(.left), to: .button(.a)), false)
+check("a thumb may wander inside one stick",
+      PadHit.canReassign(from: .stick(.left), to: .stick(.left)), true)
+check("but not from one stick to the other",
+      PadHit.canReassign(from: .stick(.left), to: .stick(.right)), false)
+check("a new finger may start anywhere",
+      PadHit.canReassign(from: nil, to: .stick(.right)), true)
+var slide = VirtualPadTouchState()
+slide.begin(.button(.up), touch: 7)
+check("the touch layer can ask what a finger is driving",
+      slide.hit(of: 7), .button(.up))
+check("and an unknown finger has no answer", slide.hit(of: 8), nil)
+
 print("pad settings:")
 var padSettings = MadeiraSettings()
 check("the pad is on by default", padSettings.virtualPad, .automatic)

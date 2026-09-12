@@ -26,6 +26,33 @@ final class VirtualPadState: ObservableObject {
     @Published private(set) var axes: [PadStick: PadAxis] = [:]
     @Published private(set) var held: Set<GamepadButton> = []
 
+    /// The window the pad draws in, published by the touch layer.
+    ///
+    /// One source for the geometry, deliberately: the drawing, the window's
+    /// pass-through decision and the touch layer's hit test all read this rect,
+    /// so a button can never be drawn somewhere other than where a thumb has to
+    /// press. Two independent sources (this view's bounds and a SwiftUI
+    /// GeometryReader's) can differ by a safe-area inset, and that difference is
+    /// exactly the report "the pad is drawn but nothing happens".
+    @Published private(set) var bounds: CGSize = .zero
+
+    func setBounds(_ next: CGSize) {
+        guard next != bounds, next.width > 0, next.height > 0 else { return }
+        bounds = next
+    }
+
+    /// The layout for the current bounds. Derived, never stored, so it cannot
+    /// go stale against `bounds` or the immersive chrome inset.
+    var controls: [PadControl] {
+        VirtualPadLayout.controls(for: bounds, topInset: GameChromeState.shared.topInset)
+    }
+
+    /// The control a hit names, so the touch layer can measure a stick from
+    /// its own centre without re-deriving the table.
+    func control(for hit: PadHit) -> PadControl? {
+        controls.first { $0.hit == hit }
+    }
+
     private var touches = VirtualPadTouchState()
 
     private init() {}
@@ -41,20 +68,27 @@ final class VirtualPadState: ObservableObject {
         fputs("[pad] on-screen pad \(next ? "shown" : "hidden")\n", stderr)
     }
 
-    /// Does the pad own this window point? Read by `ControlsWindow` so the two
-    /// overlays cannot both claim the same tap.
-    func claims(_ point: CGPoint, in bounds: CGRect) -> Bool {
+    /// Does the pad own this window point? Read by both windows so the pad's
+    /// region and the game's cannot overlap, and by the touch layer for the same
+    /// reason.
+    ///
+    /// `fallback` is the caller's own bounds and is used only until the touch
+    /// layer has laid out. After that the touch layer's rect wins for every
+    /// caller, which is what keeps the drawn pad and the touching thumb on the
+    /// same geometry.
+    func claims(_ point: CGPoint, in fallback: CGRect) -> Bool {
         guard visible else { return false }
-        let controls = VirtualPadLayout.controls(for: bounds.size,
+        let size = bounds == .zero ? fallback.size : bounds
+        let controls = VirtualPadLayout.controls(for: size,
                                                  topInset: GameChromeState.shared.topInset)
-        if VirtualPadLayout.hit(point, in: bounds.size, controls: controls) != nil { return true }
-        return Self.hitsHideDisc(point, in: bounds)
+        if VirtualPadLayout.hit(point, in: size, controls: controls) != nil { return true }
+        return Self.hitsHideDisc(point, in: size)
     }
 
     /// The hide disc is not a gamepad button, so it is not in the hit table —
     /// but it does have to take touches, or it is decoration.
-    static func hitsHideDisc(_ point: CGPoint, in bounds: CGRect) -> Bool {
-        let disc = VirtualPadLayout.hideDisc(for: bounds.size,
+    static func hitsHideDisc(_ point: CGPoint, in size: CGSize) -> Bool {
+        let disc = VirtualPadLayout.hideDisc(for: size,
                                             topInset: GameChromeState.shared.topInset)
         let dx = Double(point.x - disc.centre.x), dy = Double(point.y - disc.centre.y)
         return (dx * dx + dy * dy).squareRoot() <= disc.radius + VirtualPadLayout.hitSlop
@@ -62,8 +96,10 @@ final class VirtualPadState: ObservableObject {
 
     // MARK: - touch plumbing
 
-    /// `touch` is the control's index in the layout: each control view owns one
-    /// gesture, so an index identifies a finger for as long as it is down.
+    /// `touch` identifies one finger for as long as it is down. The touch layer
+    /// assigns it, so it is stable for the whole gesture regardless of how the
+    /// view tree is re-rendered underneath it — which a SwiftUI `@State` flag
+    /// per control was not.
     func begin(_ hit: PadHit, touch: Int) {
         touches.begin(hit, touch: touch)
         push()
@@ -72,6 +108,17 @@ final class VirtualPadState: ObservableObject {
     func move(_ stick: PadStick, to axis: PadAxis) {
         touches.move(stick, to: axis)
         push()
+    }
+
+    /// A thumb that slid off one button onto another. Returns false when the
+    /// change is not allowed, so the caller does not have to keep a second
+    /// copy of the rule. See `PadHit.canReassign`.
+    @discardableResult
+    func reassign(_ hit: PadHit, touch: Int) -> Bool {
+        guard PadHit.canReassign(from: touches.hit(of: touch), to: hit) else { return false }
+        touches.begin(hit, touch: touch)
+        push()
+        return true
     }
 
     func end(touch: Int) {
@@ -86,6 +133,7 @@ final class VirtualPadState: ObservableObject {
 
     private func push() {
         GamepadBridge.shared.setVirtual(touches.input)
+        traceEdge()
         // Only on the frames that changed, or the whole overlay re-renders at
         // 60Hz for nothing while a single button is held.
         let buttons = touches.buttons
@@ -99,6 +147,26 @@ final class VirtualPadState: ObservableObject {
             next[.right] = PadAxis(x: input.rightX, y: input.rightY)
         }
         if next != axes { axes = next }
+    }
+
+    /// One line per gesture, never per frame. This is the whole difference
+    /// between "the pad is inert" and "the pad posts and the game ignores it" —
+    /// two reports that cost a build to tell apart before, because the pad gave
+    /// no sign either way.
+    private var wasIdle = true
+
+    private func traceEdge() {
+        let idle = touches.isIdle
+        guard idle != wasIdle else { return }
+        wasIdle = idle
+        if idle {
+            fputs("[pad] released\n", stderr)
+        } else {
+            let held = touches.buttons.map(\.rawValue).sorted().joined(separator: ",")
+            let l = touches.input, lx = l.leftX, ly = l.leftY, rx = l.rightX, ry = l.rightY
+            fputs(String(format: "[pad] input buttons=[%@] left=(%.2f,%.2f) right=(%.2f,%.2f)\n",
+                         held, lx, ly, rx, ry), stderr)
+        }
     }
 }
 
@@ -122,6 +190,7 @@ final class VirtualPadWindow: UIWindow {
 
 enum VirtualPadHost {
     private static var window: VirtualPadWindow?
+    private static var touch: VirtualPadTouchView?
 
     static func attach() {
         let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
@@ -138,11 +207,124 @@ enum VirtualPadHost {
             w.isHidden = false              // deliberately never made key
             let host = UIHostingController(rootView: VirtualPadOverlay())
             host.view.backgroundColor = .clear
+            // Drawing only. The touch layer below owns every gesture, so a
+            // 60Hz re-render of the pad can never take a touch out from under a
+            // thumb that is already holding a button down.
+            host.view.isUserInteractionEnabled = false
             w.rootViewController = host
+            // Added AFTER the hosting view, so it is the window's topmost
+            // subview and every claimed touch lands here first.
+            let t = VirtualPadTouchView(frame: w.bounds)
+            t.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+            w.addSubview(t)
             window = w
+            touch = t
             VirtualPadState.shared.markAttached()
         }
         window?.frame = scene.coordinateSpace.bounds
+    }
+}
+
+/// The pad's input layer: a plain UIKit view, deliberately.
+///
+/// The pad drew correctly and controlled nothing, and the reason was a layer of
+/// indirection too many. A touch had to survive `UIWindow.hitTest` into a
+/// `UIHostingController`, then be recognised by a per-control SwiftUI
+/// `DragGesture` whose `@State` flag lived in a view re-created on every
+/// re-render of the overlay — and the overlay re-renders whenever the pad's own
+/// held state changes, i.e. on the first frame of every press. Every one of
+/// those steps can drop a touch silently, and none of them says so.
+///
+/// A `UIView` with `isMultipleTouchEnabled` has none of them: `touchesBegan` /
+/// `Moved` / `Ended` arrive directly, one `UITouch` object per finger for the
+/// life of the gesture, in exactly the coordinate space `bounds` — the one the
+/// drawing uses — is measured in. It is also the pattern the rest of this app
+/// already uses for the game surface (`MetalBackedView`).
+final class VirtualPadTouchView: UIView {
+    /// One finger at a time, keyed by `UITouch` identity. Identity rather than
+    /// an index, because two fingers on one button must keep it held until the
+    /// LAST one lifts, and a re-render must not lose the association.
+    private var assigned: [ObjectIdentifier: PadHit] = [:]
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        isMultipleTouchEnabled = true
+        backgroundColor = .clear
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        VirtualPadState.shared.setBounds(bounds.size)
+    }
+
+    /// The pad takes a touch iff a control is there — the same rule the window
+    /// uses to decide whether to keep the touch away from the game.
+    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+        VirtualPadState.shared.visible
+    }
+
+    private func controlHit(at p: CGPoint) -> PadHit? {
+        VirtualPadLayout.hit(p, in: bounds.size, controls: VirtualPadState.shared.controls)
+    }
+
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+        let pad = VirtualPadState.shared
+        for t in touches {
+            let p = t.location(in: self)
+            let key = ObjectIdentifier(t)
+            guard let hit = controlHit(at: p) else {
+                // Claimed by the window, but not a control: the only other
+                // thing the pad claims is its own hide disc.
+                hide()
+                continue
+            }
+            assigned[key] = hit
+            pad.begin(hit, touch: key.hashValue)
+        }
+    }
+
+    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
+        let pad = VirtualPadState.shared
+        for t in touches {
+            let key = ObjectIdentifier(t)
+            guard let held = assigned[key] else { continue }
+            let p = t.location(in: self)
+            if case .stick(let s) = held {
+                guard let c = pad.control(for: held) else { continue }
+                let centre = VirtualPadLayout.centre(c, in: bounds.size)
+                pad.move(s, to: VirtualPadLayout.stickVector(
+                    centre: centre, travel: VirtualPadLayout.travel(c), at: p))
+            } else if let next = controlHit(at: p),
+                      pad.reassign(next, touch: key.hashValue) {
+                // Sliding across a d-pad is what a d-pad is for.
+                assigned[key] = next
+            }
+        }
+    }
+
+    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
+        release(touches)
+    }
+
+    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
+        release(touches)
+    }
+
+    private func release(_ touches: Set<UITouch>) {
+        let pad = VirtualPadState.shared
+        for t in touches {
+            let key = ObjectIdentifier(t)
+            guard assigned.removeValue(forKey: key) != nil else { continue }
+            pad.end(touch: key.hashValue)
+        }
+    }
+
+    private func hide() {
+        SettingsStore.shared.settings.virtualPad = .off
+        VirtualPadState.shared.setVisible(false)
+        fputs("[pad] hidden by its own disc — set to Off in Settings\n", stderr)
     }
 }
 
@@ -151,40 +333,47 @@ struct VirtualPadOverlay: View {
     @ObservedObject private var pad = VirtualPadState.shared
     @ObservedObject private var chrome = GameChromeState.shared
     @ObservedObject private var store = SettingsStore.shared
+    @ObservedObject private var status = RunStatus.shared
 
-    /// `automatic` means "while a game is on screen", which is what
-    /// `GameChromeState.immersive` reports — the overlay is in another window
-    /// and cannot see the layout itself.
+    /// `automatic` means "while a session is running" — `RunStatus` tracks
+    /// Wine, which is the only honest answer. It used to mean "the layout is
+    /// immersive", and an iPhone in landscape is immersive from launch, so the
+    /// pad covered the home screen before anything had started.
     private var shouldShow: Bool {
-        store.settings.virtualPad.shows(gameOnScreen: chrome.immersive)
+        store.settings.virtualPad.shows(gameOnScreen: status.phase.isBusy)
     }
 
     var body: some View {
-        GeometryReader { geo in
-            let controls = VirtualPadLayout.controls(for: geo.size, topInset: chrome.topInset)
-            ZStack(alignment: .topLeading) {
+        // No GeometryReader: the size comes from the touch layer, which is the
+        // one object that also decides what a point hits. Two sources can
+        // disagree by a safe-area inset, and a drawn button that is not where a
+        // thumb must press is exactly the bug this replaces.
+        let size = pad.bounds
+        ZStack(alignment: .topLeading) {
+            if size != .zero {
+                let controls = VirtualPadLayout.controls(for: size, topInset: chrome.topInset)
                 // Behind the buttons: the cross plates and the soft deck. Drawn
                 // here rather than by each control because a cross is one shape
                 // spanning four hit regions, and four separate plates read as a
                 // flower rather than a d-pad.
-                decoration(controls: controls, in: geo.size)
+                decoration(controls: controls, in: size)
                 // Indexed rather than enumerated: a Swift 6 closure cannot
                 // destructure the `(offset:element:)` tuple.
                 ForEach(controls.indices, id: \.self) { index in
                     let control = controls[index]
-                    PadControlView(control: control, index: index)
-                        .position(VirtualPadLayout.centre(control, in: geo.size))
+                    PadControlView(control: control)
+                        .position(VirtualPadLayout.centre(control, in: size))
                 }
-                hideDisc(in: geo.size)
+                hideDisc(in: size)
             }
-            .opacity(pad.opacity)
-            .allowsHitTesting(pad.visible)
         }
-        // MUST ignore the safe area: the hit test runs in window coordinates,
-        // and an inset host would draw the pad somewhere other than where it
-        // claims touches.
-        .ignoresSafeArea()
+        .frame(width: size.width, height: size.height)
+        .opacity(pad.opacity)
         .onAppear { sync() }
+        // `attached` as well as `shouldShow`: the first sync can run before
+        // the hosting view has been told the touch layer exists, and a pad
+        // that decides it is hidden at that moment would never be asked again.
+        .onChange(of: pad.attached) { _, _ in sync() }
         .onChange(of: shouldShow) { _, _ in sync() }
         .onChange(of: store.settings.virtualPadOpacity) { _, _ in sync() }
     }
@@ -216,9 +405,9 @@ struct VirtualPadOverlay: View {
         .allowsHitTesting(false)
     }
 
-    /// The pad's own hide control, drawn and hit-tested separately from the
-    /// gamepad buttons: pressing it turns the setting off, which is the shortest
-    /// way out of a pad that is in the way.
+    /// The pad's own hide control. Drawn here, hit-tested by
+    /// `VirtualPadTouchView` — pressing it turns the setting off, which is the
+    /// shortest way out of a pad that is in the way.
     private func hideDisc(in size: CGSize) -> some View {
         let disc = VirtualPadLayout.hideDisc(for: size, topInset: chrome.topInset)
         return ZStack {
@@ -230,10 +419,6 @@ struct VirtualPadOverlay: View {
         }
         .frame(width: CGFloat(disc.radius) * 2, height: CGFloat(disc.radius) * 2)
         .position(disc.centre)
-        .onTapGesture {
-            store.settings.virtualPad = .off
-            sync()
-        }
         .accessibilityLabel("Hide the on-screen controller")
     }
 
@@ -285,49 +470,34 @@ struct PadCross: View {
 
 /// One control: a face button, a d-pad arrow, a shoulder, or a stick.
 ///
-/// Every control owns its own `DragGesture`, which is what makes multi-touch
-/// work at all: two thumbs on two buttons are two gesture recognisers on two
-/// views, and neither one can swallow the other's touch.
+/// Draw only. `VirtualPadTouchView` takes the touches, and what it captured is
+/// what these views highlight — so the pad's appearance is a readout of the
+/// input layer rather than a thing that happens to look pressed. When the two
+/// were separate the pad could light up while posting nothing, which is exactly
+/// how it was reported.
 struct PadControlView: View {
     let control: PadControl
-    let index: Int
 
     @ObservedObject private var pad = VirtualPadState.shared
-    @State private var down = false
 
     private var radius: CGFloat { CGFloat(VirtualPadLayout.radius(control)) }
+
+    private var isDown: Bool {
+        switch control.hit {
+        case .button(let b): return pad.held.contains(b)
+        case .stick(let s):  return pad.axes[s] != nil
+        }
+    }
 
     var body: some View {
         content
             .frame(width: radius * 2, height: radius * 2)
-            .contentShape(Circle())
-            .gesture(
-                DragGesture(minimumDistance: 0)
-                    .onChanged { g in
-                        if !down {
-                            down = true
-                            pad.begin(control.hit, touch: index)
-                        }
-                        if case .stick(let s) = control.hit {
-                            pad.move(s, to: axis(local: g.location))
-                        }
-                    }
-                    .onEnded { _ in
-                        down = false
-                        pad.end(touch: index)
-                    }
-            )
     }
 
-    /// The touch's deflection, measured from the centre of this control's own
-    /// frame — the same origin the stick is drawn around, so the knob follows
-    /// the thumb exactly.
-    private func axis(local: CGPoint) -> PadAxis {
-        VirtualPadLayout.stickVector(
-            centre: CGPoint(x: radius, y: radius),
-            travel: VirtualPadLayout.travel(control),
-            at: local)
-    }
+    /// The deflection is measured by the touch layer from the same centre
+    /// this frame is drawn around, so the knob follows the thumb exactly.
+    /// There is deliberately no per-control conversion any more: a second
+    /// copy of that arithmetic is a second chance for the two to disagree.
 
     @ViewBuilder
     private var content: some View {
@@ -341,7 +511,7 @@ struct PadControlView: View {
                 let a = pad.axes[stick] ?? PadAxis()
                 let travel = CGFloat(VirtualPadLayout.travel(control))
                 Circle()
-                    .fill(Color.white.opacity(down ? 0.75 : 0.55))
+                    .fill(Color.white.opacity(isDown ? 0.75 : 0.55))
                     .frame(width: radius * 0.86, height: radius * 0.86)
                     .offset(x: CGFloat(a.x) * travel, y: -CGFloat(a.y) * travel)
             }
@@ -351,7 +521,7 @@ struct PadControlView: View {
             // cluster, in the decoration layer.
             Image(systemName: Self.arrow(for: button))
                 .font(.system(size: radius * 0.72, weight: .semibold))
-                .foregroundStyle(pad.held.contains(button) ? Color.white : Color.white.opacity(0.75))
+                .foregroundStyle(isDown ? Color.white : Color.white.opacity(0.75))
 
         case .button(let button):
             ZStack {
@@ -360,7 +530,7 @@ struct PadControlView: View {
                 glyph(for: button, size: radius)
             }
             .overlay(
-                Circle().fill(Color.white.opacity(pad.held.contains(button) ? 0.22 : 0))
+                Circle().fill(Color.white.opacity(isDown ? 0.22 : 0))
             )
         }
     }

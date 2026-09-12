@@ -107,6 +107,28 @@ the JIT pool and override-parser policy; see Build / test constraints.)
    it for a fresh attach. Do not replace this with a permanent C-level flag —
    `JITAllocator.c` cannot tell a re-attach from a duplicate call.
 
+### JIT is two requirements, and only one of them is "is JIT on" (ml801)
+
+`jit_check_debugged()` (CS_DEBUGGED) and `isDebuggerAttached()` (P_TRACED) are
+different facts, and a launch needs both:
+
+- The pool is allocated with `brk #0xf00d`, which is answered by a LIVE
+  debugger. With CS_DEBUGGED set but nothing attached, our own SIGTRAP handler
+  skips the instruction, the allocation comes back zero, and the failure
+  surfaces deep inside `allocatePool` as a placement complaint that has nothing
+  to do with the cause.
+- `detachDebugger()` is deliberate, so the second launch starts detached. That
+  is the normal state after any successful run, not a fault.
+
+`runWineFullSequence` therefore pre-flights both: it refuses to launch with
+CS_DEBUGGED clear (`RunStatus.fail`), and re-attaches silently when only
+P_TRACED is missing (`StikJITHelper.enableJIT`, then retries once —
+`reattachAttempted` bounds the loop). The home screen reports CS_DEBUGGED,
+because that is the only part the user controls, so "JIT enabled" no longer
+flips to "off" the moment they enter the desktop. `isDebuggerAttached()` lives
+in `EntitlementChecker.swift` and reads `kinfo_proc.kp_proc.p_flag & P_TRACED`.
+Note that `EntitlementChecker.swift` needs `import Combine` for `JITState`.
+
 ### Stop-loop invariants (`madeira-jit.js`)
 
 The script is the ONLY thing servicing traps while StikDebug is attached. Its
@@ -251,8 +273,8 @@ one on-iPad confirmation.
 ## The on-screen pad goes through the same bridge, not around it (ml800)
 
 `VirtualPadView` is a touch DualShock — d-pad, △○✕□, four shoulders,
-Options/Share and two continuous sticks — that shows itself while a game is on
-screen (`VirtualPadMode.automatic`, the default) because the system keyboard is
+Options/Share and two continuous sticks — that shows itself while a session is
+running (`VirtualPadMode.automatic`, the default) because the system keyboard is
 not a control scheme anyone can play with. It posts through `GamepadBridge`, the
 same object the physical controller uses, and therefore through the same single
 `post(from:to:)` differ. That is the whole design, and it is worth keeping:
@@ -296,6 +318,39 @@ Two rules that are easy to lose and expensive to relearn:
 different gesture from steering it, and a tap on the stick centre already means
 "steer from here". The small ✕ in the middle of the deck — the one control
 that is not a gamepad button — turns the pad off from inside the game.
+
+### The pad's visibility is a session fact, and its touches are UIKit's (ml802)
+
+Two things about the pad are load-bearing, and both were wrong:
+
+- **When it shows.** `automatic` keys off `RunStatus.phase.isBusy` — the only
+  honest "is a session running". It used to key off `GameChromeState.immersive`,
+  which is a LAYOUT fact: an iPhone in landscape is immersive from launch, so
+  the pad sat over the home screen before anything had started. `always` is
+  still there for someone who wants it up over the tooling screens.
+- **Where its touches go.** The input layer is `VirtualPadTouchView`, a plain
+  `UIView` with `isMultipleTouchEnabled`, added as the pad window's topmost
+  subview. The SwiftUI overlay draws only
+  (`host.view.isUserInteractionEnabled = false`) and recognises no gesture at
+  all. A per-control `DragGesture` looked equivalent and is not: the touch had
+  to survive `UIWindow.hitTest` into a `UIHostingController`, then be recognised
+  by a view whose `@State` flag was re-created whenever the overlay re-rendered
+  — and the overlay re-renders on the first frame of every press, because the
+  pad's held state is what it draws. That is a pad which lights up and posts
+  nothing, which is how it was reported.
+- Geometry therefore has ONE source. `VirtualPadState.bounds` is published by
+  the touch view's `layoutSubviews`; the drawing reads it; `claims(_:in:)` uses
+  it for both windows. Two sources can disagree by a safe-area inset, and that
+  disagreement is invisible until a thumb is on the glass.
+- What the pad draws is a readout of what the touch layer captured (`pad.held`,
+  `pad.axes`), so a control cannot look pressed without having posted a press.
+- `PadHit.canReassign` is the single rule for a finger that slides: buttons swap
+  with buttons (a d-pad needs it), a stick is sticky within itself, and nothing
+  crosses between the two classes. `tools/test-app-ui.sh` covers it.
+- `VirtualPadState.push()` writes one `[pad] input ...` line to stderr per
+  gesture, on the idle->held and held->idle edges only. `[pad] input` with no
+  response in the game is a delivery problem, not a pad problem; silence is the
+  pad. Check that line before suspecting `winios_post_key`.
 
 ## Build / test constraints in this environment
 

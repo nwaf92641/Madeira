@@ -19,6 +19,23 @@ enum PadHit: Equatable, Hashable {
     case button(GamepadButton)
     /// A thumbstick: an axis pair, not a button.
     case stick(PadStick)
+
+    /// May a finger that began on `self` continue as `other`?
+    ///
+    /// A thumb has to be able to slide across a d-pad — that is what a d-pad
+    /// is — and to wander around inside one stick without letting go. It must
+    /// NOT be able to slide from a button onto a stick, or a press the user
+    /// meant as "jump" silently becomes camera panning halfway through the
+    /// gesture. Sticks are therefore sticky, and buttons may swap only with
+    /// other buttons.
+    static func canReassign(from: PadHit?, to: PadHit) -> Bool {
+        guard let from else { return true }
+        switch (from, to) {
+        case let (.button(a), .button(b)):  return a != b
+        case let (.stick(a), .stick(b)):    return a == b
+        default:                            return false
+        }
+    }
 }
 
 enum PadStick: String, CaseIterable, Hashable {
@@ -29,8 +46,14 @@ enum PadStick: String, CaseIterable, Hashable {
 ///
 /// `automatic` is the default because the pad exists to replace the system
 /// keyboard, and a user who has to find a switch before they can play has not
-/// been helped. It shows exactly while a game is on screen — see
-/// `GameChromeState.immersive` — and is out of the way everywhere else.
+/// been helped. It shows exactly while a session is running — that is
+/// `RunStatus.phase.isBusy`, which tracks Wine itself — and is out of the way
+/// everywhere else.
+///
+/// It used to key off `GameChromeState.immersive`, which is a LAYOUT fact, not
+/// a session one: an iPhone in landscape is "immersive" from launch, so the pad
+/// appeared over the home screen before anything was running. Reported as "the
+/// controller shows up as soon as I open the app".
 enum VirtualPadMode: String, CaseIterable, Codable, Hashable {
     case off
     case automatic
@@ -47,12 +70,12 @@ enum VirtualPadMode: String, CaseIterable, Codable, Hashable {
     var detail: String {
         switch self {
         case .off:       return "Hidden"
-        case .automatic: return "Appears while a game is on screen"
+        case .automatic: return "Appears while the desktop or a game is running"
         case .always:    return "Stays up over the tooling screens too"
         }
     }
 
-    /// Should the pad be up, given whether a game is on screen?
+    /// Should the pad be up, given whether a session is running?
     func shows(gameOnScreen: Bool) -> Bool {
         switch self {
         case .off:       return false
@@ -365,6 +388,9 @@ struct VirtualPadTouchState: Equatable {
 
     /// True when nothing is held, so the bridge can stop its tick.
     var isIdle: Bool { active.isEmpty }
+
+    /// What this finger is currently driving, if it is still down.
+    func hit(of touch: Int) -> PadHit? { active[touch] }
 
     mutating func begin(_ hit: PadHit, touch: Int) {
         active[touch] = hit

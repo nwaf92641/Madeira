@@ -145,46 +145,67 @@ struct SettingsView: View {
 
     // MARK: - Graphics
 
-    private var graphicsSection: some View {
-        Section {
-            Toggle(isOn: $store.settings.clampCompressedMips) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Clamp compressed mip levels")
-                    Text("Sets d3d11.mipClampBC. On a GPU that cannot sample "
-                        + "block-compressed textures, DXMT expands them to "
-                        + "uncompressed at 2–8× their shipped size and this bounds "
-                        + "how much of the mip chain is expanded. On a GPU that "
-                        + "*can* sample them it only costs detail, so check the "
-                        + "startup log: `[gpu-caps] ml709 BC=1` means leave it off.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
+    // The long explanatory strings live here rather than inline. A `Text` built
+    // from a chain of `+` over interpolated literals is one expression to the
+    // type checker, and on a Section this size the solver gives up with
+    // "unable to type-check this expression in reasonable time". Keeping them
+    // as `String` properties leaves the View body with nothing to infer, and
+    // the same text is now testable without a view.
+    private var mipClampDetail: String {
+        "Sets d3d11.mipClampBC. On a GPU that cannot sample block-compressed "
+            + "textures, DXMT expands them to uncompressed at 2–8× their shipped "
+            + "size and this bounds how much of the mip chain is expanded. On a "
+            + "GPU that *can* sample them it only costs detail, so check the "
+            + "startup log: `[gpu-caps] ml709 BC=1` means leave it off."
+    }
 
-            Picker("MetalFX upscaling", selection: $store.settings.metalFXUpscale) {
-                ForEach(MetalFXUpscale.allCases) { step in
-                    Text(step.label).tag(step)
-                }
-            }
-            if let presented = store.settings.presentedResolution {
-                Text("Rendered at \(store.settings.width)×\(store.settings.height), "
-                    + "presented at \(presented.width)×\(presented.height).")
+    private var graphicsFooter: String {
+        "Upscaling is the GPU-side trade: the title keeps rendering at the "
+            + "desktop size in Profile, and MetalFX scales the finished image up "
+            + "to the panel. Shading fewer pixels is the saving; the upscale pass "
+            + "costs real GPU time but far less than shading another million, and "
+            + "it is sharper than the display's own stretch. Pair it with a smaller "
+            + "desktop — 960×540 at 2× presents 1920×1080. Devices without MetalFX "
+            + "spatial scaling (older than A14) ignore it and present normally."
+            + "\n\nMip clamping is a memory workaround and stays separate for that "
+            + "reason: leave it off unless a title is running out of memory."
+    }
+
+    private var mipClampRow: some View {
+        Toggle(isOn: $store.settings.clampCompressedMips) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Clamp compressed mip levels")
+                Text(mipClampDetail)
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
+        }
+    }
+
+    @ViewBuilder
+    private var metalFXRow: some View {
+        Picker("MetalFX upscaling", selection: $store.settings.metalFXUpscale) {
+            ForEach(MetalFXUpscale.allCases) { step in
+                Text(step.label).tag(step)
+            }
+        }
+        if let presented = store.settings.presentedResolution {
+            Text("Rendered at \(store.settings.width)×\(store.settings.height), "
+                + "presented at \(presented.width)×\(presented.height).")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private var graphicsSection: some View {
+        Section {
+            mipClampRow
+            metalFXRow
         } header: {
             Text("Graphics")
         } footer: {
-            Text("Upscaling is the GPU-side trade: the title keeps rendering at the "
-                + "desktop size in Profile, and MetalFX scales the finished image up "
-                + "to the panel. Shading fewer pixels is the saving; the upscale pass "
-                + "costs real GPU time but far less than shading another million, and "
-                + "it is sharper than the display's own stretch. Pair it with a smaller "
-                + "desktop — 960×540 at 2× presents 1920×1080. Devices without MetalFX "
-                + "spatial scaling (older than A14) ignore it and present normally."
-                + "\n\nMip clamping is a memory workaround and stays separate for that "
-                + "reason: leave it off unless a title is running out of memory.")
+            Text(graphicsFooter)
         }
     }
 
@@ -243,60 +264,87 @@ struct SettingsView: View {
             + "setting here is left alone."
     }
 
+    // Split for the same reason as the Graphics section: each row is its own
+    // expression so the solver never sees the whole Section at once. The
+    // profile picker in particular infers an optional tag type per element,
+    // which is the most expensive thing in the section.
+    private var x87Detail: String {
+        "Translates x87 as 64-bit doubles instead of 80-bit extended precision. "
+            + "Often a large win in titles from the 2000s, which do their own math "
+            + "in x87. FEX's own description: \"reduces emulation accuracy and may "
+            + "result in rendering bugs\" — so it is off in every profile and only "
+            + "on if you ask."
+    }
+
+    private var wineLogDetail: String {
+        "Writes WINEDEBUG=-all. Every enabled channel formats and writes a line, "
+            + "and this stack takes page-protection failures and SEH on hot paths, "
+            + "so the error channel is not free. The app's own log is unaffected."
+    }
+
+    private var performanceFooter: String {
+        profileDetail + "\n\nThe JIT pool is separate: automatic sizes the "
+            + "translation cache from this device's memory budget "
+            + "(\(DeviceCapabilities.recommendedPoolMB()) MB here). A larger pool "
+            + "recompiles less; it also occupies more of the memory limit. Madeira "
+            + "shrinks the pool to fit the address space if the full size will not "
+            + "place, so the run always starts."
+    }
+
+    private var profileRow: some View {
+        Picker("Profile", selection: profileBinding) {
+            ForEach(PerformanceProfile.allCases) { profile in
+                Text(profile.label).tag(PerformanceProfile?.some(profile))
+            }
+            if store.settings.matchingProfile == nil {
+                Text("Custom").tag(PerformanceProfile?.none)
+            }
+        }
+    }
+
+    private var x87Row: some View {
+        Toggle(isOn: $store.settings.x87FastMath) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("x87 fast math")
+                Text(x87Detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private var wineLogRow: some View {
+        Toggle(isOn: $store.settings.disableWineLogging) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Silence Wine's error log")
+                Text(wineLogDetail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private var poolRow: some View {
+        Picker("JIT pool", selection: $store.settings.poolMB) {
+            Text("Automatic").tag(0)
+            ForEach(MadeiraSettings.poolChoices.filter { $0 > 0 }, id: \.self) { mb in
+                Text("\(mb) MB").tag(mb)
+            }
+        }
+    }
+
     private var performanceSection: some View {
         Section {
-            Picker("Profile", selection: profileBinding) {
-                ForEach(PerformanceProfile.allCases) { profile in
-                    Text(profile.label).tag(PerformanceProfile?.some(profile))
-                }
-                if store.settings.matchingProfile == nil {
-                    Text("Custom").tag(PerformanceProfile?.none)
-                }
-            }
-
-            Toggle(isOn: $store.settings.x87FastMath) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("x87 fast math")
-                    Text("Translates x87 as 64-bit doubles instead of 80-bit "
-                        + "extended precision. Often a large win in titles from the "
-                        + "2000s, which do their own math in x87. FEX's own "
-                        + "description: \"reduces emulation accuracy and may result "
-                        + "in rendering bugs\" — so it is off in every profile and "
-                        + "only on if you ask.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-
-            Toggle(isOn: $store.settings.disableWineLogging) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Silence Wine's error log")
-                    Text("Writes WINEDEBUG=-all. Every enabled channel formats and "
-                        + "writes a line, and this stack takes page-protection "
-                        + "failures and SEH on hot paths, so the error channel is "
-                        + "not free. The app's own log is unaffected.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-
-            Picker("JIT pool", selection: $store.settings.poolMB) {
-                Text("Automatic").tag(0)
-                ForEach(MadeiraSettings.poolChoices.filter { $0 > 0 }, id: \.self) { mb in
-                    Text("\(mb) MB").tag(mb)
-                }
-            }
+            profileRow
+            x87Row
+            wineLogRow
+            poolRow
         } header: {
             Text("Performance")
         } footer: {
-            Text(profileDetail + "\n\nThe JIT pool is separate: automatic sizes the "
-                + "translation cache from this device's memory budget "
-                + "(\(DeviceCapabilities.recommendedPoolMB()) MB here). A larger pool "
-                + "recompiles less; it also occupies more of the memory limit. Madeira "
-                + "shrinks the pool to fit the address space if the full size will not "
-                + "place, so the run always starts.")
+            Text(performanceFooter)
         }
     }
 

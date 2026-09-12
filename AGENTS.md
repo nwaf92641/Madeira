@@ -497,6 +497,23 @@ Two things about the pad are load-bearing, and both were wrong:
     This catches syntax only, NOT types: a misspelled property still parses.
     `ContentView.swift` needs SwiftUI and cannot be type-checked off-device, so
     type errors there are still caught by nothing until a Mac or a build.
+- Two failure modes have now reached the IPA runner from this blind spot, both
+  found only on a Mac. Expect them and pre-empt them:
+  - An API that does not exist on the type it is called on. `URL` has no
+    `setResourceValue(_:forKey:)` (that is an `NSURL` selector; the Swift pair
+    is `URLResourceValues` + `setResourceValues(_:)`), and it compiled nowhere
+    because it sat behind `#if canImport(Darwin)` — the one branch the Linux
+    gate is told to skip. That same guard was based on a wrong premise:
+    corelibs-foundation *does* have URL resource values. Prefer an unconditional
+    call; if a conditional is genuinely needed, it is unverifiable here, so read
+    the Apple API surface twice.
+  - "The compiler is unable to type-check this expression in reasonable time."
+    A SwiftUI `Section` whose body has grown large, especially with `Text` built
+    from a chain of `+` over interpolated literals and with optional `.tag`
+    values, can exceed the solver's budget. Neither `swiftc -parse` nor any gate
+    sees it. Keep each row a small `some View`, and keep long prose in `String`
+    properties rather than inline concatenations — that also makes the text
+    assertable from `tools/test-app-ui.sh`.
 - All three Swift gates SKIP silently without a `swiftc` on PATH, which makes a
   green `check-all.sh` mean less than it looks. A Linux toolchain is enough to
   run them: the `swift-6.2-RELEASE-debian12` tarball from swift.org runs on

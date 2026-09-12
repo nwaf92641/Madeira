@@ -266,6 +266,57 @@ The user-facing half of the same work lives in Settings → Performance:
 
 The renderer is a submodule (`research/dxmt` → `willfaust/dxmt`, `ios-port`), so
 a change there needs a fork push, a rebuild of four PE DLLs and a device run.
+
+**First, where the D3D11 code actually is, because it decides what can ship.**
+The IPA workflow builds exactly one DXMT artifact, `libdxmt_combined.a`, and
+`build/dxmt-ios/build.sh` shows its contents: the Metal unix layer
+(`winemetal/unix/{winemetal_unix.c,cache.c}`), **airconv** (the DXBC→LLVM
+translator, 15 files) and LLVM 15. The D3D11 API itself (`src/d3d11/`, ~19k
+lines), the DXMT core (`src/dxmt/`), DXGI and NVAPI are Windows-side code
+compiled into four PE DLLs — `d3d11.dll`, `dxgi.dll`, `winemetal.dll`,
+`d3d10core.dll` — which are **committed binaries** in
+`app/Madeira/aarch64-windows/`. The workflow only asserts they exist ("DXMT PE
+module not shipped" in `.github/workflows/ipa.yml`), and `build-all.sh` rebuilds
+them only if absent, because rebuilding "only replaces known-good binaries ...
+a needless way to break D3D". So:
+
+- Editing `src/d3d11/*` or `src/dxmt/*` changes **nothing** in the IPA until the
+  DLLs are cross-built by `build/dxmt-ios/build-pe.sh` and committed.
+- `build-pe.sh` needs macOS (`xcrun`), the llvm-mingw `aarch64-w64-mingw32`
+  toolchain, a completed Wine macOS build with its aarch64-windows import
+  archives, meson and ninja. None of it exists in a Linux container.
+- `build-llvm.sh` exits on non-Darwin by design, so airconv — the one
+  D3D11-path component the workflow *does* compile — cannot be built here
+  either, and it also needs `xcrun metal` for its three embedded `.metal`
+  sources.
+- Nothing in-tree validates a renderer change off-device: `tests/dx11/*.cpp` are
+  rendering integration tests needing a real device, and the `wmt_api_census`
+  counters are already `DXMT_API_CENSUS`-gated so they do not distort a run.
+- There is no DXMT fork under the user's account; the submodule points at
+  `willfaust/dxmt`, so a change also needs a fork and a `.gitmodules` repoint.
+
+A D3D11 performance or compatibility change is therefore only worth making where
+it can be compiled and run — on a Mac with a device in hand. Say that plainly
+instead of landing unverifiable renderer edits; a wrong format or state mapping
+does not fail a build, it produces a black screen that only a game reveals.
+
+Two capability facts worth having before promising "full game support":
+
+- **Feature level is not uniform.** `d3d11.cpp` reports 11_1 only where the GPU
+  is `supportsFamily(Apple7)` (A14/M1 and later); everything older gets 11_0.
+- **BC decode is a gap only on older devices.** Hardware BC arrives with Apple9
+  (A17 Pro and later); "some" Apple7/Apple8 iPads have it and Apple6-and-older
+  do not. The fork's unfinished "tier-3 CPU decompression" — `remap_unsupported_bc`
+  maps BC to RGBA8 but uploads the BC blob raw, so the texture reads as
+  black/noise — therefore does not affect the Apple9+ devices this work targets.
+  Check `[gpu-caps] ml709 BC=` in the startup log to know which side a device is
+  on. The reachable config surface is exactly nine options
+  (`d3d11.ignoreMapFlagNoWait`, `d3d11.metalSpatialUpscaleFactor`,
+  `d3d11.mipClampBC`, `d3d11.noMeshShaders`, `d3d11.preferredMaxFrameRate`,
+  `dxgi.customDeviceId`, `dxgi.customVendorId`, `dxgi.forceSDR`,
+  `dxmt.shaderMetalVersion`) plus `DXMT_METALFX_SPATIAL_SWAPCHAIN` and
+  `DXMT_LOG_LEVEL`; anything else is not read by the shipped DLLs.
+
 The levers reachable from the app are these, and the traps in each:
 
 - **`madeira-dxmt.txt` is NOT line-based, whatever the file looks like.** DXMT
@@ -295,8 +346,8 @@ The levers reachable from the app are these, and the traps in each:
   for seconds on each first appearance. `DXMTShaderCache.preparedPath` exports
   `DXMT_SHADER_CACHE_PATH` (DXMT only honours an absolute path, and appends
   `shaders_<metalVersion>.db` itself), excludes the directory from backup
-  (`#if canImport(Darwin)` — corelibs-foundation has no URL resource values and
-  the off-device gate compiles that file), and
+  (unconditionally — corelibs-foundation *does* have `URLResourceValues`, so
+  the off-device gate compiles that call rather than skipping it), and
   `discardUnreadableDatabases` deletes a database whose SQLite header is not
   intact. That last part is not optional: a location iOS cannot purge is also
   one nothing else clears, so a database truncated by a jetsam kill mid-write

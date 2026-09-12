@@ -2099,8 +2099,11 @@ struct ContentView: View {
             // multi-line body handed over verbatim applies its first line and drops
             // the rest in silence -- invisible while this file held a single option,
             // and wrong the moment it held two.
-            let dxmtConfig = documentsFile("madeira-dxmt.txt")
-                .map(DeviceCapabilities.dxmtConfigInline) ?? ""
+            var dxmtConfig = ""
+            if let d = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first,
+               let txt = try? String(contentsOf: d.appendingPathComponent("madeira-dxmt.txt"), encoding: .utf8) {
+                dxmtConfig = DeviceCapabilities.dxmtConfigInline(txt)
+            }
             if dxmtConfig.isEmpty {
                 // The environment outlives a run: this same process can start a
                 // second one, and Settings removes this file when the user turns

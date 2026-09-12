@@ -1218,6 +1218,25 @@ struct ContentView: View {
         }
     }
 
+    /// ml803: are the investigation probes armed?
+    ///
+    /// Several probes were added to answer one question each and then left on
+    /// the production launch path. Each one costs time in the run it measures,
+    /// and the cost is largest exactly when a game is starting:
+    /// `MADEIRA_SURF_SEQ` PNG-encodes ten consecutive window surfaces every six
+    /// seconds for the first ~84s of a session, `MADEIRA_IRCAP_*` hooks the
+    /// translator's compile path, and both are pure measurement. They are now
+    /// opt-in: `MADEIRA_DIAGNOSTICS=1` (from Xcode, or a Settings-owned file
+    /// later) restores all of them for a deliberate run.
+    ///
+    /// The launch sequence does not persist this: the value must be in the
+    /// app's environment before the process starts, which is where Xcode puts
+    /// it. A probe is never what a player wants.
+    private var diagnosticsArmed: Bool {
+        guard let v = getenv("MADEIRA_DIAGNOSTICS") else { return false }
+        return v.pointee != 0 && v.pointee != 48   /* not NUL, not "0" */
+    }
+
     /// Start Steam through its launcher batch.
     ///
     /// Moved out of the button strip when the home screen took over the two
@@ -1354,8 +1373,20 @@ struct ContentView: View {
         // pass, RA liveness, or the ARM emitter.
         //
         // Compile-time only, capped at 4 captures. Unset it for a normal run.
-        setenv("MADEIRA_IRCAP_RVA", "0x4db25b", 1)
-        setenv("MADEIRA_IRCAP_MODULE", "mono-2.0-bdwgc.dll", 1)
+        //
+        // ml803: "a normal run" is now the only run this path produces. The
+        // capture was left armed after its question was answered, and it is not
+        // free: the hook sits on the translator's compile path and every block
+        // compiled while a probe is armed is compared against it. Diagnostics
+        // are opt-in through MADEIRA_DIAGNOSTICS; the unsetenv keeps a probe
+        // armed by an earlier launch out of this one.
+        if diagnosticsArmed {
+            setenv("MADEIRA_IRCAP_RVA", "0x4db25b", 1)
+            setenv("MADEIRA_IRCAP_MODULE", "mono-2.0-bdwgc.dll", 1)
+        } else {
+            unsetenv("MADEIRA_IRCAP_RVA")
+            unsetenv("MADEIRA_IRCAP_MODULE")
+        }
         setenv("MADEIRA_EXE", "explorer.exe", 1)
         setenv("MADEIRA_ARGS",
                "/desktop=shell,\(deskW)x\(deskH) cmd /c C:\\steam-launch.bat", 1)
@@ -1373,7 +1404,20 @@ struct ContentView: View {
         // login window's black regions change every frame, which
         // the 2s-throttled first/latest dump can never show —
         // adjacent frames are the only way to measure what moves.
-        setenv("MADEIRA_SURF_SEQ", "10", 1)
+        //
+        // ml803: ML556 ALREADY CALLED THIS OFF and it was still on. The
+        // unsetenv above disables the throttled dump; this arm kept a second,
+        // far more expensive dump alive — every burst PNG-encodes ten
+        // consecutive full window surfaces, 14 bursts per window, on a
+        // background queue, for the first ~84s of every session — and PNG
+        // encoding a 1024x768 surface is tens of milliseconds. So the
+        // clean-baseline run was never clean, and the cost landed exactly when
+        // a game is starting up. Opt-in with the rest of the diagnostics.
+        if diagnosticsArmed {
+            setenv("MADEIRA_SURF_SEQ", "10", 1)
+        } else {
+            unsetenv("MADEIRA_SURF_SEQ")
+        }
         // ml515: SRCWATCH RE-ENABLED, now hooked in the MACH
         // exception handler (where guest faults are actually
         // delivered) instead of segv_handler. It consumes its own
@@ -1418,6 +1462,13 @@ struct ContentView: View {
         // and Steam allows each CM ping only 1000 ms. Set to "1" to re-arm.
         setenv("MADEIRA_DEAD_RELEASE", "0", 1)
         setenv("MADEIRA_SRCWATCH", "off", 1)
+        // ml803: only meaningful while srcwatch is armed; off in production,
+        // and the row band is re-derived by hand when a probe is re-armed.
+        if diagnosticsArmed {
+            setenv("MADEIRA_SRCWATCH_ROWS", "0,400", 1)
+        } else {
+            unsetenv("MADEIRA_SRCWATCH_ROWS")
+        }
         // ml548: restrict srcwatch to the row band where displacement
         // was actually MEASURED, so the 400-attribution budget is not
         // spent on the full-frame clear (which touches every page

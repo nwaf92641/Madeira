@@ -43,6 +43,21 @@ static os_log_t wine_proc_log(void) {
 
 #define LOG(fmt, ...) os_log(wine_proc_log(), "[WineProc] " fmt, ##__VA_ARGS__)
 
+/* ml803: the one override file the launch sequence reads directly rather than
+ * handing to a native library. Returns its trimmed body, or nil when the file
+ * is absent or empty (which means "use the built-in default"). The Settings
+ * screen writes `-all` here to switch Wine's channels off for a performance
+ * run; a hand-written value from the Files app works the same way. */
+static NSString *madeira_winlog_file_body(void) {
+    NSString *docs = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES).firstObject;
+    if (docs.length == 0) return nil;
+    NSString *path = [docs stringByAppendingPathComponent:@"madeira-winlog.txt"];
+    NSString *text = [NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:NULL];
+    if (!text) return nil;
+    text = [text stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+    return text.length ? text : nil;
+}
+
 /* ---- ml581: undo the hand-made AppData skeleton ------------------------
  *
  * While chasing the Steam login window I hand-created
@@ -400,8 +415,20 @@ static void *wine_process_thread(void *arg) {
                  * done. It routes every OutputDebugStringA through an exception
                  * dispatch, which is real overhead in hot paths; re-add it only
                  * alongside MADEIRA_TF_TRACE. */
-                setenv("WINEDEBUG", "err+all,err-virtual", 1);
-                LOG("WINEDEBUG = err+all,err-virtual (perf default — set MADEIRA_DEBUG_VERBOSE=1 for full trace)");
+                /* ml803: Documents/madeira-winlog.txt wins over this default.
+                 * The Settings screen writes it, and it is the only way to ask
+                 * for "no Wine output at all" without a rebuild: an enabled
+                 * channel formats a string and writes it, and err+all still
+                 * covers page-protection failures and SEH, which are hot on
+                 * this stack. MADEIRA_DEBUG_VERBOSE stays the loudest word. */
+                NSString *body = madeira_winlog_file_body();
+                if (body) {
+                    setenv("WINEDEBUG", body.UTF8String, 1);
+                    LOG("WINEDEBUG = %{public}s (madeira-winlog.txt)", body.UTF8String);
+                } else {
+                    setenv("WINEDEBUG", "err+all,err-virtual", 1);
+                    LOG("WINEDEBUG = err+all,err-virtual (perf default — set MADEIRA_DEBUG_VERBOSE=1 for full trace)");
+                }
             }
         }
 

@@ -197,6 +197,76 @@ To confirm on-device, read the startup log line the fork emits:
 `FEX: HostFeatures={} (ml538: ...)`. Identical content on two different chips
 would be the smoking gun; it should differ.
 
+## Performance work must start by removing instrumentation (ml803)
+
+When asked to "actually and strongly improve performance", the first real win
+was not a knob. The Steam launch path had three investigation probes still armed
+after their questions were answered, and each one costs time in the run it
+measures — worst of all at game startup:
+
+- `MADEIRA_SURF_SEQ=10` (`ContentView.launchSteamTesting`). Sequential surface
+  dumping, and **ml556 believed it had been turned off**: the `unsetenv("MADEIRA_DUMP_SURFACES")`
+  only kills the throttled dump. The seq arm is a second dump path that
+  PNG-encodes ten consecutive full window surfaces per burst, 14 bursts per
+  window, on a background queue, for the first ~84s of every session. PNG
+  encoding a 1024x768 BGRA surface is tens of milliseconds, so a "clean
+  baseline" run was never clean. Do not re-enable it to measure anything.
+- `MADEIRA_IRCAP_RVA`/`MADEIRA_IRCAP_MODULE`: FEX IR capture on the translator's
+  compile path. Cheap per block, but it is armed for every block compiled and
+  its question is answered.
+- `MADEIRA_SRCWATCH_ROWS`: only meaningful while `MADEIRA_SRCWATCH` is armed,
+  which production never does.
+
+All three now hang off **`MADEIRA_DIAGNOSTICS=1`** in the app's environment (Xcode
+scheme, not persisted). `launchSteamTesting` *unsets* them in the off arm, so a
+previous diagnostic launch cannot leak into a normal one.
+
+`MADEIRA_QUIET=1` (set by `WineProcessBridge`, was already the production
+default) now actually does what its comment claimed — "per-present log lines
+(100+/s at RAW rates), winios poll heartbeat". The compositor and input bridge
+had never consulted it, so these were live on every run:
+
+- `winios_surface_present` computed a 4096-probe surface census **and did an
+  `fprintf`+`fflush`** on every present of every window ≥400x400 for its first
+  2000 presents (~33s at 60fps, per window). `[surf-alpha]`, `[surf-sentinel]`
+  and the dump paths are gated with it.
+- `winios_pProcessEvents` drained **every** queued input event through
+  `fprintf`+`fflush`. This is the input path: a mouse-look posts a relative move
+  per tick, and the synchronous write sat between the sample and the game.
+- `winios_post_touch_down/move/up` and `winios_post_key` logged per event.
+- The desktop window-tree dump ran every 5s for the whole session.
+
+The general lesson, and the reason this section exists: on this stack the
+diagnostics are the workload. Before adding a knob, grep for probes still
+writing to stderr on a hot path (`fprintf`/`dprintf` in `Winios.m`, `driver_ios.c`,
+`message_ios.c`) and check whether the gate everyone assumes is on actually is.
+
+The user-facing half of the same work lives in Settings → Performance:
+
+- A **profile picker** (Balanced / Performance / Quality / Custom) that is
+  *derived* from the four fields it owns (`MadeiraSettings.matchingProfile`)
+  rather than stored beside them, so it can never claim a preset the fields do
+  not spell. `Performance` = 960x540 (34% fewer pixels than the 1024x768
+  default), `d3d11.mipClampBC=1`, `WINEDEBUG=-all`. Applying one writes only
+  those four fields; pacing, pool, pad and advanced switches are untouched.
+- **x87 fast math** (`FEX_X87REDUCEDPRECISION=1` via `madeira-fex.txt`) is an
+  explicit switch and is off in every profile, because FEX's own description is
+  "reduces emulation accuracy and may result in rendering bugs". The key name
+  matters: `DeviceCapabilities.fexConfigEntries` uppercases and prefixes
+  `FEX_`, and FEX matches the config key uppercased.
+- **`madeira-winlog.txt`** is read directly by `WineProcessBridge` and becomes
+  `WINEDEBUG` (its `-all` is the only way to switch Wine off entirely without a
+  rebuild). `MADEIRA_DEBUG_VERBOSE=1` still outranks it.
+- `MadeiraSettings` now decodes with `decodeIfPresent` for every field. The
+  synthesized decoder requires all keys, and `SettingsStore` reads a throw as
+  "no saved settings" — so adding a field used to silently reset the user's
+  choices. Adding one is now a compatible change; keep it that way.
+
+The FPS overlay also reports **whole-task CPU%** now (a delta over the same
+250ms tick as the footprint). Every Windows "process" here is a thread of one
+Mach task, so this is the emulator's total, and red CPU with low FPS is the
+signature of a CPU-bound frame — the case no renderer setting can fix.
+
 ## iPad fullscreen: one size class is not enough (fixed ml790)
 
 There is exactly one tooling layout and one fullscreen layout, chosen by
@@ -376,6 +446,16 @@ Two things about the pad are load-bearing, and both were wrong:
   Debian 13, needs the usual desktop deps (libcurl4, libedit, libicu,
   libncurses, libpython3, libsqlite3, libxml2, uuid), and installs outside the
   repository. Put its `usr/bin` on PATH and the gates run for real.
+  - This container already has one at `/workspace/swift-6.2-RELEASE-debian12`,
+    with the ncurses fix in `/workspace/swiftlibs` (Debian 13 ships only
+    `libncursesw.so.6`; Swift links `libncurses.so.6`, so it holds a symlink).
+    Do not download the 1 GB tarball again — run the gates with:
+    `export LD_LIBRARY_PATH=/workspace/swiftlibs:/workspace/swift-6.2-RELEASE-debian12/usr/lib/swift/linux`
+    `export PATH=/workspace/swift-6.2-RELEASE-debian12/usr/bin:$PATH`
+  - Worth knowing when reading a green run: `-parse` only proves syntax, so the
+    two `SettingsView`/`FPSOverlay` changes in ml803 are still unverified by a
+    compiler until a Mac or a build touches them. Keep new logic in the
+    Foundation-only files when a test can reach it instead.
 - `.github/workflows/gates.yml` runs `tools/check-all.sh` on every push and PR,
   on `macos-15` because three gates need `swiftc`.
 - `scripts/make-ipa.sh` builds and packages the unsigned `Madeira-unsigned.ipa`

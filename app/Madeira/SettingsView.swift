@@ -204,8 +204,62 @@ struct SettingsView: View {
 
     // MARK: - Performance
 
+    /// The profile picker reads back as a *comparison* over the four fields it
+    /// owns rather than a stored choice, so it can never disagree with them:
+    /// change the desktop size by hand and the row falls to Custom on its own.
+    private var profileBinding: Binding<PerformanceProfile?> {
+        Binding(
+            get: { store.settings.matchingProfile },
+            set: { if let picked = $0 { store.settings.apply(picked) } }
+        )
+    }
+
+    private var profileDetail: String {
+        store.settings.matchingProfile?.detail
+            ?? "A combination no preset produces. Choosing one replaces the desktop "
+            + "size, compressed-mip clamping and Wine logging together; every other "
+            + "setting here is left alone."
+    }
+
     private var performanceSection: some View {
         Section {
+            Picker("Profile", selection: profileBinding) {
+                ForEach(PerformanceProfile.allCases) { profile in
+                    Text(profile.label).tag(PerformanceProfile?.some(profile))
+                }
+                if store.settings.matchingProfile == nil {
+                    Text("Custom").tag(PerformanceProfile?.none)
+                }
+            }
+
+            Toggle(isOn: $store.settings.x87FastMath) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("x87 fast math")
+                    Text("Translates x87 as 64-bit doubles instead of 80-bit "
+                        + "extended precision. Often a large win in titles from the "
+                        + "2000s, which do their own math in x87. FEX's own "
+                        + "description: \"reduces emulation accuracy and may result "
+                        + "in rendering bugs\" — so it is off in every profile and "
+                        + "only on if you ask.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
+            Toggle(isOn: $store.settings.disableWineLogging) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Silence Wine's error log")
+                    Text("Writes WINEDEBUG=-all. Every enabled channel formats and "
+                        + "writes a line, and this stack takes page-protection "
+                        + "failures and SEH on hot paths, so the error channel is "
+                        + "not free. The app's own log is unaffected.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
             Picker("JIT pool", selection: $store.settings.poolMB) {
                 Text("Automatic").tag(0)
                 ForEach(MadeiraSettings.poolChoices.filter { $0 > 0 }, id: \.self) { mb in
@@ -215,7 +269,8 @@ struct SettingsView: View {
         } header: {
             Text("Performance")
         } footer: {
-            Text("Automatic sizes the translation cache from this device's memory budget "
+            Text(profileDetail + "\n\nThe JIT pool is separate: automatic sizes the "
+                + "translation cache from this device's memory budget "
                 + "(\(DeviceCapabilities.recommendedPoolMB()) MB here). A larger pool "
                 + "recompiles less; it also occupies more of the memory limit. Madeira "
                 + "shrinks the pool to fit the address space if the full size will not "

@@ -230,6 +230,83 @@ check("remote renders both halves", body(s, "madeira-remote.txt"), "10.0.0.2:900
 s.remoteToken = ""
 check("remote needs both halves", body(s, "madeira-remote.txt"), nil)
 
+print("performance profiles:")
+check("the engine's defaults read as Balanced",
+      MadeiraSettings().matchingProfile, .balanced)
+check("a fresh decode has both new switches off",
+      MadeiraSettings().x87FastMath == false && MadeiraSettings().disableWineLogging == false,
+      true)
+
+var perf = MadeiraSettings()
+perf.apply(.performance)
+check("Performance writes the smaller desktop",
+      body(perf, "madeira-resolution.txt"), "960x540")
+check("Performance clamps compressed mips",
+      body(perf, "madeira-dxmt.txt"), "d3d11.mipClampBC=1")
+check("Performance silences Wine",
+      body(perf, "madeira-winlog.txt"), "-all")
+check("Performance reads back as Performance", perf.matchingProfile, .performance)
+check("Performance leaves the pacing alone",
+      perf.frameRate, MadeiraSettings().frameRate)
+check("and leaves the pool alone", perf.poolMB, 0)
+
+// The picker is a comparison, so a single hand-edit has to land in Custom by
+// itself — otherwise the row would claim a preset the fields do not spell.
+var tweaked = perf
+tweaked.disableWineLogging = false
+check("editing one owned field falls to Custom", tweaked.matchingProfile, nil)
+
+var quality = MadeiraSettings()
+quality.apply(.quality)
+check("Quality keeps Wine logging", body(quality, "madeira-winlog.txt"), nil)
+check("Quality writes the larger desktop",
+      body(quality, "madeira-resolution.txt"), "1280x720")
+check("Quality reads back as Quality", quality.matchingProfile, .quality)
+
+// x87 is a correctness trade, not a speed dial, so no profile may switch it
+// on behind the user's back.
+check("no profile turns on x87 fast math",
+      PerformanceProfile.allCases.allSatisfy { !$0.preset.x87FastMath }, true)
+var fast = MadeiraSettings()
+fast.x87FastMath = true
+check("x87 writes the FEX key it declares",
+      body(fast, "madeira-fex.txt"), "X87REDUCEDPRECISION=1")
+check("x87 makes the combination Custom", fast.matchingProfile, nil)
+check("x87 writes no other file",
+      body(fast, "madeira-resolution.txt") == nil
+          && body(fast, "madeira-dxmt.txt") == nil, true)
+
+// A settings blob from a build that predates the new keys must still decode.
+// The synthesized decoder demands every key, and SettingsStore treats a throw
+// as "no saved settings" — so a decode failure silently resets the user's
+// choices, which is worse than shipping the new field.
+let legacy = #"{"width":1280,"height":720,"poolMB":512,"clampCompressedMips":true}"#
+let legacyDecoded = try? JSONDecoder().decode(MadeiraSettings.self,
+                                              from: Data(legacy.utf8))
+check("a blob without the new keys decodes", legacyDecoded != nil, true)
+check("and keeps its desktop size", legacyDecoded?.width ?? -1, 1280)
+check("and keeps its pool", legacyDecoded?.poolMB ?? -1, 512)
+check("and keeps its mip clamp", legacyDecoded?.clampCompressedMips ?? false, true)
+check("and defaults the new switches", legacyDecoded?.x87FastMath ?? true, false)
+// The fields it did carry must be read back faithfully, so its clamp keeps it
+// out of the Quality preset rather than being quietly dropped on load.
+check("and does not read as a preset", legacyDecoded?.matchingProfile ?? nil, nil)
+
+let oldDefault = #"{"poolMB":512}"#
+let decodedDefault = try? JSONDecoder().decode(MadeiraSettings.self,
+                                               from: Data(oldDefault.utf8))
+check("a near-empty blob decodes", decodedDefault != nil, true)
+check("and reads as the engine's defaults",
+      decodedDefault?.matchingProfile ?? nil, .balanced)
+
+var roundTrip = MadeiraSettings()
+roundTrip.x87FastMath = true
+roundTrip.disableWineLogging = true
+let reloaded = try? JSONDecoder().decode(MadeiraSettings.self,
+                                         from: JSONEncoder().encode(roundTrip))
+check("the new switches survive a save and load", reloaded?.x87FastMath ?? false, true)
+check("so does the logging switch", reloaded?.disableWineLogging ?? false, true)
+
 print("engine switches:")
 check("switch ids are unique",
       Set(EngineSwitches.all.map { $0.id }).count, EngineSwitches.all.count)

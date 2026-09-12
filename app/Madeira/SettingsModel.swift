@@ -88,6 +88,91 @@ enum FrameRateMode: Int, CaseIterable, Identifiable, Codable, Hashable {
     }
 }
 
+/// A one-tap bundle of the levers that trade image sharpness and diagnostic
+/// output for frame time.
+///
+/// A profile owns exactly four fields and nothing else, and the picker is
+/// *derived* from those fields (`MadeiraSettings.matchingProfile`) rather than
+/// stored next to them. That is the whole design: there is no second copy of
+/// the truth to go stale, applying a profile is just writing the fields, and
+/// editing any one of them makes the picker fall back to Custom on its own.
+/// A stored profile plus four fields would need a resolution rule for every
+/// disagreement between them, and the rule would be wrong for somebody.
+struct PerformancePreset: Equatable {
+    var width: Int
+    var height: Int
+    var clampCompressedMips: Bool
+    var x87FastMath: Bool
+    var disableWineLogging: Bool
+
+    /// The engine's own defaults with no override written: the device's
+    /// automatic desktop size, no renderer switch, no translator switch, Wine's
+    /// normal logging. Deliberately equal to `MadeiraSettings()` so a user who
+    /// has never opened this screen reads as Balanced rather than Custom.
+    static let balanced = PerformancePreset(width: 0, height: 0,
+                                            clampCompressedMips: false,
+                                            x87FastMath: false,
+                                            disableWineLogging: false)
+
+    /// 960x540 is 34% fewer pixels than the shipped 1024x768 desktop, and this
+    /// is the one cost that does not improve with a newer chip — pixel work was
+    /// identical on every device because the size was hardcoded (ml787). Clamped
+    /// compressed mips bound the expanded BC textures this GPU cannot sample.
+    /// Wine logging goes to `-all`: the launch path already cut it to `err+all`,
+    /// but every `ERR` still formats a string and writes it, and on this stack
+    /// page commit and SEH are hot paths.
+    static let performance = PerformancePreset(width: 960, height: 540,
+                                               clampCompressedMips: true,
+                                               x87FastMath: false,
+                                               disableWineLogging: true)
+
+    /// Sharper than the shipped default, with nothing else changed.
+    static let quality = PerformancePreset(width: 1280, height: 720,
+                                           clampCompressedMips: false,
+                                           x87FastMath: false,
+                                           disableWineLogging: false)
+}
+
+enum PerformanceProfile: String, CaseIterable, Identifiable, Hashable {
+    case balanced
+    case performance
+    case quality
+
+    var id: String { rawValue }
+
+    var preset: PerformancePreset {
+        switch self {
+        case .balanced: return .balanced
+        case .performance: return .performance
+        case .quality: return .quality
+        }
+    }
+
+    var label: String {
+        switch self {
+        case .balanced: return "Balanced"
+        case .performance: return "Performance"
+        case .quality: return "Quality"
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .balanced:
+            return "The engine's own defaults: its automatic desktop size and no "
+                + "renderer or translator overrides."
+        case .performance:
+            return "A 960×540 desktop — 34% fewer pixels than the 1024×768 default — "
+                + "clamped compressed mips, and Wine's error logging off. The largest "
+                + "frame-time win of the three; the engine upscales the smaller "
+                + "surface to the panel, so it costs sharpness."
+        case .quality:
+            return "A 1280×720 desktop and no other overrides. Sharper, and the "
+                + "slowest of the three."
+        }
+    }
+}
+
 /// A switch the engine already exposes through a `madeira-*.txt` file.
 ///
 /// The settings screen writes the same files the launch sequence reads, so the
@@ -200,8 +285,85 @@ struct MadeiraSettings: Equatable, Codable {
     var remoteHost: String = ""
     var remoteToken: String = ""
     var switches: Set<String> = []
+    /// Emulate x87 with 64-bit doubles instead of 80-bit extended precision
+    /// (FEX_X87REDUCEDPRECISION). A large win for titles compiled to use x87
+    /// for their own math, which is most of the 2000s, because FEX otherwise
+    /// routes every x87 operation through a software 80-bit path. Off by
+    /// default, and deliberately *not* part of any profile: FEX's own
+    /// description is "reduces emulation accuracy and may result in rendering
+    /// bugs", so a preset must not switch it on silently. Someone who wants it
+    /// can have it and will know why the picture changed.
+    var x87FastMath: Bool = false
+    /// Ask Wine for `WINEDEBUG=-all`. Every enabled channel formats a string and
+    /// writes it, and this stack takes access-violation-driven page commits and
+    /// SEH on hot paths, so `err` is not free even though it is the quiet
+    /// default. The app's own logs are unaffected.
+    var disableWineLogging: Bool = false
+
+    /// A fresh decode with every field defaulted.
+    ///
+    /// Declared explicitly because providing `init(from:)` below suppresses the
+    /// synthesized default initializer, which the rest of the app and the
+    /// off-device tests both use.
+    init() {}
+
+    private enum CodingKeys: String, CodingKey {
+        case width, height, frameRate, poolMB, clampCompressedMips
+        case virtualPad, virtualPadOpacity, remoteHost, remoteToken, switches
+        case x87FastMath, disableWineLogging
+    }
+
+    /// Decode with every field defaulted.
+    ///
+    /// The synthesized decoder demands every key, so the first time a field was
+    /// added here, a settings blob written by the previous build failed to
+    /// decode — and `SettingsStore` treats a decode failure as "no saved
+    /// settings", silently resetting the user's choices. `decodeIfPresent` makes
+    /// adding a field a compatible change instead.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        width = try c.decodeIfPresent(Int.self, forKey: .width) ?? 0
+        height = try c.decodeIfPresent(Int.self, forKey: .height) ?? 0
+        frameRate = try c.decodeIfPresent(FrameRateMode.self, forKey: .frameRate)
+        poolMB = try c.decodeIfPresent(Int.self, forKey: .poolMB) ?? 0
+        clampCompressedMips = try c.decodeIfPresent(Bool.self, forKey: .clampCompressedMips) ?? false
+        virtualPad = try c.decodeIfPresent(VirtualPadMode.self, forKey: .virtualPad) ?? .automatic
+        virtualPadOpacity = try c.decodeIfPresent(Double.self, forKey: .virtualPadOpacity)
+            ?? VirtualPadLayout.defaultOpacity
+        remoteHost = try c.decodeIfPresent(String.self, forKey: .remoteHost) ?? ""
+        remoteToken = try c.decodeIfPresent(String.self, forKey: .remoteToken) ?? ""
+        switches = try c.decodeIfPresent(Set<String>.self, forKey: .switches) ?? []
+        x87FastMath = try c.decodeIfPresent(Bool.self, forKey: .x87FastMath) ?? false
+        disableWineLogging = try c.decodeIfPresent(Bool.self, forKey: .disableWineLogging) ?? false
+    }
 
     static let empty = MadeiraSettings()
+
+    /// The four fields the performance presets own, as a value.
+    var performancePreset: PerformancePreset {
+        PerformancePreset(width: width, height: height,
+                          clampCompressedMips: clampCompressedMips,
+                          x87FastMath: x87FastMath,
+                          disableWineLogging: disableWineLogging)
+    }
+
+    /// The preset these fields currently spell, or nil for a combination no
+    /// preset produces. Derived, never stored — see `PerformanceProfile`.
+    var matchingProfile: PerformanceProfile? {
+        PerformanceProfile.allCases.first { $0.preset == performancePreset }
+    }
+
+    /// Write a preset's fields. Everything else — pacing, pool, pad, remote,
+    /// advanced switches — is deliberately untouched, because a profile is a
+    /// bundle of four knobs and not a configuration reset.
+    mutating func apply(_ profile: PerformanceProfile) {
+        let p = profile.preset
+        width = p.width
+        height = p.height
+        clampCompressedMips = p.clampCompressedMips
+        x87FastMath = p.x87FastMath
+        disableWineLogging = p.disableWineLogging
+    }
 
     /// The pool sizes a user may pick. 0 is automatic; the rest are the values
     /// the engine's comments bracket (256 is the allocation floor, 3072 the
@@ -253,6 +415,18 @@ struct MadeiraSettings: Equatable, Codable {
             dxmt.append("d3d11.mipClampBC=1")
         }
         files.append(("madeira-dxmt.txt", dxmt.isEmpty ? nil : dxmt.joined(separator: "\n")))
+
+        // FEX reads this file as `KEY=VALUE` lines (uppercase key; see
+        // FEXSettings in DeviceCapabilities, which validates the same shape).
+        var fex: [String] = []
+        if x87FastMath {
+            fex.append("X87REDUCEDPRECISION=1")
+        }
+        files.append(("madeira-fex.txt", fex.isEmpty ? nil : fex.joined(separator: "\n")))
+
+        // Wine logging. `-all` is the documented way to switch every channel
+        // off; WineProcessBridge writes it into WINEDEBUG at launch.
+        files.append(("madeira-winlog.txt", disableWineLogging ? "-all" : nil))
 
         if remoteMetalConfigured {
             let host = remoteHost.trimmingCharacters(in: .whitespaces)

@@ -7,12 +7,13 @@
 # come from (app/Madeira/Madeira.entitlements). Signing here would only produce
 # an IPA bound to this machine's identity, which is not what a sideloader wants.
 #
-# Why a script and not just a workflow: this has to run on a machine whose tree
-# already contains the prebuilt archives. 11 of the 15 archives the link step
-# needs are gitignored build products (FEX, wineserver/ntdll/win32u, DXMT) and
-# the three submodules are empty in a clean clone, so a fresh checkout cannot be
-# linked at all. That is checked below before any compiler starts, so the
-# failure names the missing archive instead of surfacing as "library not found".
+# Works two ways: on a Mac whose tree already built these archives, and as the
+# packaging step of .github/workflows/ipa.yml, which builds all 15 from the
+# pinned sources first. 11 of the 15 are gitignored build products (FEX,
+# wineserver/ntdll/win32u, DXMT) and the three submodules are empty in a clean
+# clone, so a bare checkout cannot be linked at all. That is checked below
+# before any compiler starts, so the failure names the missing archive instead
+# of surfacing as "library not found".
 #
 # Usage:
 #   scripts/make-ipa.sh [--output PATH] [--configuration Release|Debug] [--keep-build]

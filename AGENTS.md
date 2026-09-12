@@ -231,24 +231,33 @@ one on-iPad confirmation.
     `ContentView.swift` needs SwiftUI and cannot be type-checked off-device, so
     type errors there are still caught by nothing until a Mac or a build.
 - `.github/workflows/gates.yml` runs `tools/check-all.sh` on every push and PR,
-  on `macos-15` because two gates need `swiftc`. It is the only CI.
-- `scripts/make-ipa.sh` builds and packages the unsigned `Madeira-unsigned.ipa`.
-  It runs `tools/check-build-inputs.sh` first, because a clean clone cannot be
-  linked. `--output`, `--configuration`, `--keep-build`.
-- `scripts/publish-build-libs.sh` (ml792) tars the archives the link step needs
-  and uploads them as `madeira-build-libs.tar.gz` on a `build-libs` release.
-  That is what lets `ipa.yml` run on an ordinary `macos-15` runner: on a clean
-  checkout 11 of 15 archives are missing, they are gitignored, and the
-  submodules they come from are empty. Re-publish when the toolchain or the core
-  commit changes. `tools/check-build-inputs.sh --list` is the single definition
-  of the set; publish and restore both consume it.
-- `.github/workflows/ipa.yml` calls `make-ipa.sh`, restoring the `build-libs`
-  asset first. It takes `runner` (self-hosted macOS whose tree is already built)
-  and `libs_tag`. It is dispatch-only, so it has to be on the default branch to
-  appear in the Actions tab.
-- `build/wineserver/build.sh` patches an existing `app/Madeira/libwineserver.a`;
-  it does not produce one, and that base archive is gitignored too. There is no
-  script in this repo that builds `libwineserver.a` from scratch.
+  on `macos-15` because two gates need `swiftc`.
+- `scripts/make-ipa.sh` builds and packages the unsigned `Madeira-unsigned.ipa`
+  on a Mac. It runs `tools/check-build-inputs.sh` first, because a clean clone
+  cannot be linked. `--output`, `--configuration`, `--keep-build`.
+- `.github/workflows/ipa.yml` builds the IPA on a hosted `macos-15` runner with
+  no Mac and no pre-published binaries: FEX (`scripts/build-fex-ios.sh`), the
+  GnuTLS stack, the Wine unix libs, LLVM 15 for iOS
+  (`build/dxmt-ios/build-llvm.sh`) and DXMT (`build/dxmt-ios/build-all.sh`) are
+  compiled from the pinned submodules, checked with
+  `tools/validate-ios-bundle.py`, and cached between runs. It needs the iOS 26
+  SDK because `ContentView.swift` calls `glassEffect()`. Triggered by pushes
+  touching `scripts/`, `build/`, `tools/`, `patches/` or the workflow itself,
+  and by `workflow_dispatch`.
+- `scripts/prepare-wine-ios.sh` downloads llvm-mingw, configures Wine for macOS
+  (`wine/build-macos`, including the generated headers) and builds FreeType.
+  `build/wineserver/build.sh`, `build/ntdll-unix/build.sh` and
+  `build/win32u-unix/build.sh` then compile the Wine unix libs for iOS from
+  source — `libwineserver.a` included, so there is no patch-an-existing-archive
+  step any more and no base archive to supply.
+- `scripts/publish-build-libs.sh` (ml792) tars archives for a `build-libs`
+  release. It predates the self-building workflow and is now optional; the
+  workflow does not consume it.
+- The CI recipes above and `tools/validate-ios-bundle.py` /
+  `tools/ar-macho-symbols.py` came from the sibling fork
+  `LT-NP/uncrashed-ipad` (branch `fix/ci-ios-build`), which proved them on a
+  hosted runner. They are GPL-licensed like the rest of the project; the
+  `uncrashed` name survives only in two LLVM marker filenames.
 - `node` and `python3` are available and are the way to sanity-check
   `madeira-jit.js` (syntax + unit-test the pure helpers).
 - `build/*-tests` ship prebuilt `.exe`/binaries; they are not runnable on the

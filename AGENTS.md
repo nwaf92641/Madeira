@@ -336,6 +336,23 @@ committed copies stay stale until they are refreshed from the produced IPA.
 Until that refresh lands, the repo's DLLs and its source disagree; the stamp is
 what makes that state visible rather than assumed.
 
+### The shipped DLLs were unoptimized
+
+The four committed DLLs were not built by the `build-pe.sh` in this tree. That
+script passes `--buildtype release`, which meson turns into `-O3 -DNDEBUG`, but
+the DLLs it had been shipping contain uncompiled-looking machine code: every
+argument stored to the stack and immediately reloaded, no register allocation,
+`b` to the next instruction, 22,528 unwind entries against the rebuilt DLL's
+5,120, 21,306 stack-frame setups against 1,742, and 2.74MB of `.text` against
+1.71MB. Rebuilding them from the same pinned revision with the repo's own script
+is the first time they have been optimized.
+
+This matters more than any of the small levers above, and it is also the part to
+be careful about: `-O0` to `-O3` changes which latent undefined behaviour
+happens to work, so a rebuild is not a pure speed-up even when the source is
+identical. When a rebuilt DLL misbehaves, establish whether the same build with
+`--buildtype debug` (no `-O3`) also misbehaves before blaming the source change.
+
 Two capability facts worth having before promising "full game support":
 
 - **Feature level is not uniform, and reporting it was broken.** `d3d11.cpp`

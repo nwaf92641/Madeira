@@ -1001,10 +1001,10 @@ struct ContentView: View {
             MadeiraMetalView()
                 .frame(height: 240)
                 .background(Color.black)
-                .onAppear { TouchControlsHost.attach() }
+                .onAppear { InputOverlays.attach() }
                 .onReceive(NotificationCenter.default.publisher(
                     for: UIDevice.orientationDidChangeNotification)) { _ in
-                    TouchControlsHost.attach()   // re-frame to the new bounds
+                    InputOverlays.attach()   // re-frame to the new bounds
                 }
             HStack(spacing: 6) {
                 if pointerPanel {
@@ -1070,10 +1070,10 @@ struct ContentView: View {
                         // placeholder's; attaching here re-frames the overlays
                         // to the real bounds. Rotation re-attaches for the
                         // same reason.
-                        .onAppear { TouchControlsHost.attach() }
+                        .onAppear { InputOverlays.attach() }
                         .onReceive(NotificationCenter.default.publisher(
                             for: UIDevice.orientationDidChangeNotification)) { _ in
-                            TouchControlsHost.attach()
+                            InputOverlays.attach()
                         }
                     if !showImmersiveBar {
                         // Controls removed for now (ml586): game-only
@@ -2769,13 +2769,31 @@ final class ControlsWindow: UIWindow {
         // orientation test any more.
         guard GameChromeState.shared.immersive || bounds.width > bounds.height else { return nil }
         guard m.hitsInteractive(point, in: bounds) else { return nil }
+        // The on-screen pad is a HIGHER window (+102). Anything it claims is
+        // already being delivered to it, so this one has to stand down: two
+        // windows can both keep a touch, and a tap on the pad's cross would
+        // otherwise also fire whatever button the user had placed there.
+        if VirtualPadState.shared.claims(point, in: bounds) { return nil }
         return super.hitTest(point, with: event)
+    }
+}
+
+/// Attach (or re-frame) every window-level input overlay together.
+///
+/// Each of these lives in its own `UIWindow` above the game surface and frames
+/// itself from the same scene bounds, so they share one lifetime: re-framing one
+/// on rotation without the others leaves the rest at a portrait size. Called
+/// from `ContentView` where the game view appears and where the orientation
+/// changes, never from a view body.
+enum InputOverlays {
+    static func attach() {
+        TouchControlsHost.attach()
+        VirtualPadHost.attach()
     }
 }
 
 enum TouchControlsHost {
     private static var window: ControlsWindow?
-
     static func attach() {
         let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
         guard let scene = scenes.first(where: { $0.activationState == .foregroundActive })

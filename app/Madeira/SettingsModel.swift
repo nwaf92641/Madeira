@@ -192,6 +192,11 @@ struct MadeiraSettings: Equatable, Codable {
     var poolMB: Int = 0
     /// Clamp the expanded mip chain for block-compressed textures.
     var clampCompressedMips: Bool = false
+    /// The on-screen controller. Defaults to on, because it exists to replace
+    /// the system keyboard and a user who has to find the switch first has not
+    /// been helped.
+    var virtualPad: VirtualPadMode = .automatic
+    var virtualPadOpacity: Double = VirtualPadLayout.defaultOpacity
     var remoteHost: String = ""
     var remoteToken: String = ""
     var switches: Set<String> = []

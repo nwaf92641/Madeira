@@ -18,6 +18,7 @@ struct SettingsView: View {
             Form {
                 displaySection
                 graphicsSection
+                controlsSection
                 performanceSection
                 remoteSection
                 advancedSections
@@ -162,6 +163,42 @@ struct SettingsView: View {
         } footer: {
             Text("Leave off unless a title is running out of memory. It trades texture "
                 + "sharpness at distance for headroom.")
+        }
+    }
+
+    // MARK: - Controls
+
+    /// The on-screen controller. Deliberately its own section rather than part
+    /// of Graphics: this is the thing that replaces the system keyboard, so it
+    /// has to be findable by someone who is trying to play, not to tune.
+    private var controlsSection: some View {
+        Section {
+            Picker("On-screen controller", selection: $store.settings.virtualPad) {
+                ForEach(VirtualPadMode.allCases, id: \.self) { mode in
+                    Text(mode.label).tag(mode)
+                }
+            }
+            if store.settings.virtualPad != .off {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        Text("Visibility")
+                        Spacer()
+                        Text("\(Int(VirtualPadLayout.opacityClamped(store.settings.virtualPadOpacity) * 100))%")
+                            .foregroundStyle(.secondary)
+                            .monospacedDigit()
+                    }
+                    Slider(value: $store.settings.virtualPadOpacity,
+                           in: VirtualPadLayout.minOpacity...1)
+                }
+            }
+        } header: {
+            Text("Controls")
+        } footer: {
+            Text("A PlayStation-style touch pad — d-pad, \u{25B3}\u{25CB}\u{2715}\u{25A1}, "
+                + "shoulders and two sticks — mapped onto the same keyboard and mouse "
+                + "input a paired controller uses, so mouse-look works on the right "
+                + "stick. Rebind it in madeira-gamepad.txt. \"In game\" shows it while "
+                + "a game is on screen; the small \u{2715} in its middle turns it off.")
         }
     }
 

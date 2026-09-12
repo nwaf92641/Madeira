@@ -17,6 +17,9 @@ requires a debugger to attach, so it cannot go through the App Store.
   unit-tested. Read the header before touching `ContentView`'s body.
 - `app/Madeira/GamepadMap.swift` — controller → key/mouse mapping, pure and
   unit-tested. `app/Madeira/GamepadBridge.swift` is the only GCController code.
+- `app/Madeira/VirtualPad.swift` — the on-screen PlayStation-style pad, as pure
+  layout and touch-state functions. `app/Madeira/VirtualPadView.swift` is the
+  SwiftUI window that draws it and the gestures that drive it.
 - `app/Madeira/SettingsModel.swift` — the settings struct, the resolution
   policy and the engine-switch catalogue; pure and unit-tested (`test-app-ui`).
   It renders override files, it does not write them.
@@ -245,6 +248,55 @@ XInput still will not see it, and no change on this side fixes that.
 `GamepadBridge` glue itself cannot be compiled or run off-device; it still needs
 one on-iPad confirmation.
 
+## The on-screen pad goes through the same bridge, not around it (ml800)
+
+`VirtualPadView` is a touch DualShock — d-pad, △○✕□, four shoulders,
+Options/Share and two continuous sticks — that shows itself while a game is on
+screen (`VirtualPadMode.automatic`, the default) because the system keyboard is
+not a control scheme anyone can play with. It posts through `GamepadBridge`, the
+same object the physical controller uses, and therefore through the same single
+`post(from:to:)` differ. That is the whole design, and it is worth keeping:
+
+- Two differs would each hold their own idea of what was down. Whichever ran
+  last would win, so a key held on one source would flicker as the other
+  released it. `GamepadInput.merged` combines the two frames first instead
+  (buttons union; an axis takes whichever source is pushed further, so a thumb
+  resting on the pad cannot cancel a controller stick).
+- The bridge used to stop its tick when no controller was connected. It now also
+  runs while the pad asks for input, and stops — releasing everything — when
+  neither source does.
+- `ENABLED = 0` in `madeira-gamepad.txt` turns off the *physical* controller
+  only. The pad has its own switch in Settings; a user who turned off a gamepad
+  they are not holding has not asked for the touch controls to go away. The
+  bindings in that file still apply to the pad, so it is rebindable the same way.
+
+Geometry lives in `VirtualPad.swift` and is deliberately pure, because the
+failures here are invisible off-device and unrecoverable on it: a hit region
+that disagrees with the drawn button, two controls claiming one point, or a
+shoulder sitting on the immersive exit button all mean "unplayable".
+`tools/test-app-ui.sh` asserts, for six real device sizes: every control fully on
+screen, no two overlapping, nothing inside the top chrome inset, every control's
+own centre resolving to itself, and the PlayStation positions of the four face
+buttons. Extend that table rather than eyeballing a layout change.
+
+Two rules that are easy to lose and expensive to relearn:
+
+- The pad is drawn in its own `UIWindow` at `normal + 102` — above the touch
+  controls (+101), which are above the joystick pad (+100) — because the game
+  surface is a window-level `UIView` above the whole SwiftUI hierarchy. Unlike
+  the other two, `VirtualPadWindow.hitTest` claims a point only when a control
+  is there, so the gap between the buttons still belongs to the game.
+- A stick's `y` is negated in exactly one place, `VirtualPadLayout.stickVector`:
+  screen coordinates grow downward and `GamepadInput` is written up-positive.
+  `ContentView`'s `ControlsWindow.hitTest` also stands down for any point the pad
+  claims, or a tap on the pad would also fire whatever the user had placed on
+  their own touch-controls layer.
+
+`ls`/`rs` (stick clicks) are deliberately not on the pad: pressing a stick is a
+different gesture from steering it, and a tap on the stick centre already means
+"steer from here". The small ✕ in the middle of the deck — the one control
+that is not a gamepad button — turns the pad off from inside the game.
+
 ## Build / test constraints in this environment
 
 - The iOS app builds only with `xcodebuild` on macOS. There is no Linux build.
@@ -254,10 +306,11 @@ one on-iPad confirmation.
     (installs nothing, adapts the one Apple-only import, shims `sysctl`) and
     asserts its pool/override tables.
   - `tools/test-app-ui.sh` type-checks and asserts `AppLayout.swift`,
-    `GamepadMap.swift` and `SettingsModel.swift`. All three are deliberately
-    Foundation-only so this stays possible — keep framework imports out of
-    them. `SettingsStore.swift` needs Combine and `SettingsView.swift` needs
-    SwiftUI, so neither can be compiled off-device.
+    `GamepadMap.swift`, `VirtualPad.swift` and `SettingsModel.swift`. All four
+    are deliberately Foundation-only so this stays possible — keep framework
+    imports out of them. `SettingsStore.swift` needs Combine and
+    `SettingsView.swift` and `VirtualPadView.swift` need SwiftUI, so none of
+    those three can be compiled off-device.
   - `tools/check-swift-syntax.sh` runs `swiftc -parse` over every app source.
     This catches syntax only, NOT types: a misspelled property still parses.
     `ContentView.swift` needs SwiftUI and cannot be type-checked off-device, so

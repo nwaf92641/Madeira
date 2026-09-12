@@ -1,4 +1,5 @@
 import Foundation
+import Dispatch
 import GameController
 
 /// Turns a physical controller into input the guest already understands.
@@ -16,6 +17,10 @@ import GameController
 /// accepts the controller — including mouse-look on the right stick. A game that
 /// accepts ONLY XInput still will not see it, and no amount of work on this side
 /// changes that.
+///
+/// The on-screen PlayStation-style pad (`VirtualPadView`) is the same kind of
+/// source and goes through this same class, not a parallel one: one differ means
+/// one opinion about what is held down. See `setVirtual`.
 ///
 /// Opt out, or rebind anything, with `Documents/madeira-gamepad.txt`; see
 /// GamepadSettings. A connected controller is taken as intent, so the default
@@ -38,6 +43,8 @@ final class GamepadBridge {
     private var settings = GamepadSettings()
     private var timer: Timer?
     private var previous = GamepadOutput()
+    /// The on-screen pad's current frame. Empty until a thumb lands on it.
+    private var virtual = GamepadInput()
     /// Same reason as MetalBackedView.relCarry: at full tilt a stick moves far
     /// less than a pixel per frame at low mouse speeds, and truncating the
     /// fraction would make gentle mouse-look do nothing at all.
@@ -60,9 +67,37 @@ final class GamepadBridge {
 
     /// One line for the log and the UI.
     var summary: String {
-        if !settings.enabled { return "controller: off (madeira-gamepad.txt)" }
-        guard let c = controller else { return "controller: no gamepad connected" }
-        return "controller: \(c.vendorName ?? "gamepad") → keyboard + pointer"
+        let pad = virtualActive ? " + on-screen pad" : ""
+        if !settings.enabled && !virtualActive {
+            return "controller: off (madeira-gamepad.txt)"
+        }
+        guard let c = controller else { return "controller: no gamepad connected\(pad)" }
+        return "controller: \(c.vendorName ?? "gamepad") → keyboard + pointer\(pad)"
+    }
+
+    /// Hand the on-screen pad's current frame to the bridge.
+    ///
+    /// The same path as a physical controller on purpose: `GamepadMap` turns
+    /// this into the same keys and the same pointer motion, so the pad needs no
+    /// input path of its own and a game cannot tell the two apart. Called from
+    /// the pad's gestures, on the main thread.
+    ///
+    /// Main-thread only, because it starts and stops a `Timer` on the main run
+    /// loop and reads the same `previous` frame `tick` writes.
+    func setVirtual(_ input: GamepadInput) {
+        dispatchPrecondition(condition: .onQueue(.main))
+        virtual = input
+        // Starting the tick here is what makes the pad work with no controller
+        // paired at all; stopping it is what releases the last held key, since
+        // nothing else would.
+        refresh()
+    }
+
+    /// True while the on-screen pad is asking for input.
+    private var virtualActive: Bool {
+        !virtual.buttons.isEmpty
+            || virtual.leftX != 0 || virtual.leftY != 0
+            || virtual.rightX != 0 || virtual.rightY != 0
     }
 
     // MARK: - plumbing
@@ -88,7 +123,7 @@ final class GamepadBridge {
     }
 
     private func refresh() {
-        guard settings.enabled, controller != nil else {
+        guard physical != nil || virtualActive else {
             stop()
             return
         }
@@ -100,6 +135,16 @@ final class GamepadBridge {
         RunLoop.main.add(t, forMode: .common)
         timer = t
         fputs("[gamepad] \(summary)\n", stderr)
+    }
+
+    /// The paired controller, when one may be read at all.
+    ///
+    /// ENABLED=0 in `madeira-gamepad.txt` turns the physical controller off; the
+    /// on-screen pad is a separate switch in Settings and keeps working, because
+    /// a user who turned off a gamepad they are not holding has not asked for
+    /// the touch controls to go away.
+    private var physical: GCController? {
+        settings.enabled ? controller : nil
     }
 
     /// Release everything and stop.
@@ -117,8 +162,16 @@ final class GamepadBridge {
     }
 
     private func tick() {
-        guard let c = controller else { stop(); return }
-        let next = GamepadMap.output(for: input(from: c),
+        // The tick can outlive its sources: the pad may have been hidden and the
+        // controller unplugged between two frames, and there is nothing left to
+        // read. `stop()` releases whatever the last frame was holding.
+        guard physical != nil || virtualActive else { stop(); return }
+
+        var frame = virtual
+        if let c = physical {
+            frame = GamepadInput.merged(input(from: c), virtual)
+        }
+        let next = GamepadMap.output(for: frame,
                                      bindings: settings.bindings,
                                      mouseSpeed: settings.mouseSpeed)
         post(from: previous, to: next)

@@ -415,6 +415,37 @@ Two things about the pad are load-bearing, and both were wrong:
 - `build/*-tests` ship prebuilt `.exe`/binaries; they are not runnable on the
   build host.
 
+## Handing an unsigned IPA to the user
+
+The build lives in CI, so "give me an IPA" is three steps, and the third is the
+one that is easy to forget — the artifact is invisible until something serves
+it:
+
+1. Push the branch to the fork (`nwaf92641/Madeira`). `.github/workflows/*ipa*`
+   builds it on a hosted macOS runner; gates run first, so a red gate means no
+   IPA at all.
+2. Download the run's `Madeira-unsigned-ipa` artifact through the API and unzip
+   it (`curl -L .../actions/artifacts/<id>/zip`).
+3. Put the `.ipa` in `/workspace/project/ipa-dist/` and serve that directory on
+   port 12000 (`python3 -m http.server 12000 --bind 0.0.0.0`). The runtime maps
+   that port to `https://work-1-rwoqahycgtqbslzr.prod-runtime.all-hands.dev/`,
+   which is the link the user can actually open on the device. Restart the
+   server after any conversation restart; it does not survive one.
+
+`index.html` in that directory is the download page. Keep its build sha and
+SHA-256 in step with the file, and verify the served copy with `sha256sum` and a
+`Content-Length` check — a stale page over a new IPA is worse than no page.
+
+Pushing needs a credential that can write. The environment's own
+`GITHUB_TOKEN` is a GitHub App token that authenticates and can read
+(including CI logs and artifacts) but is denied writes with "Resource not
+accessible by integration", so a push with it fails. When the user supplies a
+PAT, use it for the push only; do not record it in this file or anywhere else
+in the repo.
+
+The artifact is unsigned: sideload it (AltStore, Sideloadly, TrollStore) or
+re-sign it. Nothing in the repo signs it.
+
 ## Release readiness
 
 - Bundle id must stay `com.madeira.emulator` in the Xcode project, matching

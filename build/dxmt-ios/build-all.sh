@@ -41,12 +41,14 @@ apply_dxmt_patches() {
 }
 
 # Hash of the patch set, so the PE rebuild below can tell whether the committed
-# DLLs were built from the current patches.
+# DLLs were built from the current patches. Content only: the path sha256sum
+# prints differs between a local checkout and a CI runner, and a path-dependent
+# stamp would mismatch on every machine and rebuild every run.
 dxmt_patch_hash() {
     local patch
     for patch in "$PATCH_DIR"/dxmt-*.patch; do
         [[ -f "$patch" ]] || continue
-        sha256_of "$patch"
+        sha256_of "$patch" | cut -d' ' -f1
     done | sha256_of | cut -d' ' -f1
 }
 

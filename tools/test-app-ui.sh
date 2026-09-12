@@ -331,6 +331,62 @@ let fxRoundTrip = try? JSONDecoder().decode(MadeiraSettings.self,
 check("the upscaling choice survives a save and load",
       fxRoundTrip?.metalFXUpscale ?? .off, .x2)
 
+// The compatibility levers all leave through madeira-dxmt.txt, because DXMT
+// reads them from DXMT_CONFIG. What is easy to get wrong is the *shape* of the
+// value rather than the key: DXMT's parser ends an unquoted value at the first
+// whitespace, so an unquoted description would reach the renderer as the single
+// word "AMD", and the bools are matched case-insensitively after lowercasing, so
+// "True" is the spelling that reads as a boolean.
+print("renderer compatibility:")
+var compat = MadeiraSettings()
+check("no compatibility options by default", body(compat, "madeira-dxmt.txt"), nil)
+
+compat.gpuIdentity = .amdRadeonPro5300M
+let gpuBody = body(compat, "madeira-dxmt.txt") ?? ""
+check("the reported GPU quotes its description",
+      gpuBody.contains("dxgi.customDeviceDesc=\"AMD Radeon Pro 5300M\""), true)
+check("and carries the vendor and device ids",
+      gpuBody.contains("dxgi.customVendorId=1002")
+          && gpuBody.contains("dxgi.customDeviceId=7340"), true)
+check("and writes one option per line",
+      gpuBody.split(separator: "\n").count, 3)
+
+compat.frameRateLimit = 60
+check("the frame cap is written",
+      body(compat, "madeira-dxmt.txt")?.contains("d3d11.preferredMaxFrameRate=60") ?? false,
+      true)
+compat.frameRateLimit = 0
+check("a zero cap writes no key at all",
+      body(compat, "madeira-dxmt.txt")?.contains("preferredMaxFrameRate") ?? false, false)
+
+compat.ignoreMapFlagNoWait = true
+check("the map flag is written",
+      body(compat, "madeira-dxmt.txt")?.contains("d3d11.ignoreMapFlagNoWait=True") ?? false,
+      true)
+compat.forceSDR = true
+check("force SDR is written",
+      body(compat, "madeira-dxmt.txt")?.contains("dxgi.forceSDR=True") ?? false, true)
+
+// Turning everything back off must remove the file, not leave an empty-bodied
+// one: the launch sequence unsets DXMT_CONFIG only when the body is absent, so
+// a file that lingers would carry the previous run's renderer config into the
+// next one.
+var compatOff = MadeiraSettings()
+compatOff.gpuIdentity = .automatic
+compatOff.frameRateLimit = 0
+compatOff.ignoreMapFlagNoWait = false
+compatOff.forceSDR = false
+check("turning them all off removes the file", body(compatOff, "madeira-dxmt.txt"), nil)
+
+compat.frameRateLimit = 120
+let compatRoundTrip = try? JSONDecoder().decode(MadeiraSettings.self,
+                                                from: JSONEncoder().encode(compat))
+check("the reported GPU survives a save and load",
+      compatRoundTrip?.gpuIdentity ?? .automatic, .amdRadeonPro5300M)
+check("and so does the frame cap", compatRoundTrip?.frameRateLimit ?? -1, 120)
+check("and the map flag", compatRoundTrip?.ignoreMapFlagNoWait ?? false, true)
+check("and force SDR", compatRoundTrip?.forceSDR ?? false, true)
+
 // A settings blob from a build that predates the new keys must still decode.
 // The synthesized decoder demands every key, and SettingsStore treats a throw
 // as "no saved settings" — so a decode failure silently resets the user's
@@ -347,6 +403,11 @@ check("and defaults MetalFX off", legacyDecoded?.metalFXUpscale ?? .x2, .off)
 // The fields it did carry must be read back faithfully, so its clamp keeps it
 // out of the Quality preset rather than being quietly dropped on load.
 check("and does not read as a preset", legacyDecoded?.matchingProfile ?? nil, nil)
+check("and defaults the reported GPU",
+      legacyDecoded?.gpuIdentity ?? .amdRadeonPro5300M, .automatic)
+check("and defaults the frame cap off", legacyDecoded?.frameRateLimit ?? 60, 0)
+check("and defaults the map flag off", legacyDecoded?.ignoreMapFlagNoWait ?? true, false)
+check("and defaults force SDR off", legacyDecoded?.forceSDR ?? true, false)
 
 let oldDefault = #"{"poolMB":512}"#
 let decodedDefault = try? JSONDecoder().decode(MadeiraSettings.self,

@@ -172,6 +172,13 @@ let inlineCases: [(text: String, want: String)] = [
      "d3d11.mipClampBC=1;d3d11.metalSpatialUpscaleFactor=2.0"),
     ("  a=1  \n\n  b=2  ", "a=1;b=2"),
     ("a=1;b=2", "a=1;b=2"),
+    // DXMT ends an unquoted value at the first whitespace and strips the quotes
+    // from a quoted one, so a description with spaces must arrive quoted and must
+    // survive the fold untouched. The Settings code writes these three lines; if
+    // the fold or the quoting broke, the renderer would be told the adapter is
+    // called "AMD" and nothing here would fail.
+    ("dxgi.customDeviceDesc=\"AMD Radeon Pro 5300M\"\ndxgi.customVendorId=1002\ndxgi.customDeviceId=7340",
+     "dxgi.customDeviceDesc=\"AMD Radeon Pro 5300M\";dxgi.customVendorId=1002;dxgi.customDeviceId=7340"),
     ("\n\n", ""),
     ("", ""),
 ]

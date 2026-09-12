@@ -20,6 +20,7 @@ struct SettingsView: View {
                 graphicsSection
                 controlsSection
                 performanceSection
+                compatibilitySection
                 remoteSection
                 advancedSections
                 overrideSection
@@ -345,6 +346,86 @@ struct SettingsView: View {
             Text("Performance")
         } footer: {
             Text(performanceFooter)
+        }
+    }
+
+    // MARK: - Renderer compatibility
+
+    // Split into rows for the same reason as Graphics and Performance: a
+    // Section's body is a single expression to the type checker, and the
+    // interpolations and quoting these rows carry are what make it expensive.
+    private var gpuIdentityRow: some View {
+        Picker("Reported GPU", selection: $store.settings.gpuIdentity) {
+            ForEach(GPUIdentity.allCases) { identity in
+                Text(identity.label).tag(identity)
+            }
+        }
+    }
+
+    private var frameLimitRow: some View {
+        Picker("Frame rate cap", selection: $store.settings.frameRateLimit) {
+            ForEach(MadeiraSettings.frameRateChoices, id: \.self) { cap in
+                Text(cap == 0 ? "Off" : "\(cap) fps").tag(cap)
+            }
+        }
+    }
+
+    private var mapFlagRow: some View {
+        Toggle(isOn: $store.settings.ignoreMapFlagNoWait) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Map without waiting")
+                Text("Reads a resource even when the title asked not to wait for it. "
+                    + "For a title that passes the flag and then mishandles the "
+                    + "\"still drawing\" error it is allowed to return.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private var forceSDRRow: some View {
+        Toggle(isOn: $store.settings.forceSDR) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Force SDR output")
+                Text("Reports an SDR display. Only for a title that misbehaves when "
+                    + "told the panel is HDR.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    /// Hoisted out of `compatibilityFooter` on purpose: `store.settings` is a
+    /// published property on an observable object, and inlining that chain into
+    /// the middle of a long `+` expression is the shape that pushed this file
+    /// over the type checker's budget before.
+    private var compatibilityGPUDetail: String {
+        store.settings.gpuIdentity.detail
+    }
+
+    private var compatibilityFooter: String {
+        "These change what the game is told, not how anything is drawn, and they "
+            + "are the levers that decide whether an unrecognised title runs at "
+            + "all. Turn one on when a game refuses to start, picks the wrong "
+            + "settings, or will not draw. The reported GPU is a name the game "
+            + "accepts, not a description of this device. "
+            + compatibilityGPUDetail
+            + " All of them are written to Documents/madeira-dxmt.txt and take "
+            + "effect on the next launch."
+    }
+
+    private var compatibilitySection: some View {
+        Section {
+            gpuIdentityRow
+            frameLimitRow
+            mapFlagRow
+            forceSDRRow
+        } header: {
+            Text("Renderer compatibility")
+        } footer: {
+            Text(compatibilityFooter)
         }
     }
 

@@ -302,11 +302,66 @@ enum MetalFXUpscale: Int, CaseIterable, Identifiable, Codable, Hashable {
     }
 }
 
+/// How the renderer identifies the graphics adapter to the guest.
+///
+/// Windows games decide what they are allowed to do by asking the adapter who
+/// it is. An unrecognised vendor is not a neutral answer: a title may refuse to
+/// start, fall back to a software renderer, clamp its settings, or select a
+/// shader path that does not exist here. DXMT reports an Apple GPU, which almost
+/// nothing shipped for Windows recognises -- which is why DXMT keeps its own
+/// table of identity overrides for the titles its authors support (Genshin
+/// Impact, YuanShen and Zenless Zone Zero all become an "AMD Radeon Pro 5300M")
+/// and why this is a *compatibility* control rather than a speed one.
+///
+/// Stored as a preset, not free text: `madeira-dxmt.txt` is generated from these
+/// fields and rewritten whenever any setting changes, so a hand-typed number
+/// would not survive the next toggle.
+enum GPUIdentity: String, CaseIterable, Identifiable, Codable, Hashable {
+    /// Write nothing and let DXMT report the real GPU.
+    case automatic
+    /// The identity DXMT substitutes for the titles named above.
+    case amdRadeonPro5300M
+
+    var id: String { rawValue }
+
+    /// The `dxgi.` options this preset writes, in file order.
+    ///
+    /// The description is quoted because DXMT's parser ends an unquoted value at
+    /// the first whitespace: bare, "AMD Radeon Pro 5300M" would arrive as the
+    /// single word "AMD".
+    var options: [(key: String, value: String)] {
+        switch self {
+        case .automatic:
+            return []
+        case .amdRadeonPro5300M:
+            return [("dxgi.customDeviceDesc", "\"AMD Radeon Pro 5300M\""),
+                    ("dxgi.customVendorId", "1002"),
+                    ("dxgi.customDeviceId", "7340")]
+        }
+    }
+
+    var label: String {
+        switch self {
+        case .automatic: return "Automatic"
+        case .amdRadeonPro5300M: return "AMD Radeon Pro 5300M"
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .automatic:
+            return "Report the real GPU. Correct for most titles; change it only "
+                + "for one that refuses to start or picks the wrong settings."
+        case .amdRadeonPro5300M:
+            return "The identity DXMT itself uses for Genshin Impact, Zenless Zone "
+                + "Zero and similar. A guess such a game accepts, not a fact about "
+                + "this device."
+        }
+    }
+}
+
 /// Everything the settings screen can change.
 ///
-/// Pure data: no UserDefaults, no UIKit. `overrideFiles` is the whole contract
-/// with the engine — the launch sequence reads these same files, which is why
-/// nothing here has to reach into C.
 struct MadeiraSettings: Equatable, Codable {
     var width: Int = 0
     var height: Int = 0
@@ -348,6 +403,30 @@ struct MadeiraSettings: Equatable, Codable {
     /// default. The app's own logs are unaffected.
     var disableWineLogging: Bool = false
 
+    /// Identity reported to the guest. See `GPUIdentity`.
+    var gpuIdentity: GPUIdentity = .automatic
+    /// `d3d11.preferredMaxFrameRate`, or zero to leave it alone.
+    ///
+    /// DXMT implements this as a Metal/CoreAnimation-paced limiter rather than a
+    /// CPU-side sleep, so the frames it does emit are evenly spaced. That is what
+    /// makes it worth offering: a title that cannot hold 60 does not become
+    /// smoother by being allowed to run at an uneven 40-55, and a cap below what
+    /// the device can hold trades unused frames for a frame time that stops
+    /// moving. Deliberately off by default -- the game's own vsync is the right
+    /// answer until it demonstrably is not.
+    var frameRateLimit: Int = 0
+    /// `d3d11.ignoreMapFlagNoWait`. A title that passes
+    /// `D3D11_MAP_FLAG_DO_NOT_WAIT` and then fails to handle the
+    /// `DXGI_ERROR_WAS_STILL_DRAWING` it is allowed to return will stall or read
+    /// a resource that is not there. Ignoring the flag makes those calls block
+    /// and return real data instead. DXMT's own table switches this on for one
+    /// such title; it is off here because blocking can add a stall to a title
+    /// that does handle the flag correctly.
+    var ignoreMapFlagNoWait: Bool = false
+    /// `dxgi.forceSDR`. Reports an SDR display regardless of the panel.
+    /// DXMT's own table turns this on for a title that misbehaves in HDR mode.
+    var forceSDR: Bool = false
+
     /// A fresh decode with every field defaulted.
     ///
     /// Declared explicitly because providing `init(from:)` below suppresses the
@@ -359,6 +438,7 @@ struct MadeiraSettings: Equatable, Codable {
         case width, height, frameRate, poolMB, clampCompressedMips
         case virtualPad, virtualPadOpacity, remoteHost, remoteToken, switches
         case x87FastMath, disableWineLogging, metalFXUpscale
+        case gpuIdentity, frameRateLimit, ignoreMapFlagNoWait, forceSDR
     }
 
     /// Decode with every field defaulted.
@@ -384,6 +464,10 @@ struct MadeiraSettings: Equatable, Codable {
         x87FastMath = try c.decodeIfPresent(Bool.self, forKey: .x87FastMath) ?? false
         disableWineLogging = try c.decodeIfPresent(Bool.self, forKey: .disableWineLogging) ?? false
         metalFXUpscale = try c.decodeIfPresent(MetalFXUpscale.self, forKey: .metalFXUpscale) ?? .off
+        gpuIdentity = try c.decodeIfPresent(GPUIdentity.self, forKey: .gpuIdentity) ?? .automatic
+        frameRateLimit = try c.decodeIfPresent(Int.self, forKey: .frameRateLimit) ?? 0
+        ignoreMapFlagNoWait = try c.decodeIfPresent(Bool.self, forKey: .ignoreMapFlagNoWait) ?? false
+        forceSDR = try c.decodeIfPresent(Bool.self, forKey: .forceSDR) ?? false
     }
 
     static let empty = MadeiraSettings()
@@ -418,6 +502,14 @@ struct MadeiraSettings: Equatable, Codable {
     /// the engine's comments bracket (256 is the allocation floor, 3072 the
     /// documented clamp).
     static let poolChoices: [Int] = [0, 256, 384, 512, 768, 896, 1024, 1536, 2048, 3072]
+
+    /// Caps offered by the renderer frame-rate picker; zero means "off".
+    ///
+    /// These are factors of a display refresh rate (30/60/120), which is the
+    /// shape DXMT asks for: its limiter is paced by Metal against the display, so
+    /// a cap that is not a divisor of the refresh rate can be rounded down to one
+    /// that is rather than honoured exactly.
+    static let frameRateChoices: [Int] = [0, 30, 60, 120]
 
     static func poolClamped(_ mb: Int) -> Int {
         guard mb > 0 else { return 0 }
@@ -480,6 +572,26 @@ struct MadeiraSettings: Equatable, Codable {
         }
         if metalFXUpscale != .off {
             dxmt.append("d3d11.metalSpatialUpscaleFactor=\(metalFXUpscale.factor)")
+        }
+        // The compatibility levers, all of which go through this same file
+        // because DXMT reads them from DXMT_CONFIG. Written last only for
+        // readability -- each key appears once, so order does not decide
+        // anything here.
+        //
+        // `GPUIdentity` returns quoted text for the description because DXMT's
+        // parser ends an unquoted value at the first whitespace, and the bools
+        // are spelled `True` because that parser lowercases before matching.
+        for (key, value) in gpuIdentity.options {
+            dxmt.append("\(key)=\(value)")
+        }
+        if frameRateLimit > 0 {
+            dxmt.append("d3d11.preferredMaxFrameRate=\(frameRateLimit)")
+        }
+        if ignoreMapFlagNoWait {
+            dxmt.append("d3d11.ignoreMapFlagNoWait=True")
+        }
+        if forceSDR {
+            dxmt.append("dxgi.forceSDR=True")
         }
         files.append(("madeira-dxmt.txt", dxmt.isEmpty ? nil : dxmt.joined(separator: "\n")))
 

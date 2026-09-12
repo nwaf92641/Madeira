@@ -19,6 +19,7 @@ on:
     branches: [jit-disconnect-hardening]
     paths:
       - ".github/workflows/ipa.yml"
+      - "app/**"
       - "scripts/**"
       - "build/**"
       - "tools/**"

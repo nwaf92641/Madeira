@@ -60,7 +60,7 @@ registered in the Sources phase is silently not part of the app — invisible on
 any machine that cannot open Xcode. `tools/test-device-capabilities.sh` covers
 the JIT pool and override-parser policy; see Build / test constraints.)
 
-## JIT lifecycle (app 896 MB pool)
+## JIT lifecycle (app JIT pool, sized to the address space)
 
 1. `jit_check_debugged()` reads `CS_DEBUGGED` via `csops`.
 2. `enableJIT` opens StikDebug with the script in the URL; `pollForJIT` waits
@@ -68,6 +68,18 @@ the JIT pool and override-parser policy; see Build / test constraints.)
 3. `allocatePool` pre-pins low address space so the pool lands above
    ~0x119000000 (FEX dispatcher encoding is address-dependent), allocates via
    `brk #0xf00d` (`x16=1`), and applies the no-footprint ledger.
+   **It also measures the hole before it asks for it (ml793).** Pinning only
+   moves the address-space frontier; it does not guarantee that a hole the pool
+   fits in exists there. A 7GB device derives a 1760MB pool from
+   `recommendedPoolMB()`, the contiguous space below the guest window is about
+   a gigabyte, and the kernel's first fit then lands in 0x7000000000 — the
+   guest x86-64 window, where executing pool code hangs the first call. The
+   retry loop that used to sit here re-rolled the same address three times
+   (ml595) and then aborted, which is a hard crash on launch, not a slow start.
+   The pool size is therefore whatever the measured hole allows, floored at
+   256MB and halved on a failed placement, and everything downstream (the RW
+   alias, the ledger, `WINE_IOS_JIT_SIZE`) uses the size that was allocated
+   rather than the size that was requested.
 4. `detachDebugger()` emits `brk #0xf00d` with `x16=0`. It is **one-shot** on
    purpose: the early-detach and post-Wine paths both call it, and the second
    call would trap into our own task-level exception port. `enableJIT` re-arms

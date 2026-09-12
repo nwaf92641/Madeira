@@ -104,8 +104,14 @@ enum StikJITHelper {
 
     /// Allocate a JIT memory pool via BRK #0xf00d WITHOUT detaching the debugger.
     /// The debugger stays attached so Wine can use BRK to prepare PE code pages.
-    static func allocatePool(poolSize: Int = 128 * 1024 * 1024) -> (rx: UnsafeMutableRawPointer, rw: UnsafeMutableRawPointer, size: Int)? {
-        LogStore.shared.log("Allocating \(poolSize / 1024 / 1024)MB JIT pool via debugger...")
+    static func allocatePool(poolSize requestedSize: Int = 128 * 1024 * 1024) -> (rx: UnsafeMutableRawPointer, rw: UnsafeMutableRawPointer, size: Int)? {
+        // ml793: the pool the caller asks for and the pool the address space can
+        // hold are two different numbers. Everything downstream (RW alias, the
+        // no-footprint ledger, WINE_IOS_JIT_SIZE) must agree on the one that was
+        // actually allocated, so the request is a value and this is the name the
+        // rest of the function uses.
+        var poolSize = requestedSize
+        LogStore.shared.log("Allocating \(requestedSize / 1024 / 1024)MB JIT pool via debugger...")
 
         // iOS-Madeira: FEX's dispatcher emit has a position-dependent encoding
         // bug — only works when the JIT pool lands at a high enough address
@@ -142,55 +148,108 @@ enum StikJITHelper {
             }
         }
 
-        // Ask debugger to allocate RX pages (x0=0 triggers _M allocation).
-        // With pin chunks claimed, this should land at a higher address.
+        // ml793: reserve-and-carve, the fix ml596 said was needed but did not
+        // have. Pinning only walks the frontier; it never guarantees the hole
+        // the pool needs exists at the new frontier. That is exactly what breaks
+        // a 1760MB pool: a 7GB device derives 1760MB from recommendedPoolMB(),
+        // the low region between the app's mappings and the GPU carveout holds
+        // roughly a gigabyte of contiguous space, so no first fit exists below
+        // 448G and the kernel hands back the guest window instead. ml595 was
+        // this same failure at 896MB: three identical 0x7000000000 placements,
+        // then abort, every launch.
         //
-        // Two placement constraints (violating either bricks the session):
-        // - LOW BOUND: FEX has a position-dependent emit bug below
-        //   0x119000000 (mode A: dispatcher branches to zero memory before
-        //   block 0 runs; higher-address mode B is runtime-patched in
-        //   signal_arm64_ios.c init_syscall_frame).
-        // - GUEST WINDOW (ml78, 2026-07-13): with the 896MB pool the kernel
-        //   often places the region at 0x7000000000 — inside the guest
-        //   x86-64 64GB window [0x70,0x80)G where Wine packs PE images and
-        //   the fault handlers classify PCs as guest addresses. Executing
-        //   pool code there hangs the first pool call silently (black
-        //   screen / wallpaper-only desktop).
-        // Reject bad placements and re-roll: a bad region is freed when the
-        // kernel allows, otherwise kept alive as a pin.
-        // ⚠️ ml596: the old claim that the next pick "must land elsewhere" is FALSE.
-        // ml595 freed and re-requested three times and the kernel handed back the
-        // SAME 0x7000000000 hole each time, so the retry loop is not a strategy —
-        // it is three identical attempts. Failure is therefore deterministic within
-        // a launch and the caller must abort rather than run without a pool. A real
-        // fix needs explicit placement (hinted allocation / reserve-and-carve),
-        // not a re-roll; simply pinning the bad region to force a different address
-        // costs another 896MB against the 4096MB jetsam ceiling.
+        // So measure the hole instead of assuming it. Grow a contiguous
+        // reservation at the frontier until it covers the request or until a
+        // chunk lands in the guest window (which proves the low region is out),
+        // release the run, and ask the debugger for exactly the size it proved.
+        // The kernel's first fit then has nowhere else to go, the pool is as
+        // large as the address space allows, and it never lands in the guest
+        // window. Probed chunks are freed in every branch, so the cost is VA
+        // churn, not footprint.
         let goodLow = 0x119000000
         let guestLo = 0x7000000000
         let guestHi = 0x8000000000
+
+        func inGuestWindow(_ a: Int, _ size: Int) -> Bool {
+            a + size > guestLo && a < guestHi
+        }
+
+        /// Release and return the largest contiguous hole at the current
+        /// frontier, capped at `limit`. Returns (0, 0) when nothing usable below
+        /// the guest window is left.
+        func carveHole(limit: Int) -> (base: vm_address_t, size: Int) {
+            var start: vm_address_t = 0
+            var end: vm_address_t = 0
+            let cap = min(limit, 4096 * 1024 * 1024)
+            while Int(end - start) < cap {
+                var addr: vm_address_t = 0
+                guard vm_allocate(mach_task_self_, &addr, vm_size_t(chunkSize), VM_FLAGS_ANYWHERE) == KERN_SUCCESS else { break }
+                let next = addr + vm_address_t(chunkSize)
+                // A chunk at or past the guest window means the low region is
+                // exhausted; a non-adjacent chunk means the run stopped being a
+                // single hole. Either way, keep what was measured and stop.
+                if Int(next) > guestLo || (start != 0 && addr != end) {
+                    vm_deallocate(mach_task_self_, addr, vm_size_t(chunkSize))
+                    break
+                }
+                if start == 0 { start = addr }
+                end = next
+            }
+            guard start != 0, end > start else { return (0, 0) }
+            let size = Int(end - start)
+            // Log BEFORE the release. The formatted line allocates, and malloc's
+            // next region would be this hole — which is the one thing the pool
+            // needs. Release is the last thing that happens here, so the
+            // debugger's allocation is the next access to the address space.
+            LogStore.shared.log(String(format: "Carve: %dMB hole at 0x%lx — releasing for the pool",
+                                       size / 1024 / 1024, Int(start)))
+            let kr = vm_deallocate(mach_task_self_, start, vm_size_t(size))
+            guard kr == KERN_SUCCESS else { return (0, 0) }
+            return (start, size)
+        }
+
+        // Below this a pool is not worth having: FEX would spend most of the run
+        // recompiling evicted blocks. 256MB still covers a desktop session.
+        let floorSize = 256 * 1024 * 1024
         var rxPtrOpt: UnsafeMutableRawPointer? = nil
-        for attempt in 0..<3 {
+        var measuredHole = 0
+        var attemptSize = requestedSize
+        for placementAttempt in 0..<3 {
+            let hole = carveHole(limit: attemptSize)
+            measuredHole = max(measuredHole, hole.size)
+            guard hole.base != 0, hole.size >= floorSize else {
+                LogStore.shared.log(String(format: "Carve: only %dMB below the guest window — too small",
+                                           hole.size / 1024 / 1024), level: .error)
+                break
+            }
+            // Never ask for more than the hole: a larger request would miss it
+            // and fall back to the guest window.
+            poolSize = min(attemptSize, hole.size / chunkSize * chunkSize)
             guard let p = jit26_prepare_region(nil, poolSize), p != UnsafeMutableRawPointer(bitPattern: 0) else {
-                LogStore.shared.log("Debugger failed to allocate RX memory (attempt \(attempt))", level: .error)
+                LogStore.shared.log("Debugger failed to allocate RX memory (attempt \(placementAttempt))", level: .error)
                 break
             }
             let a = Int(bitPattern: p)
-            let inGuestWindow = a + poolSize > guestLo && a < guestHi
-            if a >= goodLow && !inGuestWindow {
+            if a >= goodLow && !inGuestWindow(a, poolSize) {
                 rxPtrOpt = p
                 break
             }
-            LogStore.shared.log(String(format: "BAD POOL placement 0x%lx (%@) — re-rolling (attempt %d)",
-                                       a, a < goodLow ? "mode A low" : "guest 64G window",
-                                       attempt), level: .error)
+            let why = a < goodLow ? "below the mode-A floor" : "in the guest 64G window"
+            LogStore.shared.log(String(format: "BAD POOL placement 0x%lx (%@) — attempt %d",
+                                       a, why, placementAttempt), level: .error)
+            // The carved hole was taken by someone else, or the kernel ignored
+            // it. Free, then halve the request as well: a layout that refuses a
+            // mapping this large a low address is not going to change its mind,
+            // and a smaller pool below the guest window beats no pool at all.
             let dkr = vm_deallocate(mach_task_self_, vm_address_t(a), vm_size_t(poolSize))
             LogStore.shared.log(dkr == KERN_SUCCESS
                 ? "  bad region freed"
                 : "  bad region kept as pin (vm_deallocate kr=\(dkr))")
+            attemptSize = max(poolSize / 2, floorSize)
         }
         guard let rxPtr = rxPtrOpt else {
-            LogStore.shared.log("BAD POOL: no valid placement after retries. Killing in 10s — please relaunch.", level: .error)
+            LogStore.shared.log(String(format: "BAD POOL: no placement below the guest window (hole was %dMB). Killing in 10s — please relaunch.",
+                                       measuredHole / 1024 / 1024), level: .error)
             DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + 10) {
                 LogStore.shared.log("BAD POOL — exiting now. Relaunch the app.", level: .error)
                 exit(0)
@@ -198,7 +257,7 @@ enum StikJITHelper {
             return nil
         }
         let rxAddr = Int(bitPattern: rxPtr)
-        LogStore.shared.log("RX pool at \(String(format: "%p", rxAddr))")
+        LogStore.shared.log("RX pool at \(String(format: "%p", rxAddr)) (\(poolSize / 1024 / 1024)MB)")
 
         // Create RW mapping via vm_remap
         var rwAddr: vm_address_t = 0

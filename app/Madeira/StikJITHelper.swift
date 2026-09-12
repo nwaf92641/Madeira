@@ -211,49 +211,73 @@ enum StikJITHelper {
         // Below this a pool is not worth having: FEX would spend most of the run
         // recompiling evicted blocks. 256MB still covers a desktop session.
         let floorSize = 256 * 1024 * 1024
-        var rxPtrOpt: UnsafeMutableRawPointer? = nil
-        var measuredHole = 0
-        var attemptSize = requestedSize
-        for placementAttempt in 0..<3 {
-            let hole = carveHole(limit: attemptSize)
-            measuredHole = max(measuredHole, hole.size)
-            guard hole.base != 0, hole.size >= floorSize else {
-                LogStore.shared.log(String(format: "Carve: only %dMB below the guest window — too small",
-                                           hole.size / 1024 / 1024), level: .error)
-                break
-            }
-            // Never ask for more than the hole: a larger request would miss it
-            // and fall back to the guest window.
-            poolSize = min(attemptSize, hole.size / chunkSize * chunkSize)
-            guard let p = jit26_prepare_region(nil, poolSize), p != UnsafeMutableRawPointer(bitPattern: 0) else {
-                LogStore.shared.log("Debugger failed to allocate RX memory (attempt \(placementAttempt))", level: .error)
-                break
+
+        /// One ask, one verdict. Kept as a closure so a wave can repeat the whole
+        /// measure-then-ask sequence without duplicating the rejection test.
+        func attemptPlacement(size: Int) -> UnsafeMutableRawPointer? {
+            guard let p = jit26_prepare_region(nil, size),
+                  p != UnsafeMutableRawPointer(bitPattern: 0) else {
+                LogStore.shared.log("Debugger failed to allocate RX memory", level: .error)
+                return nil
             }
             let a = Int(bitPattern: p)
-            if a >= goodLow && !inGuestWindow(a, poolSize) {
-                rxPtrOpt = p
-                break
-            }
+            if a >= goodLow && !inGuestWindow(a, size) { return p }
             let why = a < goodLow ? "below the mode-A floor" : "in the guest 64G window"
-            LogStore.shared.log(String(format: "BAD POOL placement 0x%lx (%@) — attempt %d",
-                                       a, why, placementAttempt), level: .error)
-            // The carved hole was taken by someone else, or the kernel ignored
-            // it. Free, then halve the request as well: a layout that refuses a
-            // mapping this large a low address is not going to change its mind,
-            // and a smaller pool below the guest window beats no pool at all.
-            let dkr = vm_deallocate(mach_task_self_, vm_address_t(a), vm_size_t(poolSize))
+            LogStore.shared.log(String(format: "BAD POOL placement 0x%lx (%@)", a, why),
+                                level: .error)
+            let dkr = vm_deallocate(mach_task_self_, vm_address_t(a), vm_size_t(size))
             LogStore.shared.log(dkr == KERN_SUCCESS
                 ? "  bad region freed"
                 : "  bad region kept as pin (vm_deallocate kr=\(dkr))")
-            attemptSize = max(poolSize / 2, floorSize)
+            return nil
+        }
+
+        // ml794: waves, not one shot, and never a self-inflicted exit.
+        //
+        // ml595 measured what the old loop actually did: three asks at the same
+        // size, in the same instant, with the same free-hole layout, so the kernel
+        // answered 0x7000000000 three times and the run was abandoned. Two things
+        // change that. The request now shrinks after each failed wave, because a
+        // pool too large for the hole is the failure being hit; and the waves are
+        // separated by a pause, because the layout is not static — a run that
+        // cannot place a pool now can place one a moment later once transient
+        // mappings drain. Only if every size down to the floor fails at the floor
+        // is there genuinely no room, and even then this returns nil rather than
+        // killing the process: the caller reports it and the user can press the
+        // launch button again, which is a recoverable state instead of an app that
+        // closes itself.
+        var rxPtrOpt: UnsafeMutableRawPointer? = nil
+        var measuredHole = 0
+        var smallestTried = requestedSize
+        // Largest first: the full request is what FEX wants, and every step down
+        // costs translation-cache headroom. The list always ends at the floor so
+        // a device that cannot fit anything larger still gets a usable pool.
+        let candidates = [requestedSize, requestedSize / 2, requestedSize / 4, floorSize]
+            .map { max($0 / chunkSize * chunkSize, floorSize) }
+        for (wave, size) in candidates.enumerated() {
+            smallestTried = size
+            let hole = carveHole(limit: size)
+            measuredHole = max(measuredHole, hole.size)
+            if hole.base != 0, hole.size >= floorSize {
+                // Never ask for more than the hole: a larger request would miss it
+                // and fall back to the guest window.
+                poolSize = min(size, hole.size / chunkSize * chunkSize)
+                if let placed = attemptPlacement(size: poolSize) {
+                    rxPtrOpt = placed
+                    break
+                }
+            } else {
+                LogStore.shared.log(String(format: "Carve: only %dMB below the guest window at %dMB requested",
+                                           hole.size / 1024 / 1024, size / 1024 / 1024), level: .error)
+            }
+            if wave < candidates.count - 1 { Thread.sleep(forTimeInterval: 0.4) }
         }
         guard let rxPtr = rxPtrOpt else {
-            LogStore.shared.log(String(format: "BAD POOL: no placement below the guest window (hole was %dMB). Killing in 10s — please relaunch.",
-                                       measuredHole / 1024 / 1024), level: .error)
-            DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + 10) {
-                LogStore.shared.log("BAD POOL — exiting now. Relaunch the app.", level: .error)
-                exit(0)
-            }
+            LogStore.shared.log(String(format: "BAD POOL: no placement below the guest window "
+                                       + "(largest hole %dMB, smallest request tried %dMB) — not starting Wine",
+                                       measuredHole / 1024 / 1024, smallestTried / 1024 / 1024),
+                                level: .error)
+            LogStore.shared.log("  Press launch again, or lower the JIT pool in Settings.", level: .info)
             return nil
         }
         let rxAddr = Int(bitPattern: rxPtr)

@@ -17,6 +17,14 @@ requires a debugger to attach, so it cannot go through the App Store.
   unit-tested. Read the header before touching `ContentView`'s body.
 - `app/Madeira/GamepadMap.swift` — controller → key/mouse mapping, pure and
   unit-tested. `app/Madeira/GamepadBridge.swift` is the only GCController code.
+- `app/Madeira/SettingsModel.swift` — the settings struct, the resolution
+  policy and the engine-switch catalogue; pure and unit-tested (`test-app-ui`).
+  It renders override files, it does not write them.
+- `app/Madeira/SettingsStore.swift` — persistence (`UserDefaults`, JSON) and
+  the file writing. This is the ONLY place settings reach the engine.
+- `app/Madeira/MadeiraUI.swift` — the theme and `HomeView`.
+- `app/Madeira/SettingsView.swift` — the settings screen, a front-end for the
+  engine's existing `madeira-*.txt` override channel.
 - `app/Madeira/madeira-jit.js` — the debugger-side JIT protocol script.
 - `app/Madeira/JITAllocator.c` / `.h` — pool allocation, dual-map, BRK protocol,
   no-footprint (Jetsam) handling, trap handler.
@@ -77,9 +85,19 @@ the JIT pool and override-parser policy; see Build / test constraints.)
    retry loop that used to sit here re-rolled the same address three times
    (ml595) and then aborted, which is a hard crash on launch, not a slow start.
    The pool size is therefore whatever the measured hole allows, floored at
-   256MB and halved on a failed placement, and everything downstream (the RW
-   alias, the ledger, `WINE_IOS_JIT_SIZE`) uses the size that was allocated
-   rather than the size that was requested.
+   256MB, and everything downstream (the RW alias, the ledger,
+   `WINE_IOS_JIT_SIZE`) uses the size that was allocated rather than the size
+   that was requested.
+   **It never exits the process (ml794).** The old path scheduled an `exit(0)`
+   when every placement failed, so a launch that could not place the pool
+   closed the app — the user sees that as "the desktop auto-shuts down", with
+   no way to tell it apart from a crash. Failure now returns `nil`, the run
+   sequence reports it through `RunStatus`, and the home screen shows it with a
+   retry hint. Placement depends on the memory layout at that instant, so a
+   second attempt is genuinely worth making. The size ladder is
+   `[requested, requested/2, requested/4, floor]`, largest first, with a pause
+   between waves — the waves are separated in time because the layout is not
+   static, and a run that cannot place a pool now can place one a moment later.
 4. `detachDebugger()` emits `brk #0xf00d` with `x16=0`. It is **one-shot** on
    purpose: the early-detach and post-Wine paths both call it, and the second
    call would trap into our own task-level exception port. `enableJIT` re-arms
@@ -235,15 +253,23 @@ one on-iPad confirmation.
   - `tools/test-device-capabilities.sh` type-checks `DeviceCapabilities.swift`
     (installs nothing, adapts the one Apple-only import, shims `sysctl`) and
     asserts its pool/override tables.
-  - `tools/test-app-ui.sh` type-checks and asserts `AppLayout.swift` and
-    `GamepadMap.swift`. Both are deliberately Foundation-only so this stays
-    possible — keep framework imports out of them.
+  - `tools/test-app-ui.sh` type-checks and asserts `AppLayout.swift`,
+    `GamepadMap.swift` and `SettingsModel.swift`. All three are deliberately
+    Foundation-only so this stays possible — keep framework imports out of
+    them. `SettingsStore.swift` needs Combine and `SettingsView.swift` needs
+    SwiftUI, so neither can be compiled off-device.
   - `tools/check-swift-syntax.sh` runs `swiftc -parse` over every app source.
     This catches syntax only, NOT types: a misspelled property still parses.
     `ContentView.swift` needs SwiftUI and cannot be type-checked off-device, so
     type errors there are still caught by nothing until a Mac or a build.
+- All three Swift gates SKIP silently without a `swiftc` on PATH, which makes a
+  green `check-all.sh` mean less than it looks. A Linux toolchain is enough to
+  run them: the `swift-6.2-RELEASE-debian12` tarball from swift.org runs on
+  Debian 13, needs the usual desktop deps (libcurl4, libedit, libicu,
+  libncurses, libpython3, libsqlite3, libxml2, uuid), and installs outside the
+  repository. Put its `usr/bin` on PATH and the gates run for real.
 - `.github/workflows/gates.yml` runs `tools/check-all.sh` on every push and PR,
-  on `macos-15` because two gates need `swiftc`.
+  on `macos-15` because three gates need `swiftc`.
 - `scripts/make-ipa.sh` builds and packages the unsigned `Madeira-unsigned.ipa`
   on a Mac. It runs `tools/check-build-inputs.sh` first, because a clean clone
   cannot be linked. `--output`, `--configuration`, `--keep-build`.
@@ -254,8 +280,8 @@ one on-iPad confirmation.
   compiled from the pinned submodules, checked with
   `tools/validate-ios-bundle.py`, and cached between runs. It needs the iOS 26
   SDK because `ContentView.swift` calls `glassEffect()`. Triggered by pushes
-  touching `scripts/`, `build/`, `tools/`, `patches/` or the workflow itself,
-  and by `workflow_dispatch`.
+  touching `app/`, `scripts/`, `build/`, `tools/`, `patches/` or the workflow
+  itself, and by `workflow_dispatch`.
 - `build/dxmt-ios/build-all.sh` rebuilds DXMT's four PE DLLs (`d3d11`, `dxgi`,
   `winemetal`, `d3d10core`) **only when they are missing**: they are committed,
   they were built against the same Wine revision the submodule pins, and a

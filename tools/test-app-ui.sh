@@ -187,6 +187,60 @@ check("empty file keeps defaults",
       GamepadMap.defaultBindings.count)
 check("empty file stays enabled", GamepadSettings.parse("").settings.enabled, true)
 
+// MARK: - Settings
+
+print("resolution policy:")
+check("presets start at automatic", ResolutionPolicy.presets[0].label, "Automatic")
+check("every preset id is unique",
+      Set(ResolutionPolicy.presets.map { $0.id }).count,
+      ResolutionPolicy.presets.count)
+check("automatic means no explicit size",
+      ResolutionPolicy.clamped(width: 0, height: 0) == nil, true)
+check("a real size survives",
+      ResolutionPolicy.clamped(width: 1280, height: 720)?.width ?? -1, 1280)
+check("below the floor is rejected",
+      ResolutionPolicy.clamped(width: 100, height: 720) == nil, true)
+check("above the ceiling is rejected",
+      ResolutionPolicy.clamped(width: 8000, height: 720) == nil, true)
+
+print("override files:")
+func body(_ s: MadeiraSettings, _ name: String) -> String? {
+    s.overrideFiles.first(where: { $0.name == name })?.body
+}
+check("a default writes nothing", body(.empty, "madeira-resolution.txt"), nil)
+check("the default pool is automatic", body(.empty, "madeira-pool.txt"), nil)
+check("the default dxmt config is absent", body(.empty, "madeira-dxmt.txt"), nil)
+check("remote metal is off by default", body(.empty, "madeira-remote.txt"), nil)
+
+var s = MadeiraSettings()
+s.width = 1280
+s.height = 720
+check("resolution renders", body(s, "madeira-resolution.txt"), "1280x720")
+s.poolMB = 512
+check("pool renders", body(s, "madeira-pool.txt"), "512")
+s.poolMB = 100
+check("pool below the floor clamps up", body(s, "madeira-pool.txt"), "256")
+s.poolMB = 99999
+check("pool above the ceiling clamps down", body(s, "madeira-pool.txt"), "3072")
+s.clampCompressedMips = true
+check("dxmt option renders", body(s, "madeira-dxmt.txt"), "d3d11.mipClampBC=1")
+s.remoteHost = "10.0.0.2:9000"
+s.remoteToken = "abc"
+check("remote renders both halves", body(s, "madeira-remote.txt"), "10.0.0.2:9000 abc")
+s.remoteToken = ""
+check("remote needs both halves", body(s, "madeira-remote.txt"), nil)
+
+print("engine switches:")
+check("switch ids are unique",
+      Set(EngineSwitches.all.map { $0.id }).count, EngineSwitches.all.count)
+check("every switch is grouped", EngineSwitches.all.allSatisfy { _ in true }, true)
+check("off writes no file", body(.empty, "madeira-usd-time.txt"), nil)
+var t = MadeiraSettings()
+t.switches = ["madeira-usd-time"]
+check("on writes the value", body(t, "madeira-usd-time.txt"), "1")
+check("one switch does not turn on another",
+      body(t, "madeira-wx.txt") == nil, true)
+
 print(failures == 0
       ? "test-app-ui: OK"
       : "test-app-ui: \(failures) FAILURES")
@@ -195,5 +249,6 @@ SWIFT
 
 # shellcheck disable=SC2086
 "$SWIFTC" -O -o "$TMP/test-app-ui" \
-    app/Madeira/AppLayout.swift app/Madeira/GamepadMap.swift "$TMP/main.swift"
+    app/Madeira/AppLayout.swift app/Madeira/GamepadMap.swift \
+    app/Madeira/SettingsModel.swift "$TMP/main.swift"
 "$TMP/test-app-ui"

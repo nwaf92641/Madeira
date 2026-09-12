@@ -261,13 +261,19 @@ enum DeviceCapabilities {
             } catch {
                 return nil
             }
-            // Darwin-only: corelibs-foundation has no URL resource values, and
-            // the off-device gate compiles this file, so it must not be a
-            // reference the Linux toolchain cannot resolve.
-            #if canImport(Darwin)
+            // Excluded from backup: the cache is regenerated from the game's own
+            // shaders, and the directory survives by design, so it would
+            // otherwise be copied out of the device and grow with use.
+            //
+            // Deliberately not behind `#if canImport(Darwin)`. This file is
+            // compiled off-device by the gate on Linux as well, so an
+            // unconditional call is the only form that gets type-checked here;
+            // a Darwin-only branch is precisely where a wrong API hides until
+            // the IPA workflow fails.
+            var values = URLResourceValues()
+            values.isExcludedFromBackup = true
             var scoped = url
-            try? scoped.setResourceValue(true, forKey: .isExcludedFromBackupKey)
-            #endif
+            try? scoped.setResourceValues(values)
             return url.path
         }
 

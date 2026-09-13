@@ -369,8 +369,15 @@ Now:
   sets `native_archs[arm64ec]` and `hybrid_archs[aarch64]` and so emits
   `libwinecrt0.a` only under `aarch64-windows/` (holding both object sets) --
   `arm64ec-windows/libwinecrt0.a` is not a target at all and make dies with "No
-  rule to make target". The separate arm64ec-only tree is also how the shipped
-  `arm64ec-windows` DLLs were originally built, in `wine/build-arm64ec`.
+  rule to make target". The merge drops the arm64ec `ntdll` and `dbghelp` import
+  archives as well, so an ARM64X tree emits no `arm64ec-windows/` Wine artifact
+  of any kind, and adding arm64ec to the aarch64 tree's `--enable-archs` cannot
+  work. The separate arm64ec-only tree is also how the shipped `arm64ec-windows`
+  DLLs were originally built, in `wine/build-arm64ec`.
+- Check a tree's targets before trusting it, rather than reading them off a CI
+  failure: `grep '^libs/winecrt0/arm64ec-windows/libwinecrt0.a:' build-macos/Makefile`
+  is present for `--enable-archs=arm64ec`, and absent -- like the ntdll and
+  dbghelp rules -- for `--enable-archs=aarch64,arm64ec`.
 - That script also applies `patches/wine-arm64ec-inline-asm.patch` before
   configure. ARM64EC defines `__x86_64__` (it is an x86_64-callable ARM64
   hybrid) and does **not** define `__aarch64__`, so a header guard written as

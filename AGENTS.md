@@ -353,6 +353,50 @@ happens to work, so a rebuild is not a pure speed-up even when the source is
 identical. When a rebuilt DLL misbehaves, establish whether the same build with
 `--buildtype debug` (no `-O3`) also misbehaves before blaming the source change.
 
+### Unimplemented features abort; they should decline (ml804)
+
+`IMPLEMENT_ME` and `UNIMPLEMENTED` in this tree expand to `Logger::err` followed
+by `abort()`. In an API implementation that is almost always the wrong move: the
+D3D11 and DXGI contracts let a driver refuse a feature with an HRESULT, and
+titles are written to cope with exactly that, because real hardware refuses
+things all the time. `abort()` converts "this optional feature is unavailable"
+into "the whole emulator is gone", with nothing the user can act on.
+
+The clearest proof that these were oversights rather than decisions: the same
+feature was already handled gracefully in one place and fatally in another.
+Debug annotation through the D3D11.0 `ID3DUserDefinedAnnotation` object returns
+-1 from `BeginEvent`/`EndEvent`, does nothing in `SetMarker`, and answers FALSE to
+`GetStatus` -- while the D3D11.2 methods on the device context for the same thing,
+`IsAnnotationEnabled`, `SetMarkerInt`, `BeginEventInt` and `EndEvent`, aborted.
+Wine's own `dxgi` swapchain functions, which the app also ships, return
+`E_NOTIMPL` for the very methods DXMT aborted on.
+
+`patches/dxmt-no-abort-on-optional-features.patch` removes eleven of them:
+the four annotation methods plus seven `IDXGISwapChain1/2` methods
+(`GetRestrictToOutput`, `SetBackgroundColor`, `GetBackgroundColor`, `SetRotation`,
+`GetRotation`, `SetSourceSize`, `GetSourceSize`). Two rules to keep when
+extending it:
+
+- **Prefer the truthful answer to a failure.** `GetRestrictToOutput` returns NULL
+  because the swap chain genuinely is not restricted to an output; `GetRotation`
+  returns the stored value; `GetSourceSize` returns the back buffer size, which is
+  the true source size when no scaling stage exists. Answering correctly is better
+  than answering "unsupported".
+- **When the semantics cannot be honoured, fail rather than accept.** `SetSourceSize`
+  succeeds only when the requested size equals the back buffer, and returns
+  `E_NOTIMPL` otherwise. Accepting a smaller source would tell a title to render
+  into the top-left corner of a backdrop it believes is being scaled up -- a
+  visibly broken frame that no log explains. Refusing keeps the title at native
+  resolution, where its output is correct. `SetRotation` refuses the real rotations
+  for the same reason: DXMT has no rotation stage, so success would mean a
+  sideways frame.
+
+Roughly two dozen aborts remain, concentrated in the D3D11.1/1.2 tiled-resource
+and D3D11.2 tile-mapping methods, `ReadFromSubresource`/`WriteToSubresource`,
+`CreateQuery1`, `SwapDeviceContextState`, and `Flush1`. `Flush1` is not a
+mechanical fix: it is `void` and takes an event to signal after the GPU work
+completes, so a no-op would leave a waiting title hung rather than crash it.
+
 Two capability facts worth having before promising "full game support":
 
 - **Feature level is not uniform, and reporting it was broken.** `d3d11.cpp`

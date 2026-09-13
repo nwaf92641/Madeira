@@ -5,6 +5,7 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 WINE_SRC="$REPO_ROOT/wine"
 WINE_BUILD="$WINE_SRC/build-macos"
+WINE_BUILD_ARM64EC="$WINE_SRC/build-macos-arm64ec"
 MINGW_VERSION=20260421
 MINGW_DIR="$REPO_ROOT/toolchains/llvm-mingw-$MINGW_VERSION-ucrt-macos-universal"
 DXMT_PE=0
@@ -80,40 +81,69 @@ fi
 
 # Re-run configure even after cache restoration: config.h alone says nothing
 # about the source revision, selected architecture, SDK or generated IDL headers.
-mkdir -p "$WINE_BUILD"
-(
-    cd "$WINE_BUILD"
-    # Wine's build tools execute on macOS, but the compiler is invoked by its
-    # absolute Xcode path, which carries no default sysroot: without an
-    # explicit -isysroot even <stdio.h> is missing (CI: tools/widl failed
-    # after configure itself passed — its probe program needs no headers).
-    # A bare exported SDKROOT does not fix it, and subshell exports would not
-    # reach the make steps below this block anyway. So resolve the SDK once,
-    # verify it up front (seconds, not minutes), and bake -isysroot into the
-    # flags configure records in its Makefiles — configure tests and make
-    # then compile and link against the same SDK.
-    MACOS_SDK="$(xcrun --sdk macosx --show-sdk-path)"
-    if [[ -z "$MACOS_SDK" || ! -d "$MACOS_SDK" ]]; then
-        echo "ERROR: macOS SDK not found (xcrun returned '${MACOS_SDK:-<empty>}')." >&2
-        exit 1
-    fi
-    if [[ ! -f "$MACOS_SDK/usr/include/stdio.h" ]]; then
-        echo "ERROR: macOS SDK has no usr/include/stdio.h: $MACOS_SDK" >&2
-        exit 1
-    fi
-    echo "macOS SDK: $MACOS_SDK ($(xcrun --sdk macosx --show-sdk-version))"
-    SYSROOT_FLAGS="-isysroot $MACOS_SDK"
-    # Preserve configure's actual compiler/linker diagnostic on failure.
-    trap 'status=$?; if [[ $status -ne 0 && -f config.log ]]; then cat config.log >&2; fi; exit "$status"' EXIT
-    CC="$(xcrun --sdk macosx --find clang)" \
-    CXX="$(xcrun --sdk macosx --find clang++)" \
-    CFLAGS="${CFLAGS:-} $SYSROOT_FLAGS" \
-    CPPFLAGS="${CPPFLAGS:-} $SYSROOT_FLAGS" \
-    LDFLAGS="${LDFLAGS:-} $SYSROOT_FLAGS" \
-    ../configure --enable-win64 --enable-archs=aarch64,arm64ec --with-mingw=llvm-mingw \
-        --without-x --without-freetype --without-vulkan --disable-tests \
-        --prefix=/tmp/wine-ios
-) 2>&1 | tee "$REPO_ROOT/wine-configure.log"
+configure_wine_tree() {
+    local build="$1" archs="$2" log="$3"
+    mkdir -p "$build"
+    (
+        cd "$build"
+        # Wine's build tools execute on macOS, but the compiler is invoked by its
+        # absolute Xcode path, which carries no default sysroot: without an
+        # explicit -isysroot even <stdio.h> is missing (CI: tools/widl failed
+        # after configure itself passed — its probe program needs no headers).
+        # A bare exported SDKROOT does not fix it, and subshell exports would not
+        # reach the make steps below this block anyway. So resolve the SDK once,
+        # verify it up front (seconds, not minutes), and bake -isysroot into the
+        # flags configure records in its Makefiles — configure tests and make
+        # then compile and link against the same SDK.
+        MACOS_SDK="$(xcrun --sdk macosx --show-sdk-path)"
+        if [[ -z "$MACOS_SDK" || ! -d "$MACOS_SDK" ]]; then
+            echo "ERROR: macOS SDK not found (xcrun returned '${MACOS_SDK:-<empty>}')." >&2
+            exit 1
+        fi
+        if [[ ! -f "$MACOS_SDK/usr/include/stdio.h" ]]; then
+            echo "ERROR: macOS SDK has no usr/include/stdio.h: $MACOS_SDK" >&2
+            exit 1
+        fi
+        echo "macOS SDK: $MACOS_SDK ($(xcrun --sdk macosx --show-sdk-version)), --enable-archs=$archs"
+        SYSROOT_FLAGS="-isysroot $MACOS_SDK"
+        # Preserve configure's actual compiler/linker diagnostic on failure.
+        trap 'status=$?; if [[ $status -ne 0 && -f config.log ]]; then cat config.log >&2; fi; exit "$status"' EXIT
+        CC="$(xcrun --sdk macosx --find clang)" \
+        CXX="$(xcrun --sdk macosx --find clang++)" \
+        CFLAGS="${CFLAGS:-} $SYSROOT_FLAGS" \
+        CPPFLAGS="${CPPFLAGS:-} $SYSROOT_FLAGS" \
+        LDFLAGS="${LDFLAGS:-} $SYSROOT_FLAGS" \
+        ../configure --enable-win64 --enable-archs="$archs" --with-mingw=llvm-mingw \
+            --without-x --without-freetype --without-vulkan --disable-tests \
+            --prefix=/tmp/wine-ios
+    ) 2>&1 | tee "$REPO_ROOT/$log"
+}
+
+# PE/COFF libraries, not the iOS Mach-O archives. Always rebuild their final
+# outputs so old scaffolding archives/scripts cannot satisfy make.
+build_wine_pe_libs() {
+    local build="$1" log="$2" target members
+    shift 2
+    local targets=("$@")
+    for target in "${targets[@]}"; do rm -f "$build/$target"; done
+    make -C "$build" -j"$JOBS" "${targets[@]}" 2>&1 | tee "$REPO_ROOT/$log"
+    "$build/tools/winebuild/winebuild" --version
+    for target in "${targets[@]:1}"; do
+        # llvm-ar must be able to read actual members; eight-byte placeholders fail.
+        members="$("$MINGW_DIR/bin/llvm-ar" t "$build/$target")"
+        [[ -n "$members" ]] || { echo "ERROR: empty Wine PE archive: $target" >&2; exit 1; }
+    done
+}
+
+# One tree per PE architecture, and never aarch64 together with arm64ec. With
+# both enabled Wine treats the pair as an ARM64X build: makedep sets
+# native_archs[arm64ec] and hybrid_archs[aarch64], so libwinecrt0.a is emitted
+# only as aarch64-windows/ (holding both object sets) and
+# arm64ec-windows/libwinecrt0.a is not a target at all -- the build dies with
+# "No rule to make target". DXMT looks the arm64ec imports up under the
+# per-architecture names, so arm64ec needs its own tree, the way the shipped
+# arm64ec DLLs were originally built in wine/build-arm64ec.
+configure_wine_tree "$WINE_BUILD" aarch64 wine-configure.log
 make -C "$WINE_BUILD" -j"$JOBS" include/all 2>&1 | tee "$REPO_ROOT/wine-headers-build.log"
 for header in config.h dwrite.h dwrite_3.h; do
     [[ -s "$WINE_BUILD/include/$header" ]] || { echo "ERROR: generated Wine header missing: $header" >&2; exit 1; }
@@ -128,26 +158,20 @@ else
 fi
 
 if [[ "$DXMT_PE" == 1 ]]; then
-    # These are PE/COFF libraries, not the iOS Mach-O archives. Always rebuild
-    # their final outputs so old scaffolding archives/scripts cannot satisfy make.
     # One set per architecture: DXMT links the arm64ec-windows DLLs against the
     # arm64ec imports, and using the aarch64 set instead produces link errors
     # that look like DXMT bugs rather than a missing import library.
-    targets=(
-        tools/winebuild/winebuild
-        libs/winecrt0/aarch64-windows/libwinecrt0.a
-        dlls/ntdll/aarch64-windows/libntdll.a
+    build_wine_pe_libs "$WINE_BUILD" wine-dxmt-pe-build.log \
+        tools/winebuild/winebuild \
+        libs/winecrt0/aarch64-windows/libwinecrt0.a \
+        dlls/ntdll/aarch64-windows/libntdll.a \
         dlls/dbghelp/aarch64-windows/libdbghelp.a
-        libs/winecrt0/arm64ec-windows/libwinecrt0.a
-        dlls/ntdll/arm64ec-windows/libntdll.a
+
+    configure_wine_tree "$WINE_BUILD_ARM64EC" arm64ec wine-configure-arm64ec.log
+    make -C "$WINE_BUILD_ARM64EC" -j"$JOBS" include/all 2>&1 | tee "$REPO_ROOT/wine-headers-build-arm64ec.log"
+    build_wine_pe_libs "$WINE_BUILD_ARM64EC" wine-dxmt-pe-build-arm64ec.log \
+        tools/winebuild/winebuild \
+        libs/winecrt0/arm64ec-windows/libwinecrt0.a \
+        dlls/ntdll/arm64ec-windows/libntdll.a \
         dlls/dbghelp/arm64ec-windows/libdbghelp.a
-    )
-    for target in "${targets[@]}"; do rm -f "$WINE_BUILD/$target"; done
-    make -C "$WINE_BUILD" -j"$JOBS" "${targets[@]}" 2>&1 | tee "$REPO_ROOT/wine-dxmt-pe-build.log"
-    "$WINE_BUILD/tools/winebuild/winebuild" --version
-    for target in "${targets[@]:1}"; do
-        # llvm-ar must be able to read actual members; eight-byte placeholders fail.
-        members="$("$MINGW_DIR/bin/llvm-ar" t "$WINE_BUILD/$target")"
-        [[ -n "$members" ]] || { echo "ERROR: empty Wine PE archive: $target" >&2; exit 1; }
-    done
 fi

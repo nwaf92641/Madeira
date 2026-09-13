@@ -359,11 +359,18 @@ Now:
   reason.
 - `tools/validate-ios-bundle.py` and the workflow gate check all four modules in
   both directories, each at its own expected machine word.
-- `scripts/prepare-wine-ios.sh` configures Wine with
-  `--enable-archs=aarch64,arm64ec` so the `arm64ec-windows` import archives
-  (`libwinecrt0.a`, `libntdll.a`, `libdbghelp.a`) exist. DXMT links the arm64ec
-  DLLs against those; without them the failure is a link error that reads like a
-  DXMT bug rather than a missing Wine target.
+- `scripts/prepare-wine-ios.sh` configures **two** Wine trees, one per PE
+  architecture (`wine/build-macos` for aarch64, `wine/build-macos-arm64ec` for
+  arm64ec), so the `arm64ec-windows` import archives (`libwinecrt0.a`,
+  `libntdll.a`, `libdbghelp.a`) exist. DXMT links the arm64ec DLLs against
+  those; without them the failure is a link error that reads like a DXMT bug
+  rather than a missing Wine target. They cannot share one tree: with
+  `--enable-archs=aarch64,arm64ec` Wine enters an ARM64X setup, where makedep
+  sets `native_archs[arm64ec]` and `hybrid_archs[aarch64]` and so emits
+  `libwinecrt0.a` only under `aarch64-windows/` (holding both object sets) --
+  `arm64ec-windows/libwinecrt0.a` is not a target at all and make dies with "No
+  rule to make target". The separate arm64ec-only tree is also how the shipped
+  `arm64ec-windows` DLLs were originally built, in `wine/build-arm64ec`.
 - That script also applies `patches/wine-arm64ec-inline-asm.patch` before
   configure. ARM64EC defines `__x86_64__` (it is an x86_64-callable ARM64
   hybrid) and does **not** define `__aarch64__`, so a header guard written as

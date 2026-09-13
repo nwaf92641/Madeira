@@ -297,12 +297,17 @@ jobs:
             build/**/obj/*.err
             build/**/obj/err-*.txt
             wine-configure.log
+            wine-configure-arm64ec.log
             wine/build-macos/config.log
+            wine/build-macos-arm64ec/config.log
             wine-headers-build.log
+            wine-headers-build-arm64ec.log
             wine-dxmt-pe-build.log
+            wine-dxmt-pe-build-arm64ec.log
             freetype-build.log
             build/gnutls-ios/obj/*.log
             toolchains/llvm-*/CMakeFiles/CMakeConfigureLog.yaml
             build/dxmt-ios/pe/meson-logs/**
+            build/dxmt-ios/pe-arm64ec/meson-logs/**
           if-no-files-found: warn
           retention-days: 14

@@ -11,6 +11,7 @@ BUILD_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$BUILD_DIR/../.." && pwd)"
 DXMT_ROOT="$REPO_ROOT/research/dxmt"
 WINE_BUILD="$REPO_ROOT/wine/build-macos"
+WINE_BUILD_ARM64EC="$REPO_ROOT/wine/build-macos-arm64ec"
 MINGW="$REPO_ROOT/toolchains/llvm-mingw-20260421-ucrt-macos-universal"
 PE_BUILD="$BUILD_DIR/pe"
 PE_BUILD_ARM64EC="$BUILD_DIR/pe-arm64ec"
@@ -26,12 +27,17 @@ for prefix in aarch64 arm64ec; do
     }
 done
 test -x "$WINE_BUILD/tools/winebuild/winebuild"
+test -x "$WINE_BUILD_ARM64EC/tools/winebuild/winebuild"
 test -s "$DXMT_ROOT/include/native/directx/d3d11.h"
 # Reject old setup-only dummy archives before Meson can accidentally accept them.
+# Each architecture's imports come from its own Wine tree: one tree cannot hold
+# both, because a tree with both enabled makes Wine emit a single ARM64X
+# libwinecrt0.a under aarch64-windows/ and no arm64ec-windows/ archive at all.
 for arch in aarch64-windows arm64ec-windows; do
-    for archive in "$WINE_BUILD/libs/winecrt0/$arch/libwinecrt0.a" \
-                   "$WINE_BUILD/dlls/ntdll/$arch/libntdll.a" \
-                   "$WINE_BUILD/dlls/dbghelp/$arch/libdbghelp.a"; do
+    if [[ "$arch" == arm64ec-windows ]]; then tree="$WINE_BUILD_ARM64EC"; else tree="$WINE_BUILD"; fi
+    for archive in "$tree/libs/winecrt0/$arch/libwinecrt0.a" \
+                   "$tree/dlls/ntdll/$arch/libntdll.a" \
+                   "$tree/dlls/dbghelp/$arch/libdbghelp.a"; do
         test -s "$archive" || { echo "Missing $archive; run scripts/prepare-wine-ios.sh --dxmt-pe" >&2; exit 1; }
         members=$("$MINGW/bin/llvm-ar" t "$archive")
         [[ -n "$members" ]] || { echo "Empty Wine import archive: $archive" >&2; exit 1; }
@@ -99,15 +105,15 @@ PY
 # aborts with "unbound variable". Spell out the two Meson invocations so the
 # first clean build works as well as a reconfiguration of an existing tree.
 build_arch() {
-    local label="$1" cross="$2" machine="$3" dest="$4" build_root="$5"
+    local label="$1" cross="$2" machine="$3" dest="$4" build_root="$5" wine_build="$6"
     if [[ -f "$build_root/meson-private/coredata.dat" ]]; then
         meson setup --reconfigure --cross-file "$BUILD_DIR/$cross" \
             --native-file "$BUILD_DIR/macos-native.ini" --buildtype release \
-            "-Dwine_build_path=$WINE_BUILD" "$build_root" "$DXMT_ROOT"
+            "-Dwine_build_path=$wine_build" "$build_root" "$DXMT_ROOT"
     else
         meson setup --cross-file "$BUILD_DIR/$cross" \
             --native-file "$BUILD_DIR/macos-native.ini" --buildtype release \
-            "-Dwine_build_path=$WINE_BUILD" "$build_root" "$DXMT_ROOT"
+            "-Dwine_build_path=$wine_build" "$build_root" "$DXMT_ROOT"
     fi
     meson compile -C "$build_root" -j "$JOBS"
 
@@ -141,6 +147,6 @@ write_cross_file aarch64-windows.ini aarch64
 write_cross_file arm64ec-windows.ini arm64ec
 
 build_arch aarch64 aarch64-windows.ini 0xAA64 \
-    "$REPO_ROOT/app/Madeira/aarch64-windows" "$PE_BUILD"
+    "$REPO_ROOT/app/Madeira/aarch64-windows" "$PE_BUILD" "$WINE_BUILD"
 build_arch arm64ec arm64ec-windows.ini 0x8664 \
-    "$REPO_ROOT/app/Madeira/arm64ec-windows" "$PE_BUILD_ARM64EC"
+    "$REPO_ROOT/app/Madeira/arm64ec-windows" "$PE_BUILD_ARM64EC" "$WINE_BUILD_ARM64EC"

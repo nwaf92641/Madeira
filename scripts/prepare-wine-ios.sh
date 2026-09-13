@@ -55,6 +55,29 @@ done
 aarch64-w64-mingw32-clang --version
 arm64ec-w64-mingw32-clang --version
 
+# ARM64EC defines __x86_64__ (it is an x86_64-callable ARM64 hybrid), so every
+# winnt.h guard that keys on __x86_64__ alone selects an x86 inline asm path in
+# what is really ARM64 code: winecrt0 then fails with "invalid input constraint
+# 'c'" on 'int $0x29', and 'lock; xchgl' assembles as something that is not the
+# atomic it looks like. Wine already writes these guards as
+# "__x86_64__ && !__arm64ec__" or "__aarch64__ || __arm64ec__" -- three sites did
+# not, and they only bite when a PE is built for arm64ec. The fix belongs in the
+# wine fork, but this tree cannot push there, so it is applied here at build time
+# exactly as patches/fex-ios-arm64-mbi.patch is. A patch that neither applies nor
+# is already applied is fatal: skipping it would leave the arm64ec DLLs
+# unbuildable and the failure would surface as a link error far from the cause.
+WINE_ARM64EC_PATCH="$REPO_ROOT/patches/wine-arm64ec-inline-asm.patch"
+if git -C "$WINE_SRC" apply --check "$WINE_ARM64EC_PATCH" 2>/dev/null; then
+    git -C "$WINE_SRC" apply "$WINE_ARM64EC_PATCH"
+    echo "Applied Wine arm64ec inline-asm patch."
+elif git -C "$WINE_SRC" apply --reverse --check "$WINE_ARM64EC_PATCH" 2>/dev/null; then
+    echo "Wine arm64ec inline-asm patch already applied."
+else
+    echo "ERROR: $WINE_ARM64EC_PATCH neither applies nor is already applied;" >&2
+    echo "       rebase it onto wine $(git -C "$WINE_SRC" rev-parse --short HEAD)." >&2
+    exit 1
+fi
+
 # Re-run configure even after cache restoration: config.h alone says nothing
 # about the source revision, selected architecture, SDK or generated IDL headers.
 mkdir -p "$WINE_BUILD"

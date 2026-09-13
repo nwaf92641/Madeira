@@ -364,6 +364,20 @@ Now:
   (`libwinecrt0.a`, `libntdll.a`, `libdbghelp.a`) exist. DXMT links the arm64ec
   DLLs against those; without them the failure is a link error that reads like a
   DXMT bug rather than a missing Wine target.
+- That script also applies `patches/wine-arm64ec-inline-asm.patch` before
+  configure. ARM64EC defines `__x86_64__` (it is an x86_64-callable ARM64
+  hybrid) and does **not** define `__aarch64__`, so a header guard written as
+  `#ifdef __x86_64__` selects x86 inline asm inside what is really ARM64 code:
+  `int $0x29` fails to compile at all, and `lock; xchgl` assembles into
+  something that is not the atomic it reads as. Wine writes these guards as
+  `__x86_64__ && !__arm64ec__` and `__aarch64__ || __arm64ec__` in 32 places
+  already; three in `winnt.h` (`InterlockedExchange`,
+  `InterlockedExchangePointer`, `__fastfail`) did not, and they only bite when a
+  PE is built for arm64ec. The fix belongs in the wine fork, which this tree
+  cannot push to, so it is applied at build time the way the FEX patch is.
+  Treat any such guard in a Windows header as suspect for arm64ec, and remember
+  that the arm64ec compiler's *objects* are machine `0xA641` while the *linked
+  DLL* is `0x8664` -- only the latter is what the bundle validator should check.
 
 To check a built bundle, test the machine word rather than mere existence:
 

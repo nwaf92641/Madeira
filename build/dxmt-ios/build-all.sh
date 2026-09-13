@@ -68,11 +68,17 @@ bash "$BUILD_DIR/build.sh"
 # run with a new fix rebuilds.
 rebuild_pe=0
 reason=""
-for dll in d3d11 dxgi winemetal d3d10core; do
-    if [[ ! -s "$APP_PE/$dll.dll" ]]; then
-        rebuild_pe=1
-        reason="$dll.dll is missing"
-    fi
+# Both architectures ship and Wine loads different ones depending on the
+# session: arm64ec-windows for x64 guests (real games) and aarch64-windows
+# otherwise. Checking only one directory is exactly how the arm64ec set stayed
+# at a revision older than every fix in patches/ without any build noticing.
+for arch in aarch64-windows arm64ec-windows; do
+    for dll in d3d11 dxgi winemetal d3d10core; do
+        if [[ ! -s "$REPO_ROOT/app/Madeira/$arch/$dll.dll" ]]; then
+            rebuild_pe=1
+            reason="$arch/$dll.dll is missing"
+        fi
+    done
 done
 if [[ "$rebuild_pe" == 0 ]]; then
     if [[ ! -f "$STAMP" ]]; then

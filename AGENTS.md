@@ -274,11 +274,12 @@ The IPA workflow builds exactly one DXMT artifact, `libdxmt_combined.a`, and
 translator, 15 files) and LLVM 15. The D3D11 API itself (`src/d3d11/`, ~19k
 lines), the DXMT core (`src/dxmt/`), DXGI and NVAPI are Windows-side code
 compiled into four PE DLLs — `d3d11.dll`, `dxgi.dll`, `winemetal.dll`,
-`d3d10core.dll` — which are **committed binaries** in
-`app/Madeira/aarch64-windows/`. The workflow only asserts they exist ("DXMT PE
+`d3d10core.dll` — which are **committed binaries**, in two architecture sets
+(`app/Madeira/aarch64-windows/` and `app/Madeira/arm64ec-windows/`; see "Two
+architectures ship" below). The workflow only asserts they exist ("DXMT PE
 module not shipped" in `.github/workflows/ipa.yml`), and `build-all.sh` rebuilds
-them only if absent, because rebuilding "only replaces known-good binaries ...
-a needless way to break D3D". So:
+them only if absent or if the patch stamp no longer matches, because rebuilding
+"only replaces known-good binaries ... a needless way to break D3D". So:
 
 - Editing `src/d3d11/*` or `src/dxmt/*` changes **nothing** in the IPA until the
   DLLs are cross-built by `build/dxmt-ios/build-pe.sh` and committed.
@@ -318,6 +319,65 @@ mapping does not fail a build, it produces a black screen that only a game
 reveals. Compile-verification narrows the risk to semantics, not correctness, so
 say which of the two a change has actually had.
 
+### Two architectures ship, and games load the arm64ec one (ml805)
+
+DXMT's four modules exist **twice**: `app/Madeira/aarch64-windows/` (PE machine
+`0xAA64`, native ARM64) and `app/Madeira/arm64ec-windows/` (PE machine `0x8664`,
+an x86_64-callable ARM64EC hybrid). Both are tracked, and `app/Madeira.xcodeproj`
+copies both into the bundle as folder resources. A session picks between them in
+`app/Madeira/WineProcessBridge.m`:
+
+    BOOL use_arm64ec = (MADEIRA_USE_ARM64EC == 1) ||
+                       (strstr(madeira_exe, "x64") != NULL) ||
+                       (strchr(madeira_exe, '\\') != NULL);
+    const char *bundle_subdir = use_arm64ec ? "arm64ec-windows" : "aarch64-windows";
+
+A game is launched by full Win32 path, so **every real game takes
+`arm64ec-windows/`**; only the in-bundle ARM64 tests (`cube.exe`) take
+`aarch64-windows/`. Both directories are still symlinked into the prefix's
+`system32` (non-colliding names from the other arch, plus the `sysx64`/`sysaa64`
+per-arch farms), but a game's `d3d11.dll` resolves to the arm64ec copy.
+
+That asymmetry was a silent shipping trap. `build-pe.sh` produced only
+`aarch64-windows/`; `build-all.sh` only looked in that one directory for missing
+files; and `.github/workflows/ipa.yml` only asserted `aarch64-windows/*.dll`
+existed. A patch could therefore be applied, built, validated, committed and
+reported green while `arm64ec-windows/` — the set games load — stayed at an older
+revision. It did: that directory's DLLs were last built 2026-08-28 (`4c1e9f0`)
+and carried none of the feature-level, no-abort or resource-residency fixes in
+`patches/`. Anything verified by loading `aarch64-windows/` says nothing about
+what a game runs.
+
+Now:
+
+- `build-pe.sh` writes two cross files (`aarch64-windows.ini`,
+  `arm64ec-windows.ini`; llvm-mingw's `arm64ec-w64-mingw32-*` reports
+  `cpu_family = 'aarch64'`, so only the tool prefix and install directory
+  differ), builds each into its own Meson tree (`pe/`, `pe-arm64ec/`), asserts
+  the machine word of every output, and installs into both app directories.
+- `build-all.sh` treats a missing DLL in **either** directory as a rebuild
+  reason.
+- `tools/validate-ios-bundle.py` and the workflow gate check all four modules in
+  both directories, each at its own expected machine word.
+- `scripts/prepare-wine-ios.sh` configures Wine with
+  `--enable-archs=aarch64,arm64ec` so the `arm64ec-windows` import archives
+  (`libwinecrt0.a`, `libntdll.a`, `libdbghelp.a`) exist. DXMT links the arm64ec
+  DLLs against those; without them the failure is a link error that reads like a
+  DXMT bug rather than a missing Wine target.
+
+To check a built bundle, test the machine word rather than mere existence:
+
+    python3 - <<'PY'
+    import struct, zipfile
+    z = zipfile.ZipFile('Madeira-unsigned.ipa')
+    for arch, want in (('aarch64-windows', 0xAA64), ('arm64ec-windows', 0x8664)):
+        for name in ('d3d11', 'dxgi', 'winemetal', 'd3d10core'):
+            b = z.read(f'Payload/Madeira.app/{arch}/{name}.dll')
+            off = struct.unpack_from('<I', b, 0x3c)[0]
+            mach = struct.unpack_from('<H', b, off + 4)[0]
+            print(arch, name, hex(mach), 'OK' if mach == want else 'WRONG')
+    PY
+
 ### Shipping a DXMT change
 
 `build-all.sh` hashes the patch set into
@@ -352,6 +412,12 @@ be careful about: `-O0` to `-O3` changes which latent undefined behaviour
 happens to work, so a rebuild is not a pure speed-up even when the source is
 identical. When a rebuilt DLL misbehaves, establish whether the same build with
 `--buildtype debug` (no `-O3`) also misbehaves before blaming the source change.
+
+The `arm64ec-windows/` set is in exactly the same state, and it is the one games
+load: its `d3d11.dll` is 5,398,528 bytes against the 4,792,320 the repo's own
+script produces for aarch64, with the same unoptimized instruction patterns. The
+first build after ml805 optimizes both sets, so the caveat above applies to a
+device run of either.
 
 ### Unimplemented features abort; they should decline (ml804)
 

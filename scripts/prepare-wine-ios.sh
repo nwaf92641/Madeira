@@ -37,10 +37,23 @@ if [[ ! -x "$MINGW_DIR/bin/aarch64-w64-mingw32-clang" ]]; then
     tar -xJf "$download/llvm-mingw.tar.xz" -C "$REPO_ROOT/toolchains"
 fi
 export PATH="$MINGW_DIR/bin:$PATH"
-for tool in aarch64-w64-mingw32-clang llvm-dlltool llvm-ar lld; do
+# Both targets are required, not just aarch64: DXMT ships DLLs for the native
+# ARM64 session and for the ARM64EC session that x64 games actually run in.
+# windres and strip are listed because build-pe.sh names them in each cross
+# file; a missing one there fails the Meson setup, long after this check.
+for prefix in aarch64-w64-mingw32 arm64ec-w64-mingw32; do
+    for tool in clang clang++ ar strip windres; do
+        [[ -x "$MINGW_DIR/bin/$prefix-$tool" ]] || {
+            echo "ERROR: incomplete llvm-mingw: $prefix-$tool missing." >&2
+            exit 1
+        }
+    done
+done
+for tool in llvm-dlltool llvm-ar lld; do
     [[ -x "$MINGW_DIR/bin/$tool" ]] || { echo "ERROR: incomplete llvm-mingw: $tool missing." >&2; exit 1; }
 done
 aarch64-w64-mingw32-clang --version
+arm64ec-w64-mingw32-clang --version
 
 # Re-run configure even after cache restoration: config.h alone says nothing
 # about the source revision, selected architecture, SDK or generated IDL headers.
@@ -74,7 +87,7 @@ mkdir -p "$WINE_BUILD"
     CFLAGS="${CFLAGS:-} $SYSROOT_FLAGS" \
     CPPFLAGS="${CPPFLAGS:-} $SYSROOT_FLAGS" \
     LDFLAGS="${LDFLAGS:-} $SYSROOT_FLAGS" \
-    ../configure --enable-win64 --enable-archs=aarch64 --with-mingw=llvm-mingw \
+    ../configure --enable-win64 --enable-archs=aarch64,arm64ec --with-mingw=llvm-mingw \
         --without-x --without-freetype --without-vulkan --disable-tests \
         --prefix=/tmp/wine-ios
 ) 2>&1 | tee "$REPO_ROOT/wine-configure.log"
@@ -94,11 +107,17 @@ fi
 if [[ "$DXMT_PE" == 1 ]]; then
     # These are PE/COFF libraries, not the iOS Mach-O archives. Always rebuild
     # their final outputs so old scaffolding archives/scripts cannot satisfy make.
+    # One set per architecture: DXMT links the arm64ec-windows DLLs against the
+    # arm64ec imports, and using the aarch64 set instead produces link errors
+    # that look like DXMT bugs rather than a missing import library.
     targets=(
         tools/winebuild/winebuild
         libs/winecrt0/aarch64-windows/libwinecrt0.a
         dlls/ntdll/aarch64-windows/libntdll.a
         dlls/dbghelp/aarch64-windows/libdbghelp.a
+        libs/winecrt0/arm64ec-windows/libwinecrt0.a
+        dlls/ntdll/arm64ec-windows/libntdll.a
+        dlls/dbghelp/arm64ec-windows/libdbghelp.a
     )
     for target in "${targets[@]}"; do rm -f "$WINE_BUILD/$target"; done
     make -C "$WINE_BUILD" -j"$JOBS" "${targets[@]}" 2>&1 | tee "$REPO_ROOT/wine-dxmt-pe-build.log"

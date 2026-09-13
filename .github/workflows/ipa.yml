@@ -249,8 +249,10 @@ jobs:
         run: |
           set -euo pipefail
           python3 tools/validate-ios-bundle.py --archive app/Madeira/libdxmt_combined.a
-          for dll in d3d11 dxgi winemetal d3d10core; do
-            [[ -s "app/Madeira/aarch64-windows/$dll.dll" ]] || { echo "ERROR: DXMT PE module not shipped: $dll.dll" >&2; exit 1; }
+          for arch in aarch64-windows arm64ec-windows; do
+            for dll in d3d11 dxgi winemetal d3d10core; do
+              [[ -s "app/Madeira/$arch/$dll.dll" ]] || { echo "ERROR: DXMT PE module not shipped: $arch/$dll.dll" >&2; exit 1; }
+            done
           done
 
       - name: Save the DXMT native library

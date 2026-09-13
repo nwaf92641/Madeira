@@ -70,10 +70,14 @@ def runtime_resources(read):
                  'vccorlib140', 'vcomp140', 'vcruntime140', 'vcruntime140_1',
                  'vcruntime140_threads'):
         pe(read(f'x86_64-vcruntime/{name}.dll'), 0x8664)
-    for name in ('d3d11', 'dxgi', 'winemetal', 'd3d10core'):
-        pe(read(f'aarch64-windows/{name}.dll'), 0xAA64)
     for directory, machine in (('aarch64-windows', 0xAA64),
                                ('arm64ec-windows', 0x8664)):
+        # The four DXMT modules are built once per architecture. Wine loads the
+        # arm64ec set for x64 guests -- which is every real game -- so a stale or
+        # wrong-arch copy here is a shipping regression even when the other
+        # directory validates cleanly.
+        for name in ('d3d11', 'dxgi', 'winemetal', 'd3d10core'):
+            pe(read(f'{directory}/{name}.dll'), machine)
         for name in ('ntdll', 'kernel32', 'kernelbase', 'user32', 'win32u'):
             pe(read(f'{directory}/{name}.dll'), machine)
     pe(read('arm64ec-windows/xtajit64.dll'), 0x8664)

@@ -64,34 +64,24 @@ The IPA is deliberately unsigned: JIT needs a debugger to attach, so the app
 cannot go through the App Store, and the sideloader re-signs it with your Apple
 ID — which is also where the JIT entitlements come from.
 
-This has to run on a machine that has already built the app. Most of what the
-link step needs is not in the repository: FEX, the `wineserver`/`ntdll`/`win32u`
-layer and DXMT are gitignored build products, and the submodules they come from
-are empty in a clean clone. On a fresh checkout 11 of the 15 required archives
-are missing and the app cannot be linked at all. `tools/check-build-inputs.sh`
-parses that list out of the Xcode project and reports what is missing and which
-`build/*/build.sh` produces it; `make-ipa.sh` runs it first so the failure is
-the real one rather than `ld: library not found`.
+On GitHub, with no Mac of your own: run the `ipa` workflow (Actions → Build IPA
+(hosted, unsigned) → Run workflow). It compiles the 15 link inputs from the
+pinned sources first — FEX, the GnuTLS stack, Wine `wineserver`/`ntdll`/
+`win32u`, LLVM 15 for iOS and DXMT — validates each archive, packages the app
+and uploads `Madeira-unsigned-ipa`. Caches make later runs short; the first run
+compiles LLVM and ~150 Wine sources, so allow hours.
 
-`.github/workflows/ipa.yml` runs the same script, unsigned, and uploads the
-result as an artifact. It needs the archives too, so it supports two modes:
+It needs the iOS 26 SDK, because `ContentView.swift` calls `glassEffect()`.
 
-1. **Hosted runner.** Publish the archives once from a Mac that already builds
-   the app:
+Most of what the link step needs is not checked in: FEX, the Wine unix layer and
+DXMT are gitignored build products, and the submodules they come from are empty
+in a clean clone, so a fresh checkout cannot be linked at all.
+`tools/check-build-inputs.sh` parses the required list out of the Xcode project
+and reports what is missing and which script produces it; `make-ipa.sh` and the
+workflow both consult it before any compiler starts.
 
-   ```sh
-   scripts/publish-build-libs.sh
-   ```
-
-   That uploads `madeira-build-libs.tar.gz` to a `build-libs` release, which the
-   workflow restores before building. Re-publish whenever the toolchain or the
-   core commit changes, or the IPA links a stale core against new app code.
-
-2. **Self-hosted runner.** Pass `runner: self-hosted` to use a macOS machine
-   whose tree is already built.
-
-To dispatch the workflow it has to exist on the default branch, so merge this
-branch into `main` first.
+`scripts/publish-build-libs.sh` still exists for publishing already-built
+archives to a `build-libs` release, but the workflow no longer needs it.
 
 ## Per-device tuning
 

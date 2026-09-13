@@ -52,6 +52,34 @@ struct GamepadInput: Equatable {
     var rightX = 0.0, rightY = 0.0
 }
 
+extension GamepadInput {
+    /// Combine two input sources into one frame.
+    ///
+    /// The on-screen pad and a paired controller are both live at once, and the
+    /// bridge posts through a single differ — two differs would fight over the
+    /// same key and whichever ran last would win, so a key held on one source
+    /// would flicker. Merging here instead makes "both want space" and "neither
+    /// does" the only two states that matter.
+    ///
+    /// Buttons union, because either source may hold a key. An axis takes
+    /// whichever source is pushed further, so a thumb resting on an idle pad
+    /// stick cannot cancel a controller stick that is actually being used.
+    static func merged(_ a: GamepadInput, _ b: GamepadInput) -> GamepadInput {
+        var out = GamepadInput()
+        out.buttons = a.buttons.union(b.buttons)
+        (out.leftX, out.leftY) = pick(a.leftX, a.leftY, b.leftX, b.leftY)
+        (out.rightX, out.rightY) = pick(a.rightX, a.rightY, b.rightX, b.rightY)
+        return out
+    }
+
+    /// The stronger of two axis pairs, compared by distance from centre.
+    private static func pick(_ ax: Double, _ ay: Double,
+                             _ bx: Double, _ by: Double) -> (Double, Double) {
+        (ax * ax + ay * ay) >= (bx * bx + by * by) ? (ax, ay) : (bx, by)
+    }
+}
+
+
 /// Everything the bridge posts for one frame of controller state.
 struct GamepadOutput: Equatable {
     /// Held virtual keys, from buttons and from the movement stick. A Set, so

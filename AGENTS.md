@@ -391,6 +391,20 @@ extending it:
   for the same reason: DXMT has no rotation stage, so success would mean a
   sideways frame.
 
+A second batch, `patches/dxmt-resource-residency-and-reclaim.patch`, fixes the
+two places where the memory-management API either aborted or lied:
+
+- `QueryResourceResidency` aborted. It is on the base `IDXGIDevice`, not an
+  obscure D3D11.2 interface, so any title that manages memory can reach it. It
+  now reports every resource `DXGI_RESIDENCY_FULLY_RESIDENT`, which is simply
+  true under unified memory -- and the answer needs no dereference of the
+  resource pointers, only the count. Note the return type is `HRESULT`, not
+  `void`; the aborting stub had already guessed right, so keep it.
+- `ReclaimResources` returned `S_OK` without writing `pDiscarded`, an output
+  array the caller reads one entry at a time. It now writes FALSE in every slot.
+  `OfferResources` is a no-op, so nothing was ever discarded and FALSE is the
+  honest answer; the old code handed back whatever was in the caller's buffer.
+
 Roughly two dozen aborts remain, concentrated in the D3D11.1/1.2 tiled-resource
 and D3D11.2 tile-mapping methods, `ReadFromSubresource`/`WriteToSubresource`,
 `CreateQuery1`, `SwapDeviceContextState`, and `Flush1`. `Flush1` is not a

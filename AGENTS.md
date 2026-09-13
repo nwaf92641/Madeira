@@ -391,7 +391,14 @@ Now:
   cannot push to, so it is applied at build time the way the FEX patch is.
   Treat any such guard in a Windows header as suspect for arm64ec, and remember
   that the arm64ec compiler's *objects* are machine `0xA641` while the *linked
-  DLL* is `0x8664` -- only the latter is what the bundle validator should check.
+  DLL* carries `0x8664` in its PE header -- only the latter is what the bundle
+  validator should check. That difference is real, not a mislink:
+  `llvm-readobj --file-headers` on one of these DLLs reports `COFF-ARM64EC`,
+  `IMAGE_FILE_MACHINE_ARM64EC (0xA641)`, a `CHPEMetadataPointer` and an
+  `.a64xrm` section, because the `0x8664` field is what lets an x64 loader
+  accept the file and llvm reads the CHPE metadata to identify it as ARM64EC.
+  Use that command to tell an arm64ec DLL from a plain x86_64 one; the raw
+  header word cannot distinguish them.
 
 To check a built bundle, test the machine word rather than mere existence:
 

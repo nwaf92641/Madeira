@@ -321,6 +321,16 @@ enum GPUIdentity: String, CaseIterable, Identifiable, Codable, Hashable {
     case automatic
     /// The identity DXMT substitutes for the titles named above.
     case amdRadeonPro5300M
+    /// An NVIDIA GeForce identity. Titles that fingerprint the adapter against a
+    /// desktop card's device id -- and refuse or degrade when it does not match
+    /// -- accept this. The ids are a *claim*, not a fact: the GPU underneath is
+    /// still Apple silicon, so only the reported string changes.
+    ///
+    /// `1b81` is the GTX 1070. A request that prompted this preset quoted
+    /// `1b80`, which is the GTX 1080: a name/id mismatch is the one thing a
+    /// fingerprinting title can catch, so the description and the id agree here.
+    /// If a specific title matches on `1b80`, that is a one-token edit below.
+    case nvidiaGeForceGTX1070
 
     var id: String { rawValue }
 
@@ -337,6 +347,10 @@ enum GPUIdentity: String, CaseIterable, Identifiable, Codable, Hashable {
             return [("dxgi.customDeviceDesc", "\"AMD Radeon Pro 5300M\""),
                     ("dxgi.customVendorId", "1002"),
                     ("dxgi.customDeviceId", "7340")]
+        case .nvidiaGeForceGTX1070:
+            return [("dxgi.customDeviceDesc", "\"NVIDIA GeForce GTX 1070\""),
+                    ("dxgi.customVendorId", "10de"),
+                    ("dxgi.customDeviceId", "1b81")]
         }
     }
 
@@ -344,6 +358,7 @@ enum GPUIdentity: String, CaseIterable, Identifiable, Codable, Hashable {
         switch self {
         case .automatic: return "Automatic"
         case .amdRadeonPro5300M: return "AMD Radeon Pro 5300M"
+        case .nvidiaGeForceGTX1070: return "NVIDIA GeForce GTX 1070"
         }
     }
 
@@ -356,6 +371,10 @@ enum GPUIdentity: String, CaseIterable, Identifiable, Codable, Hashable {
             return "The identity DXMT itself uses for Genshin Impact, Zenless Zone "
                 + "Zero and similar. A guess such a game accepts, not a fact about "
                 + "this device."
+        case .nvidiaGeForceGTX1070:
+            return "Reports an NVIDIA GeForce GTX 1070 (vendor 10de, device 1b81). "
+                + "For a title that refuses to start or picks a software path on an "
+                + "unrecognised adapter. A claim, not a fact about this device."
         }
     }
 }

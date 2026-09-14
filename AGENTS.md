@@ -807,6 +807,53 @@ Two things about the pad are load-bearing, and both were wrong:
 - `build/*-tests` ship prebuilt `.exe`/binaries; they are not runnable on the
   build host.
 
+## DX11 hardening pass (ml806) — what changed, and what was already there
+
+A "harden DX11" request usually arrives phrased in DXVK terms. Three of its
+premises do not hold on this stack, and the work that does is already done:
+
+- **DXVK is not the layer.** DXMT translates D3D11 to Metal. `dxvk.enableAsync`
+  and `dxvk.numCompilerThreads` are not read by the shipped DLLs (DXMT compiles
+  DXBC → AIR → metallib on its own worker pool; async compile is the headline
+  feature, not a toggle). Geometry shaders and stream output are already
+  implemented as Metal compute (`DXMTGSDispatchMarshal`). The *reachable* config
+  surface stays the nine options listed in "The D3D11 (DXMT) lever surface";
+  anything else is silently not read. Do not ship a file that promises more.
+- **The device-identity request maps to an existing control.** `GPUIdentity`
+  now has a third preset, `nvidiaGeForceGTX1070` (`dxgi.customVendorId=10de`,
+  `dxgi.customDeviceId=1b81`, `dxgi.customDeviceDesc="NVIDIA GeForce GTX 1070"`).
+  The request quoted `1b80`, which is the GTX 1080's id; the preset uses `1b81`
+  so the name and the id agree (a fingerprinting title can catch the mismatch).
+  It flows through the existing `madeira-dxmt.txt` → `DXMT_CONFIG` channel, no
+  new path.
+- **A `dxvk.conf` pre-config file exists as an *optional* second channel.**
+  `app/Madeira/dxvk.conf` is a committed template in DXVK's `key = value` syntax
+  (which DXMT also accepts). Copy it into Documents as `dxvk.conf` and the
+  launch sequence folds it into `DXMT_CONFIG` via
+  `DeviceCapabilities.mergedDXMTConfig(settings:extra:)` — Settings wins on any
+  key both name. The file is a template, not bundled, so nothing changes until
+  the user opts in. `tools/test-device-capabilities.sh` pins the merge
+  precedence.
+
+What actually changed in this pass:
+
+- `d3dcompiler_44/45/46.dll` are aliased onto `d3dcompiler_47.dll` in the
+  prefix's `system32` at session start (`WineProcessBridge.m`, ml806). Wine
+  ships 43 and 47; titles import 44/45/46 by name and a missing one is a failed
+  start, not a degradation.
+- `scripts/stage-nls.sh` copies every `c_*.nls` the Wine build produced into
+  `app/Madeira/nls/` (a folder reference, so no project edit), closing the
+  `STATUS_OBJECT_NAME_NOT_FOUND` gap for codepages beyond the four committed
+  ones (c_437/1252/20127/28591). It is called from `scripts/make-ipa.sh` and is
+  deliberately soft — a tree with no Wine `nls/` output keeps its committed set
+  and still packages.
+- `build-ipa.yml` (new) is the `main`/PR/dispatch wrapper around `ipa.yml`,
+  which now also declares `workflow_call`. It publishes a GitHub Release with
+  the unsigned IPA on push/dispatch only, never from a PR, and auths with
+  `secrets.GH_TOKEN` falling back to `github.token` — no token is embedded.
+  `ipa.yml`'s own `push` trigger (branch `jit-disconnect-hardening`) is
+  unchanged.
+
 ## Handing an unsigned IPA to the user
 
 The build lives in CI, so "give me an IPA" is three steps, and the third is the

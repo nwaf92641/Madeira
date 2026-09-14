@@ -214,6 +214,52 @@ enum DeviceCapabilities {
             .joined(separator: ";")
     }
 
+    /// Split an inline DXMT config, or a `dxvk.conf` body, into ordered
+    /// `(key, value)` pairs.
+    ///
+    /// `dxvk.conf` uses DXVK's `key = value` file syntax, which DXMT also
+    /// accepts when it reads a file directly (`DXMT_CONFIG_FILE`). Folding a
+    /// hand-dropped file through this same splitter is what lets it share one
+    /// channel with the Settings-authored `madeira-dxmt.txt` instead of a
+    /// second, competing source of truth. A line with no `=` is skipped, which
+    /// is how DXVK's `#` comment lines are tolerated without teaching the
+    /// parser the comment grammar.
+    private static func dxmtEntries(_ text: String) -> [(key: String, value: String)] {
+        var entries: [(key: String, value: String)] = []
+        for raw in text.split(whereSeparator: { $0 == "\n" || $0 == ";" }) {
+            let entry = raw.trimmingCharacters(in: .whitespaces)
+            guard !entry.isEmpty, !entry.hasPrefix("#") else { continue }
+            let parts = entry.split(separator: "=", maxSplits: 1,
+                                    omittingEmptySubsequences: false)
+            guard parts.count == 2 else { continue }
+            let key = parts[0].trimmingCharacters(in: .whitespaces)
+            let value = parts[1].trimmingCharacters(in: .whitespaces)
+            guard !key.isEmpty, !value.isEmpty else { continue }
+            entries.append((key, value))
+        }
+        return entries
+    }
+
+    /// Fold the Settings-authored options with an optional `dxvk.conf` from
+    /// Documents into the single inline line DXMT reads from `DXMT_CONFIG`.
+    ///
+    /// Settings wins on any key it also names: that is the surface the user can
+    /// see the state of, and a hand-dropped file must not silently override a
+    /// toggle the screen is still showing. Keys only the extra file carries are
+    /// appended in file order, so a `dxvk.conf` that names just the device
+    /// identity coexists with whatever the screen has set for pacing and mips.
+    static func mergedDXMTConfig(settings: String, extra: String?) -> String {
+        let settingsEntries = dxmtEntries(settings)
+        let settingsKeys = Set(settingsEntries.map { $0.key })
+        var merged = settingsEntries
+        if let extra = extra {
+            for entry in dxmtEntries(extra) where !settingsKeys.contains(entry.key) {
+                merged.append(entry)
+            }
+        }
+        return merged.map { "\($0.key)=\($0.value)" }.joined(separator: ";")
+    }
+
     // MARK: - Renderer caches
 
     /// Where DXMT keeps its compiled shaders, and why it is not where it

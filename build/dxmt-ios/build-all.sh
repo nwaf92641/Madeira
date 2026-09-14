@@ -52,6 +52,25 @@ dxmt_patch_hash() {
     done | sha256_of | cut -d' ' -f1
 }
 
+# The arm64ec winecrt0 build needs one Wine-side fix that is not yet in the
+# pinned submodule (ml807): include/winnt.h's __fastfail() guards on __x86_64__
+# without excluding __arm64ec__, so the arm64ec target takes the x86 "int $0x29"
+# path and clang rejects the "c" (ECX) constraint. Applied only when the PE
+# rebuild actually runs, so a stamp-matching build does not touch the wine tree.
+apply_wine_patch() {
+    local patch="$REPO_ROOT/patches/wine-arm64ec-fastfail.patch"
+    if git -C "$REPO_ROOT/wine" apply --check "$patch" 2>/dev/null; then
+        git -C "$REPO_ROOT/wine" apply "$patch"
+        echo "Applied patches/wine-arm64ec-fastfail.patch"
+    elif git -C "$REPO_ROOT/wine" apply --reverse --check "$patch" 2>/dev/null; then
+        echo "patches/wine-arm64ec-fastfail.patch already applied"
+    else
+        echo "ERROR: patches/wine-arm64ec-fastfail.patch does not apply and is not already applied." >&2
+        echo "       wine is at $(git -C "$REPO_ROOT/wine" rev-parse --short HEAD)." >&2
+        exit 1
+    fi
+}
+
 apply_dxmt_patches
 patch_hash="$(dxmt_patch_hash)"
 
@@ -92,6 +111,7 @@ fi
 
 if [[ "$rebuild_pe" == 1 ]]; then
     echo "Rebuilding the DXMT PE DLLs ($reason)."
+    apply_wine_patch
     bash "$REPO_ROOT/scripts/prepare-wine-ios.sh" --dxmt-pe
     bash "$BUILD_DIR/build-pe.sh"
     echo "$patch_hash" > "$STAMP"

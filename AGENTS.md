@@ -854,6 +854,38 @@ What actually changed in this pass:
   `ipa.yml`'s own `push` trigger (branch `jit-disconnect-hardening`) is
   unchanged.
 
+## The arm64ec PE rebuild broke, and the stamp made it fatal (ml807)
+
+A cold DXMT build (cache miss) fails at `Build the DXMT native library`, not in
+any code this tree compiles on a Mac. Two pre-existing states combine:
+
+- The committed `.dxmt-pe-stamp` is stale: `dxmt-no-abort-on-optional-features.patch`
+  and `dxmt-resource-residency-and-reclaim.patch` landed after the DLLs were last
+  built (`998f623`, `e5e201f`), so `build-all.sh` correctly decides to rebuild the
+  PE DLLs. A warm cache hides this -- the previous green IPAs shipped the stale
+  DLLs because the DXMT cache hit skipped `build-all.sh` entirely.
+- That rebuild fails compiling Wine's `libs/winecrt0/arm64ec-windows/*.o`:
+  `include/winnt.h:7640` errors with `invalid input constraint 'c' in asm`. The
+  pinned Wine revision's `__fastfail()` is `#if defined(__x86_64__) || defined(__i386__)`
+  without the `!defined(__arm64ec__)` guard every other x86 asm block in the same
+  header carries. The arm64ec target defines `__x86_64__` (x64 source
+  compatibility), so it takes the x86 `int $0x29` path, and the `"c"` (ECX)
+  constraint does not exist on AArch64.
+
+`patches/wine-arm64ec-fastfail.patch` adds the missing guard, and
+`scripts/prepare-wine-ios.sh` applies it (idempotent, fatal on mismatch) before
+configure. This is the only hard error in that build: the other `lock; xchgl`
+x86 paths compile with a warning under arm64ec and are pre-existing. The winnt.h
+change is a no-op for plain arm64 (`__x86_64__` is not defined there), so the
+wineserver/ntdll/win32u unix builds are unaffected.
+
+Consequence: after this fix the runner rebuilds the four PE DLLs (both archs)
+with the two DXMT patches applied, so the produced IPA is correct; the committed
+DLLs and stamp stay stale until someone runs `build-pe.sh` on a Mac and commits
+the result. Do not "fix" the failure by bumping the stamp to the patch hash
+without rebuilding -- that is exactly the "claim the patches are in when they
+are not" state the stamp exists to prevent.
+
 ## Handing an unsigned IPA to the user
 
 The build lives in CI, so "give me an IPA" is three steps, and the third is the

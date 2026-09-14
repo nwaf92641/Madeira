@@ -1,0 +1,11 @@
+--- a/include/winnt.h
++++ b/include/winnt.h
+@@ -7636,7 +7636,7 @@
+ 
+ static FORCEINLINE DECLSPEC_NORETURN void __fastfail(unsigned int code)
+ {
+-#if defined(__x86_64__) || defined(__i386__)
++#if (defined(__x86_64__) || defined(__i386__)) && !defined(__arm64ec__)
+     for (;;) __asm__ __volatile__( "int $0x29" :: "c" ((ULONG_PTR)code) : "memory" );
+ #elif defined(__aarch64__)
+     register ULONG_PTR val __asm__("x0") = code;

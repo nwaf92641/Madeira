@@ -257,6 +257,38 @@ check("a second pass has nothing left to do", "\(secondPass.count)", "0")
 check("an absent directory is not an error", "\(absentPass.count)", "0")
 try? FileManager.default.removeItem(at: scratch)
 
+// MARK: - dxvk.conf merge
+//
+// A hand-dropped dxvk.conf is folded into the Settings channel. Settings wins
+// on a key both name; extra-only keys are appended in file order. The cases
+// below spell the NVIDIA identity the new preset writes and confirm that a
+// description containing spaces survives the merge the way it survives the fold.
+print("dxvk.conf merge:")
+let nvidiaSettings = "dxgi.customDeviceDesc=\"NVIDIA GeForce GTX 1070\";dxgi.customVendorId=10de;dxgi.customDeviceId=1b81"
+check("settings alone pass through unchanged",
+      DeviceCapabilities.mergedDXMTConfig(settings: nvidiaSettings, extra: nil),
+      nvidiaSettings)
+check("an empty extra file adds nothing",
+      DeviceCapabilities.mergedDXMTConfig(settings: "a=1", extra: ""),
+      "a=1")
+check("an extra-only key is appended",
+      DeviceCapabilities.mergedDXMTConfig(settings: "a=1", extra: "b=2"),
+      "a=1;b=2")
+check("a comment line in the extra file is skipped",
+      DeviceCapabilities.mergedDXMTConfig(settings: "a=1", extra: "# note\nb=2"),
+      "a=1;b=2")
+check("settings win on a key both name",
+      DeviceCapabilities.mergedDXMTConfig(settings: "a=1", extra: "a=9\nb=2"),
+      "a=1;b=2")
+check("the device identity merges without clobbering a settings key",
+      DeviceCapabilities.mergedDXMTConfig(
+          settings: "d3d11.mipClampBC=1",
+          extra: "dxgi.customVendorId=10de\ndxgi.customDeviceId=1b81"),
+      "d3d11.mipClampBC=1;dxgi.customVendorId=10de;dxgi.customDeviceId=1b81")
+check("the merged identity still arms MetalFX when asked",
+      "\(DeviceCapabilities.dxmtConfigArmsMetalFX(DeviceCapabilities.mergedDXMTConfig(settings: "d3d11.metalSpatialUpscaleFactor=2.0", extra: "dxgi.customVendorId=10de")))",
+      "true")
+
 print(failures == 0
       ? "test-device-capabilities: OK"
       : "test-device-capabilities: \(failures) FAILURES")

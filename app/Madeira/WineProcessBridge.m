@@ -757,6 +757,31 @@ static void *wine_process_thread(void *arg) {
                 }
             }
 
+            /* ml806: alias d3dcompiler_44/45/46 onto _47. Wine ships 43 and 47;
+             * titles import 44/45/46 by name (the per-SDK D3DCompiler build) and
+             * a failed load of any of them is a failed game start, not a
+             * degradation. The three are byte-compatible for the callers that
+             * matter, so point the missing names at the _47 that is already in
+             * system32 (from the session arch, or the cross-link pass above). */
+            {
+                NSString *c47 = [sys32Dir stringByAppendingPathComponent:@"d3dcompiler_47.dll"];
+                if ([fm fileExistsAtPath:c47]) {
+                    NSArray *aliases = @[@"d3dcompiler_44.dll",
+                                         @"d3dcompiler_45.dll",
+                                         @"d3dcompiler_46.dll"];
+                    int aliasLinked = 0;
+                    for (NSString *alias in aliases) {
+                        NSString *dst = [sys32Dir stringByAppendingPathComponent:alias];
+                        if ([fm fileExistsAtPath:dst]) continue;  // a real copy wins
+                        [fm removeItemAtPath:dst error:nil];      // clear a stale link
+                        if ([fm createSymbolicLinkAtPath:dst withDestinationPath:c47 error:nil])
+                            aliasLinked++;
+                    }
+                    if (aliasLinked)
+                        dprintf(STDERR_FILENO, "[WineProc] d3dcompiler 44/45/46 -> _47: %d aliases\n", aliasLinked);
+                }
+            }
+
             /* ml719: REPAIR THE SHELL FOLDERS. They ship as symlinks to the BUILD
              * MACHINE's home directory.
              *

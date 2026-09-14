@@ -15,6 +15,10 @@ name: Build IPA (hosted, unsigned)
 
 on:
   workflow_dispatch:
+  workflow_call:
+    # Reusable: .github/workflows/build-ipa.yml calls this to run the same
+    # proven pipeline on `main` (and PRs against it) and then publishes a
+    # release. The `push` trigger below is unchanged.
   push:
     branches: [jit-disconnect-hardening]
     paths:

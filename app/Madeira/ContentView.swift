@@ -2100,9 +2100,22 @@ struct ContentView: View {
             // the rest in silence -- invisible while this file held a single option,
             // and wrong the moment it held two.
             var dxmtConfig = ""
+            var settingsDXMT = ""
             if let d = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first,
                let txt = try? String(contentsOf: d.appendingPathComponent("madeira-dxmt.txt"), encoding: .utf8) {
-                dxmtConfig = DeviceCapabilities.dxmtConfigInline(txt)
+                settingsDXMT = DeviceCapabilities.dxmtConfigInline(txt)
+            }
+            // ml806: Documents/dxvk.conf is the DXVK-syntax pre-config file (see
+            // app/Madeira/dxvk.conf). It carries the same DXMT keys a cross-over
+            // style setup would put in dxvk.conf -- device identity, memory
+            // levers -- so a hand-dropped file is as capable as the Settings
+            // screen. Settings wins on any key both name, because that is the
+            // state the user can see.
+            if let d = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first,
+               let conf = try? String(contentsOf: d.appendingPathComponent("dxvk.conf"), encoding: .utf8) {
+                dxmtConfig = DeviceCapabilities.mergedDXMTConfig(settings: settingsDXMT, extra: conf)
+            } else {
+                dxmtConfig = settingsDXMT
             }
             if dxmtConfig.isEmpty {
                 // The environment outlives a run: this same process can start a
@@ -2113,7 +2126,7 @@ struct ContentView: View {
                 unsetenv("DXMT_METALFX_SPATIAL_SWAPCHAIN")
             } else {
                 setenv("DXMT_CONFIG", dxmtConfig, 1)
-                logStore.log("DXMT config: \(dxmtConfig) via madeira-dxmt.txt")
+                logStore.log("DXMT config: \(dxmtConfig) via madeira-dxmt.txt / dxvk.conf")
                 // MetalFX needs two channels and only one of them is the config
                 // file: the renderer gates the scaler on this variable and would
                 // ignore the factor without it. Deriving the variable from the text

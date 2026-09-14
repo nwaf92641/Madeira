@@ -48,6 +48,10 @@ if ! xcrun --sdk iphoneos --show-sdk-path >/dev/null 2>&1; then
     exit 1
 fi
 
+# Stage Wine's complete codepage set into the bundle (ml806). Soft: a tree with
+# no Wine build keeps its committed tables and still packages.
+bash scripts/stage-nls.sh
+
 # Fail here, with the real reason, rather than inside ld.
 tools/check-build-inputs.sh
 

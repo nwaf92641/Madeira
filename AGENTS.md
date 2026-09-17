@@ -872,12 +872,14 @@ any code this tree compiles on a Mac. Two pre-existing states combine:
   compatibility), so it takes the x86 `int $0x29` path, and the `"c"` (ECX)
   constraint does not exist on AArch64.
 
-`patches/wine-arm64ec-fastfail.patch` adds the missing guard, and
-`scripts/prepare-wine-ios.sh` applies it (idempotent, fatal on mismatch) before
-configure. This is the only hard error in that build: the other `lock; xchgl`
-x86 paths compile with a warning under arm64ec and are pre-existing. The winnt.h
-change is a no-op for plain arm64 (`__x86_64__` is not defined there), so the
-wineserver/ntdll/win32u unix builds are unaffected.
+`patches/wine-arm64ec-fastfail.patch` fixes the guard on both sides: it excludes
+`__arm64ec__` from the x86 branch *and* adds `__arm64ec__` to the `__aarch64__`
+branch. Both edits are needed -- clang's arm64ec target defines `__x86_64__` and
+`__arm64ec__` but deliberately does *not* define `__aarch64__`
+(`clang/lib/Basic/Targets/AArch64.cpp`), so excluding arm64ec from the x86 path
+alone would leave `__fastfail` with an empty body: it would compile and silently
+defeat fast-fail. `build/dxmt-ios/build-all.sh` applies the patch only when the
+PE rebuild runs, so a stamp-matching build does not touch the wine tree.
 
 Consequence: after this fix the runner rebuilds the four PE DLLs (both archs)
 with the two DXMT patches applied, so the produced IPA is correct; the committed

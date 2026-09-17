@@ -8,6 +8,15 @@ import tarfile
 import zipfile
 from pathlib import Path
 
+# Wine's xinput modules carry the app's virtual controller patch
+# (patches/wine-xinput-virtual-pad.patch) or they do not, and the difference is
+# invisible from outside: an unpatched xinput1_4.dll still answers
+# XInputGetState, it just reports ERROR_DEVICE_NOT_CONNECTED forever, so a game
+# says "no controller connected" and nothing else in the bundle looks wrong.
+# The patch pulls ntdll's unix-call dispatcher into the import table, which
+# nothing upstream in these modules does, so its name is the marker.
+PAD_IMPORT = b'__wine_init_unix_call'
+
 
 def require(condition, message):
     if not condition:
@@ -80,6 +89,17 @@ def runtime_resources(read):
             pe(read(f'{directory}/{name}.dll'), machine)
         for name in ('ntdll', 'kernel32', 'kernelbase', 'user32', 'win32u'):
             pe(read(f'{directory}/{name}.dll'), machine)
+        # Wine's XInput, which is where a game's controller goes when it knows
+        # what one is. xinput1_1, xinput1_2 and xinput1_4 share
+        # dlls/xinput1_3/main.c, so all three carry the patch; xinput9_1_0 is a
+        # separate forwarder that LoadLibrary's xinput1_4 and calls its exports
+        # at runtime, so it needs the machine check and nothing else.
+        for name in ('xinput1_1', 'xinput1_2', 'xinput1_3', 'xinput1_4', 'xinput9_1_0'):
+            pe(read(f'{directory}/{name}.dll'), machine)
+        for name in ('xinput1_1', 'xinput1_2', 'xinput1_3', 'xinput1_4'):
+            require(PAD_IMPORT in read(f'{directory}/{name}.dll'),
+                    f'{directory}/{name}.dll has no Madeira virtual pad '
+                    f'(rebuild it with patches/wine-xinput-virtual-pad.patch)')
     pe(read('arm64ec-windows/xtajit64.dll'), 0x8664)
     pe(read('arm64ec-windows/cube-x64.exe'), 0x8664)
     with tarfile.open(fileobj=io.BytesIO(read('prefix-template.tar.gz')), mode='r:gz') as prefix:

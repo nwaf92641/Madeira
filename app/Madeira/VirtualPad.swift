@@ -383,6 +383,13 @@ struct VirtualPadTouchState: Equatable {
         i.leftY = axes[.left]?.y ?? 0
         i.rightX = axes[.right]?.x ?? 0
         i.rightY = axes[.right]?.y ?? 0
+        // Triggers are binary here because a touch is: full travel is what
+        // GamepadMap turns into a fully pulled XInput trigger, and what the
+        // keyboard path already reads as "held". A pad that could measure a
+        // press depth would set these itself; nothing about the XInput path
+        // assumes it cannot.
+        i.leftTrigger = buttons.contains(.lt) ? 1 : 0
+        i.rightTrigger = buttons.contains(.rt) ? 1 : 0
         return i
     }
 

@@ -864,22 +864,51 @@ any code this tree compiles on a Mac. Two pre-existing states combine:
   built (`998f623`, `e5e201f`), so `build-all.sh` correctly decides to rebuild the
   PE DLLs. A warm cache hides this -- the previous green IPAs shipped the stale
   DLLs because the DXMT cache hit skipped `build-all.sh` entirely.
-- That rebuild fails compiling Wine's `libs/winecrt0/arm64ec-windows/*.o`:
-  `include/winnt.h:7640` errors with `invalid input constraint 'c' in asm`. The
-  pinned Wine revision's `__fastfail()` is `#if defined(__x86_64__) || defined(__i386__)`
-  without the `!defined(__arm64ec__)` guard every other x86 asm block in the same
-  header carries. The arm64ec target defines `__x86_64__` (x64 source
-  compatibility), so it takes the x86 `int $0x29` path, and the `"c"` (ECX)
-  constraint does not exist on AArch64.
+- That rebuild fails in Wine's `libs/winecrt0/arm64ec-windows/*.o`.
 
-`patches/wine-arm64ec-fastfail.patch` fixes the guard on both sides: it excludes
-`__arm64ec__` from the x86 branch *and* adds `__arm64ec__` to the `__aarch64__`
-branch. Both edits are needed -- clang's arm64ec target defines `__x86_64__` and
-`__arm64ec__` but deliberately does *not* define `__aarch64__`
-(`clang/lib/Basic/Targets/AArch64.cpp`), so excluding arm64ec from the x86 path
-alone would leave `__fastfail` with an empty body: it would compile and silently
-defeat fast-fail. `build/dxmt-ios/build-all.sh` applies the patch only when the
-PE rebuild runs, so a stamp-matching build does not touch the wine tree.
+### Why arm64ec breaks on x86 asm that arm64 never touches
+
+`arm64ec-w64-mingw32-clang` defines `__x86_64__` (ARM64EC keeps x86_64 type
+layouts for x64 source compatibility), `__arm64ec__`, and `_M_ARM64EC` -- and
+deliberately *not* `__aarch64__` (`clang/lib/Basic/Targets/AArch64.cpp`). Wine
+guards most of its inline asm on architecture macros, so arm64ec compiles the
+x86 branches. Two places did exactly that:
+
+1. `include/winnt.h` `__fastfail()` -- `#if defined(__x86_64__) || defined(__i386__)`
+   first, so arm64ec reached the x86 `int $0x29` whose `"c"` (ECX) constraint does
+   not exist on AArch64: `error: invalid input constraint 'c' in asm`.
+2. `InterlockedExchange` / `InterlockedExchangePointer` -- their fast path is
+   `#if (__GNUC__ > 4) || ((__GNUC__ == 4) && (__GNUC_MINOR__ >= 7))` with the x86
+   `lock; xchgl` asm as `#elif`. clang reports `__GNUC__ == 4`/`__GNUC_MINOR__ == 2`,
+   so it misses that test and lands on the asm: `unrecognized instruction mnemonic`.
+
+### The fix is a backport, not a new workaround
+
+`patches/wine-arm64ec-fastfail.patch` is a two-hunk backport of what upstream
+Wine already does for both, so the fork can drop it on the next submodule bump
+rather than carrying a private idiom:
+
+- `__fastfail`: move the `__aarch64__ || __arm64ec__` branch *first* (upstream
+  Wine master orders it that way).
+- both `Interlocked*`: add `|| defined(__clang__)`, so clang takes the portable
+  `__atomic_exchange_n` builtin on every architecture (upstream Wine master has
+  the identical `|| defined(__clang__)` in four functions; the pinned revision
+  only contains two of them).
+
+`build/dxmt-ios/build-all.sh` applies it right before `prepare-wine-ios.sh --dxmt-pe`,
+and only when the PE rebuild is actually needed, so a stamp-matching build never
+touches the wine tree.
+
+### What was checked, and what was left alone
+
+Every x86 inline-asm site reachable from the arm64ec PE build (all of `include/`,
+`libs/`, `dlls/ntdll/`, `dlls/dbghelp/`) was audited. These are not reachable and
+were left untouched: `NtCurrentTeb` (its aarch64/arm64ec `#elif` precedes the
+x86_64 one), `InterlockedCompareExchange128` and `YieldProcessor` (already
+`!__arm64ec__` / arm-first), the `__WINE_ATOMIC_*` macro block and
+`include/msvcrt/crtdbg.h`'s `_CrtDbgBreak()` -- upstream leaves both as-is at
+`__x86_64__`, and `_CrtDbgBreak` is a macro that only fails if a PE translation
+unit expands it.
 
 Consequence: after this fix the runner rebuilds the four PE DLLs (both archs)
 with the two DXMT patches applied, so the produced IPA is correct; the committed

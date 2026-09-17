@@ -119,6 +119,19 @@ if [[ "$DXMT_PE" == 1 ]]; then
         dlls/ntdll/arm64ec-windows/libntdll.a
         dlls/dbghelp/arm64ec-windows/libdbghelp.a
     )
+    # A target Wine generated no rule for fails deep inside make as "No rule to
+    # make target", which reads like a missing file rather than a configure that
+    # never saw patches/wine-makedep-per-arch-pe.patch. Check the generated
+    # makefile text up front so the error names its cause.
+    for target in "${targets[@]:1}"; do
+        grep -q "^$target:" "$WINE_BUILD/Makefile" || {
+            echo "ERROR: Wine's generated Makefile has no rule for $target." >&2
+            echo "       Apply patches/wine-makedep-per-arch-pe.patch before configure runs:" >&2
+            echo "       without it Wine pairs aarch64+arm64ec into one ARM64X image and" >&2
+            echo "       every arm64ec-windows/ output collapses into aarch64-windows/." >&2
+            exit 1
+        }
+    done
     for target in "${targets[@]}"; do rm -f "$WINE_BUILD/$target"; done
     make -C "$WINE_BUILD" -j"$JOBS" "${targets[@]}" 2>&1 | tee "$REPO_ROOT/wine-dxmt-pe-build.log"
     "$WINE_BUILD/tools/winebuild/winebuild" --version

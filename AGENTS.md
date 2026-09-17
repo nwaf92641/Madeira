@@ -360,10 +360,11 @@ Now:
 - `tools/validate-ios-bundle.py` and the workflow gate check all four modules in
   both directories, each at its own expected machine word.
 - `scripts/prepare-wine-ios.sh` configures Wine with
-  `--enable-archs=aarch64,arm64ec` so the `arm64ec-windows` import archives
-  (`libwinecrt0.a`, `libntdll.a`, `libdbghelp.a`) exist. DXMT links the arm64ec
-  DLLs against those; without them the failure is a link error that reads like a
-  DXMT bug rather than a missing Wine target.
+  `--enable-archs=aarch64,arm64ec` and builds the six import archives (three per
+  architecture) that DXMT links against; without them the failure is a link
+  error that reads like a DXMT bug rather than a missing Wine target. The
+  `--enable-archs` list alone is not sufficient and never was: see "Fusing
+  aarch64+arm64ec into ARM64X leaves arm64ec with no make rules" below.
 
 To check a built bundle, test the machine word rather than mere existence:
 
@@ -895,9 +896,10 @@ rather than carrying a private idiom:
   the identical `|| defined(__clang__)` in four functions; the pinned revision
   only contains two of them).
 
-`build/dxmt-ios/build-all.sh` applies it right before `prepare-wine-ios.sh --dxmt-pe`,
-and only when the PE rebuild is actually needed, so a stamp-matching build never
-touches the wine tree.
+`build/dxmt-ios/build-all.sh` applies it, together with
+`wine-makedep-per-arch-pe.patch` below, right before
+`prepare-wine-ios.sh --dxmt-pe`, and only when the PE rebuild is actually
+needed, so a stamp-matching build never touches the wine tree.
 
 ### What was checked, and what was left alone
 
@@ -916,6 +918,60 @@ DLLs and stamp stay stale until someone runs `build-pe.sh` on a Mac and commits
 the result. Do not "fix" the failure by bumping the stamp to the patch hash
 without rebuilding -- that is exactly the "claim the patches are in when they
 are not" state the stamp exists to prevent.
+
+### Fusing aarch64+arm64ec into ARM64X leaves arm64ec with no make rules
+
+With the fastfail backport in, every arm64ec `.o` compiles and the build dies at
+the archive step instead:
+
+    make: *** No rule to make target 'libs/winecrt0/arm64ec-windows/libwinecrt0.a'.  Stop.
+
+Not a missing file. Wine will not generate that rule while `aarch64` *and*
+`arm64ec` are both PE architectures. `tools/makedep.c` reads `HOST_ARCH` plus
+`PE_ARCHS` into an `archs` array -- `aarch64` (host), `aarch64`, `arm64ec` here
+-- and then pairs the two PE architectures into one ARM64X image:
+
+    if ((ec_arch = find_pe_arch( "arm64ec" )) && (arch = find_pe_arch( "aarch64" )))
+    {
+        native_archs[ec_arch] = arch;
+        hybrid_archs[arch] = ec_arch;
+        strarray_add( &hybrid_target_flags[ec_arch], "-marm64x" );
+    }
+
+`output_static_lib()` and `output_import_lib()` each begin with
+`if (native_archs[arch]) return;`, and `native_archs[arm64ec]` is now set, so
+the arm64ec import archives are never emitted. The arm64ec objects are still
+compiled -- as prerequisites of the *aarch64* archive, which is linked with
+`-b arm64ec-w64-mingw32 -marm64x`. So `arm64ec-windows/` gets `.o` files and
+nothing else, `aarch64-windows/` gets a hybrid archive, and five of the six
+targets in `prepare-wine-ios.sh --dxmt-pe` cannot exist, whatever
+`--enable-archs` says.
+
+An ARM64X image is not what this tree ships: the committed DLLs are genuinely
+per-architecture (`aarch64-windows/ntdll.dll` is machine `0xAA64`,
+`arm64ec-windows/ntdll.dll` is `0x8664`, no ARM64X `0xA641` anywhere), and
+`WineProcessBridge.m` picks the directory per session. ARM64X is how one image
+serves both; Madeira ships two.
+
+`patches/wine-makedep-per-arch-pe.patch` removes the pairing block, which makes
+makedep treat the two as independent PE architectures -- the `i386` + `x86_64`
+case -- and emit every output twice, each from its own objects and with its own
+`-b <target>`: `libs/winecrt0/`, `dlls/ntdll/` and `dlls/dbghelp/` each get both
+`aarch64-windows/libX.a` and `arm64ec-windows/libX.a`.
+
+That was measured, not reasoned about: makedep from the pinned `7817e22` was
+built and run over `libs/winecrt0`, `dlls/ntdll` and `dlls/dbghelp` with
+`HOST_ARCH=aarch64` and `PE_ARCHS="aarch64 arm64ec"`, twice. Before the change,
+all three directories offered only `aarch64-windows/` -- the rule set behind the
+CI failure. After it, all six archives exist, `-marm64x` is gone, and the
+arm64ec archives list only `arm64ec-windows/*.o` and `-b arm64ec-w64-mingw32`.
+`configure` compiles `tools/makedep.c` itself (`AC_CONFIG_COMMANDS([tools/makedep])`),
+so applying the patch before the `--dxmt-pe` configure is enough; the regenerated
+Makefiles carry it.
+
+`prepare-wine-ios.sh` now greps the generated `Makefile` for each of the six
+targets before running make, so a configure that did not see the patch fails
+with that sentence instead of "No rule to make target".
 
 ## Handing an unsigned IPA to the user
 

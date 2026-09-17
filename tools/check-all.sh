@@ -22,6 +22,15 @@
 #   - check-swift-syntax: `swiftc -parse` every app source. The UI is SwiftUI,
 #     so nothing in it can be type-checked off a Mac; this at least proves the
 #     files parse, which is what a dropped brace costs a build for.
+#   - check-wine-pe-stamp: the XInput PE DLLs are committed binaries and no
+#     runner rebuilds them, so a patch edited without re-running
+#     scripts/build-wine-xinput-pe.sh would ship behavior the tree says it does
+#     not have. Same shape as the stale arm64ec DXMT set (ml807), and invisible
+#     for the same reason: the binaries are opaque.
+#   - test-xinput-pad: the app's half of the XInput ABI and the unix-call table
+#     the guest dispatches through. The struct is written twice -- app and
+#     guest -- and a field added on one side only compiles in both places and
+#     hands the guest garbage. Needs a C compiler; skips (exit 0) without one.
 #
 # Run from the repo root before tagging/packaging a release. Exits non-zero on
 # the first failure.
@@ -41,8 +50,14 @@ tools/check-xcodeproj.py
 echo "== swift syntax =="
 tools/check-swift-syntax.sh
 
+echo "== wine PE stamp =="
+tools/check-wine-pe-stamp.py
+
 echo "== device capabilities =="
 tools/test-device-capabilities.sh
+
+echo "== XInput pad ABI =="
+tools/test-xinput-pad.sh
 
 echo "== app layout =="
 tools/test-app-ui.sh

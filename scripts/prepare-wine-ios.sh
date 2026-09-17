@@ -5,6 +5,10 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 WINE_SRC="$REPO_ROOT/wine"
 WINE_BUILD="$WINE_SRC/build-macos"
+# The FreeType checkout build/freetype-ios/build.sh builds from; its headers are
+# on the include path of the Wine unix libraries, so the check below treats it as
+# an input in its own right.
+SRC_FREETYPE="$REPO_ROOT/research/freetype"
 MINGW_VERSION=20260421
 MINGW_DIR="$REPO_ROOT/toolchains/llvm-mingw-$MINGW_VERSION-ucrt-macos-universal"
 DXMT_PE=0
@@ -97,8 +101,18 @@ for header in config.h dwrite.h dwrite_3.h; do
 done
 # FreeType takes minutes to rebuild and its outputs are cached alongside the
 # native dependencies: skip when the staged archive and headers validate.
+#
+# The source tree is part of the test because the cache is not. The native cache
+# holds build/freetype-ios/build -- the cmake output -- but not research/freetype,
+# and it is research/freetype/include that build/ntdll-unix/build.sh and
+# build/win32u-unix/build.sh put on their include path. A run with a native cache
+# hit and no Wine-unix cache therefore skipped this rebuild, restored a
+# libfreetype.a, and then died at "required Wine input missing:
+# research/freetype/include/ft2build.h", which reads like a broken checkout
+# rather than a cache that never contained the headers.
 if python3 "$REPO_ROOT/tools/validate-ios-bundle.py" --archive "$REPO_ROOT/build/freetype-ios/build/libfreetype.a" >/dev/null 2>&1 \
-    && [[ -s "$REPO_ROOT/build/freetype-ios/build/include/freetype/config/ftconfig.h" ]]; then
+    && [[ -s "$REPO_ROOT/build/freetype-ios/build/include/freetype/config/ftconfig.h" ]] \
+    && [[ -s "$SRC_FREETYPE/include/ft2build.h" ]]; then
     echo "FreeType outputs valid — skipping rebuild."
 else
     bash "$REPO_ROOT/build/freetype-ios/build.sh" 2>&1 | tee "$REPO_ROOT/freetype-build.log"

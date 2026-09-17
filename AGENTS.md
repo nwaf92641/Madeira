@@ -873,6 +873,19 @@ Two things about the pad are load-bearing, and both were wrong:
   `build/win32u-unix/build.sh` then compile the Wine unix libs for iOS from
   source — `libwineserver.a` included, so there is no patch-an-existing-archive
   step any more and no base archive to supply.
+- The two caches in `ipa.yml` have to agree about FreeType, and did not once.
+  The native cache held `build/freetype-ios/build` — the cmake output — but not
+  `research/freetype`, and it is `research/freetype/include` that
+  `build/ntdll-unix/build.sh` and `build/win32u-unix/build.sh` put on their
+  include path. With a native cache hit the FreeType step skipped its rebuild
+  ("FreeType outputs valid"), so the headers were never fetched; with a Wine
+  unix cache hit, nothing compiled them and the run passed. Only a *cold* Wine
+  unix cache exposed it, as `ERROR: required Wine input missing:
+  research/freetype/include/ft2build.h` — which reads like a broken checkout
+  rather than a missing cache path. Both halves are now fixed: the skip test
+  requires the headers, and `research/freetype` is in the native cache's path
+  list. The general rule: a build input that CI can only obtain inside a
+  "skip if already valid" branch must be named by the test that skips it.
 - `scripts/publish-build-libs.sh` (ml792) tars archives for a `build-libs`
   release. It predates the self-building workflow and is now optional; the
   workflow does not consume it.

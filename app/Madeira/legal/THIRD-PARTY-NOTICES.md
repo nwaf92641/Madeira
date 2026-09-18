@@ -115,6 +115,24 @@ Those blobs have been removed from this repository's history entirely. Anyone
 holding a clone or fork taken before the rewrite may still have them, and should
 not redistribute those copies.
 
+## Microsoft DirectX End-User Runtimes — NOT DISTRIBUTED
+
+Wine's DirectX helper libraries are reimplementations, and the ones a DirectX 9,
+10 or 11 title actually calls are stubbed (`d3dx11_43` answers 19 of its 44
+exports with `E_NOTIMPL`, including `D3DX11CreateShaderResourceViewFromFile{A,W}`
+— the call that loads a texture). The app therefore overlays Microsoft's real
+x64 DLLs for those names at session start.
+
+Those DLLs come from the DirectX End-User Runtimes (June 2010) redistributable,
+are Microsoft-authored, and are redistributable only under that package's terms
+and only in unmodified form — the extractor copies them byte for byte and
+verifies the machine word of each. They are **not** covered by this project's
+license and are **not** tracked in this repository:
+`app/Madeira/x86_64-directx/*.dll` is gitignored and must be supplied locally
+(`tools/fetch-directx.sh`), exactly like the Visual C++ runtime above. The list
+of what goes in is tracked (`tools/directx-component.txt`), the extractor is
+tracked (`tools/extract-directx.py`), and the bytes are not.
+
 ## Corresponding source for the statically linked libraries
 
 `libgmp.a`, `libnettle.a`, `libhogweed.a` and `libgnutls.a` are tracked as

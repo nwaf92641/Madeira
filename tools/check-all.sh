@@ -48,13 +48,20 @@
 #     it should be, against fixtures and the shipped prefix template.
 #   - check-dll-aliases: the DirectX name aliases (ml812). The alias table is a
 #     claim that a name a title imports resolves to a module the bundle ships
-#     from the session's system32; a target that is not shipped, or a name that
-#     would shadow a real implementation, makes that claim false silently.
-#   - check-pe-module-set: the modules a title imports and the bundle does not
-#     build (ml812). The shipped ~120 DLLs are the test binaries' imports, so
-#     "the game does not start" is usually a LoadLibrary that was never going to
-#     succeed. Fails on a machine word that does not match its directory and
-#     prints the gap; --strict (the PE-module workflow) fails on the gap itself.
+#     from the session's system32 *and that the module exports what the name was
+#     supposed to export*; the second half is the one that bit, when the table
+#     pointed d3dx9_24 at d3dx9_43 and nine exports of the aliased-away module
+#     were not in it. Requires a reference set per alias, so an unverified alias
+#     cannot be added back.
+#   - check-pe-module-set: the modules a title imports and whether the bundle
+#     serves them (ml812). The shipped ~120 DLLs are the test binaries' imports,
+#     so "the game does not start" is usually a LoadLibrary that was never going
+#     to succeed. Every shipped module's machine word is checked against its
+#     directory, and the manifest is accounted for in three ways: wine modules
+#     (the IPA workflow builds them), native modules the DirectX component
+#     provides (tools/fetch-directx.sh installs them), and native modules with no
+#     source anywhere, which are reported and never failed. --strict (the IPA and
+#     PE-module workflows) fails when either of the first two is incomplete.
 #
 # Run from the repo root before tagging/packaging a release. Exits non-zero on
 # the first failure.

@@ -1037,53 +1037,88 @@ static void *wine_process_thread(void *arg) {
             // that exercise the full C++ runtime (parallel_for, atomic_wait,
             // <filesystem>, etc.) don't trip __wine_unimplemented stubs.
             if (use_arm64ec) {
-                NSString *vcrtSource = [bundlePath stringByAppendingPathComponent:@"x86_64-vcruntime"];
-                NSArray *vcrtDlls = [fm contentsOfDirectoryAtPath:vcrtSource error:nil];
-                int vcrtLinked = 0, vcrtSkipped = 0;
-                for (NSString *dll in vcrtDlls) {
-                    /* NOTE 2026-07-03 (late): retried lifting BOTH exemptions
-                     * below after the fast-write bisect, hoping trap-mode had
-                     * fixed the corruption class (and to keep hot CRT calls
-                     * like memcpy inside the JIT — they cost a full x64→EC
-                     * round trip as ARM64EC builtins, a large share of the
-                     * 57ms menu frame). Result: guest RIP jumped to junk
-                     * (0x600000010xx, lr=0xa59696ff...) right after
-                     * MSVCP140/VCRUNTIME140 loaded x86_64, before present #1.
-                     * So the x86→EC SEH/transition corruption is NOT the
-                     * fast-write bug — it's still unfixed, and these
-                     * exemptions must stay until it is. */
-                    /* Keep vcruntime140.dll as the ARM64EC builtin: its
-                     * __C_specific_handler is invoked by Wine's SEH dispatch,
-                     * and routing that through FEX corrupts x86 RSP (SEH
-                     * dispatcher's exit-thunk arg setup is broken). With the
-                     * native arm64ec vcruntime140, Wine calls the handler
-                     * directly in ARM64 — no FEX bridging on the exception
-                     * path. Other vcruntime/msvcp/concrt DLLs still overlay. */
-                    if ([[dll lowercaseString] isEqualToString:@"vcruntime140.dll"]) {
-                        vcrtSkipped++;
-                        continue;
+                /* Two components ship this way. Both are directories of
+                 * unmodified Microsoft x64 DLLs that take precedence over the
+                 * ARM64EC builtins of the same name; `exempt` lists the modules
+                 * that must stay ARM64EC, and the notes on the vcruntime
+                 * exemptions below apply to that component only.
+                 *
+                 * x86_64-directx exists because Wine's DirectX helper libraries
+                 * are reimplementations with holes where titles call them:
+                 * d3dx11_43 stubs 19 of its 44 exports including
+                 * D3DX11CreateShaderResourceViewFromFile{A,W} -- the call a DX11
+                 * game makes to load a texture -- and d3dx10_43 stubs 26 of 176
+                 * including D3DX10CreateShaderResourceViewFromFile{A,W}. A stub
+                 * returns E_NOTIMPL: the module loads, the title starts, and it
+                 * fails at the first texture, which is the "missing DLL" symptom
+                 * one level down. Microsoft's real DLLs come from the DirectX
+                 * redistributable (tools/fetch-directx.sh) and are listed in
+                 * tools/directx-component.txt. Nothing in that set replaces a
+                 * module DXMT owns (d3d11, dxgi, d3d10core, winemetal), and
+                 * nothing in it is a module Wine implements without stubs. */
+                struct {
+                    const char *dir;
+                    const char *exempt[3];   /* NULL-terminated */
+                    const char *label;
+                } overlays[] = {
+                    { "x86_64-vcruntime", { "vcruntime140.dll", "msvcp140.dll", NULL },
+                      "MS VC++ Runtime" },
+                    { "x86_64-directx", { NULL }, "MS DirectX" },
+                };
+                for (size_t overlay = 0; overlay < sizeof(overlays) / sizeof(overlays[0]); overlay++) {
+                    NSString *componentSource = [bundlePath stringByAppendingPathComponent:
+                        [NSString stringWithUTF8String:overlays[overlay].dir]];
+                    NSArray *componentDlls = [fm contentsOfDirectoryAtPath:componentSource error:nil];
+                    if (!componentDlls) continue;   /* component not fetched: not an error */
+                    int linked = 0, skipped = 0;
+                    for (NSString *dll in componentDlls) {
+                        /* NOTE 2026-07-03 (late): retried lifting BOTH vcruntime
+                         * exemptions below after the fast-write bisect, hoping
+                         * trap-mode had fixed the corruption class (and to keep
+                         * hot CRT calls like memcpy inside the JIT — they cost a
+                         * full x64→EC round trip as ARM64EC builtins, a large
+                         * share of the 57ms menu frame). Result: guest RIP jumped
+                         * to junk (0x600000010xx, lr=0xa59696ff...) right after
+                         * MSVCP140/VCRUNTIME140 loaded x86_64, before present #1.
+                         * So the x86→EC SEH/transition corruption is NOT the
+                         * fast-write bug — it's still unfixed, and these
+                         * exemptions must stay until it is. */
+                        /* Keep vcruntime140.dll as the ARM64EC builtin: its
+                         * __C_specific_handler is invoked by Wine's SEH dispatch,
+                         * and routing that through FEX corrupts x86 RSP (SEH
+                         * dispatcher's exit-thunk arg setup is broken). With the
+                         * native arm64ec vcruntime140, Wine calls the handler
+                         * directly in ARM64 — no FEX bridging on the exception
+                         * path. Other vcruntime/msvcp/concrt DLLs still overlay. */
+                        /* msvcp140.dll: same exemption as vcruntime140, found
+                         * 2026-07-03. The MS x86_64 msvcp140 throws a C++
+                         * exception during its own DllMain; the x86 throw-record
+                         * builder calls RtlPcToFileHeader cross-arch and the
+                         * exception-path exit thunk corrupts guest RSP — the
+                         * returned module base lands in the return-address slot
+                         * and RIP jumps to the MZ header (NoExec loop, no
+                         * splash). Keep the ARM64EC builtin so msvcp140's EH
+                         * runs natively, like vcruntime140. */
+                        BOOL keepBuiltin = NO;
+                        for (int i = 0; overlays[overlay].exempt[i]; i++) {
+                            if ([[dll lowercaseString] isEqualToString:
+                                    [NSString stringWithUTF8String:overlays[overlay].exempt[i]]]) {
+                                keepBuiltin = YES;
+                                break;
+                            }
+                        }
+                        if (keepBuiltin) { skipped++; continue; }
+                        NSString *src = [componentSource stringByAppendingPathComponent:dll];
+                        NSString *dst = [sys32Dir stringByAppendingPathComponent:dll];
+                        [fm removeItemAtPath:dst error:nil];
+                        if ([fm createSymbolicLinkAtPath:dst withDestinationPath:src error:nil])
+                            linked++;
                     }
-                    /* msvcp140.dll: same exemption as vcruntime140, found
-                     * 2026-07-03. The MS x86_64 msvcp140 throws a C++
-                     * exception during its own DllMain; the x86 throw-record
-                     * builder calls RtlPcToFileHeader cross-arch and the
-                     * exception-path exit thunk corrupts guest RSP — the
-                     * returned module base lands in the return-address slot
-                     * and RIP jumps to the MZ header (NoExec loop, no
-                     * splash). Keep the ARM64EC builtin so msvcp140's EH
-                     * runs natively, like vcruntime140. */
-                    if ([[dll lowercaseString] isEqualToString:@"msvcp140.dll"]) {
-                        vcrtSkipped++;
-                        continue;
-                    }
-                    NSString *src = [vcrtSource stringByAppendingPathComponent:dll];
-                    NSString *dst = [sys32Dir stringByAppendingPathComponent:dll];
-                    [fm removeItemAtPath:dst error:nil];
-                    if ([fm createSymbolicLinkAtPath:dst withDestinationPath:src error:nil])
-                        vcrtLinked++;
+                    LOG("Symlinked %d %{public}s DLLs (x86_64 native) over arm64ec builtins, skipped %d",
+                        linked, overlays[overlay].label);
+                    dprintf(STDERR_FILENO, "[WineProc] Symlinked %d %s DLLs over arm64ec builtins (skipped %d for native EC SEH)\n",
+                            linked, overlays[overlay].label, skipped);
                 }
-                LOG("Symlinked %d MS VC++ Runtime DLLs (x86_64 native) over arm64ec builtins, skipped %d", vcrtLinked, vcrtSkipped);
-                dprintf(STDERR_FILENO, "[WineProc] Symlinked %d MS VC++ Runtime DLLs over arm64ec builtins (skipped %d for native EC SEH)\n", vcrtLinked, vcrtSkipped);
             }
         }
 

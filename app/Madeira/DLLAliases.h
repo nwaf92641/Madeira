@@ -1,27 +1,57 @@
-/* DLL name aliases, in the spirit of Winlator's `direct3d` component.
+/* DLL name aliases for the few DirectX module names this bundle cannot ship.
  *
- * Wine builds one module per DirectX SDK generation and never ships the whole
- * ladder for the guest: the bundle here carries d3dx9_43, d3dcompiler_43 and
- * d3dcompiler_47, and nothing else. A title that imports `d3dx9_35.dll` or
- * `d3dcompiler_40.dll` by name therefore fails to load, which is a failed game
- * start rather than a degraded one -- the single most common "this game does
- * not work" on a Wine-based stack.
+ * This table used to hold the whole d3dx9_24..42 and d3dcompiler_33..46 ladder,
+ * pointing every generation at d3dx9_43 / d3dcompiler_43 / d3dcompiler_47 on the
+ * theory that "the export names carry no version, so the newest answers for all
+ * of them". That theory is false, and measurably so. Wine models each
+ * generation's export table in dlls/d3dx9_<n>/d3dx9_<n>.spec -- the names
+ * Microsoft's build of that generation exported -- and comparing those against
+ * the module that would answer for them gives:
  *
- * The pairs below point the names a title asks for at a module that is already
- * in system32. This is sound for these families specifically because their
- * export names carry no version: `D3DXMatrixMultiply` and `D3DCompile` are the
- * same symbols in every build, so a caller linked against the SDK of 2005
- * resolves against the newest one. Wine itself models d3dx9_24..42 as
- * forwarders to its single implementation for the same reason, and
- * d3dcompiler_44/45 are not modules Wine builds at all -- they are SDK labels
- * that only ever existed in Microsoft's redistributable.
+ *   d3dx9_24..30 -- 9 exports d3dx9_43 does NOT have: D3DXCreateFragmentLinker,
+ *                   D3DXGatherFragments{,FromFileA,FromFileW,FromResourceA,
+ *                   FromResourceW}, D3DXCpuOptimizations, D3DXGetTargetDescBy*
+ *   d3dx9_31..35 -- 6: the GatherFragments group and the linker, without
+ *                   D3DXCpuOptimizations or D3DXGetTargetDescBy*
+ *   d3dx9_36..41 -- 7: as 31..35, plus D3DXCreateFragmentLinkerEx
+ *   d3dx10_33..39 -- 4 or 5: D3DX10DisassembleShader, D3DX10DisassembleEffect,
+ *                   D3DX10ReflectShader, D3DX10GetDriverLevel, and (37..39)
+ *                   D3DX10CreateReduction
+ *   d3dcompiler_33..39 -- 6: D3DCompileFromMemory, D3DDisassembleCode,
+ *                   D3DDisassembleEffect, D3DGetCodeDebugInfo,
+ *                   D3DPreprocessFromMemory, D3DReflectCode
  *
- * Two rules the gate enforces (tools/check-dll-aliases.py):
- *   1. an alias target must be a module this bundle actually ships, in both
- *      architectures, because the alias is a symlink to a file in system32;
- *   2. an alias name must not be a module this bundle ships -- shadowing a
- *      real implementation with a link to a different one would be a silent
- *      regression, not an alias.
+ * The three generations nearest the target -- d3dx9_42, d3dx10_40..42 and
+ * d3dcompiler_40..42 -- ARE complete subsets of it, which is why checking a
+ * ladder by hand finds agreement: two of the three families are sound for their
+ * last two or three rungs and broken for the ones before.
+ *
+ * A title linked against one of those imports them by name. Aliasing makes the
+ * module load and then fails at the import, which is worse than not shipping the
+ * alias at all: the failure moves from "cannot find d3dx9_35.dll" to a partial
+ * load that no test here would have noticed. Those generations are now built and
+ * shipped as real modules instead (tools/pe-module-manifest.txt, the
+ * d3dx9-legacy / d3dx10-legacy / d3dcompiler-legacy groups).
+ *
+ * What is left is the one generation with no binary in existence: Microsoft's
+ * d3dcompiler_44 and _45 shipped only inside the SDK and appear in no
+ * redistributable, so there is nothing to ship and no Wine module to build.
+ * d3dcompiler_47 answers for them, and that is proven rather than assumed --
+ * the shipped d3dcompiler_43 (17 exports) and Wine's d3dcompiler_46 model are
+ * both strict subsets of the shipped d3dcompiler_47 (29 exports), and 44/45 sit
+ * between those generations in Microsoft's numbering. The required sets live in
+ * tools/pe-alias-exports.txt and tools/check-dll-aliases.py re-checks them
+ * against the real binaries on every gate run.
+ *
+ * Three rules that gate enforces:
+ *   1. an alias target must be a module this bundle actually ships;
+ *   2. an alias name must NOT be a module this bundle ships -- a real
+ *      implementation always wins over the symlink, so such an entry would be a
+ *      comment pretending to be a mechanism;
+ *   3. every export of the aliased-away module must exist in the target,
+ *      according to the reference set recorded in tools/pe-alias-exports.txt. An
+ *      alias with no recorded reference set fails, so an unverified alias cannot
+ *      be added back.
  *
  * Keep this file to the table and this comment: the gate parses it, and the
  * runtime loop in WineProcessBridge.m reads nothing else.
@@ -35,48 +65,10 @@ typedef struct {
 } MadeiraDLLAlias;
 
 static const MadeiraDLLAlias kMadeiraDLLAliases[] = {
-    /* d3dx9: one SDK build per release, and titles import the one they were
-     * linked against. Target d3dx9_43, which this bundle ships and which is
-     * itself the newest of the family. */
-    { "d3dx9_24.dll", "d3dx9_43.dll" },
-    { "d3dx9_25.dll", "d3dx9_43.dll" },
-    { "d3dx9_26.dll", "d3dx9_43.dll" },
-    { "d3dx9_27.dll", "d3dx9_43.dll" },
-    { "d3dx9_28.dll", "d3dx9_43.dll" },
-    { "d3dx9_29.dll", "d3dx9_43.dll" },
-    { "d3dx9_30.dll", "d3dx9_43.dll" },
-    { "d3dx9_31.dll", "d3dx9_43.dll" },
-    { "d3dx9_32.dll", "d3dx9_43.dll" },
-    { "d3dx9_33.dll", "d3dx9_43.dll" },
-    { "d3dx9_34.dll", "d3dx9_43.dll" },
-    { "d3dx9_35.dll", "d3dx9_43.dll" },
-    { "d3dx9_36.dll", "d3dx9_43.dll" },
-    { "d3dx9_37.dll", "d3dx9_43.dll" },
-    { "d3dx9_38.dll", "d3dx9_43.dll" },
-    { "d3dx9_39.dll", "d3dx9_43.dll" },
-    { "d3dx9_40.dll", "d3dx9_43.dll" },
-    { "d3dx9_41.dll", "d3dx9_43.dll" },
-    { "d3dx9_42.dll", "d3dx9_43.dll" },
-
-    /* d3dcompiler: 33..43 are the pre-D3D11 generation and 46/47 the D3D11 one.
-     * The bundle ships one of each, so the split follows the generations rather
-     * than pointing all of them at the newest: d3dcompiler_47 is a different
-     * implementation (it adds D3DCompile2 and drops the old reflection entry
-     * points), while 33..43 differ only in SDK label. 44 and 45 are not in the
-     * table because no build of them has ever existed to alias. */
-    { "d3dcompiler_33.dll", "d3dcompiler_43.dll" },
-    { "d3dcompiler_34.dll", "d3dcompiler_43.dll" },
-    { "d3dcompiler_35.dll", "d3dcompiler_43.dll" },
-    { "d3dcompiler_36.dll", "d3dcompiler_43.dll" },
-    { "d3dcompiler_37.dll", "d3dcompiler_43.dll" },
-    { "d3dcompiler_38.dll", "d3dcompiler_43.dll" },
-    { "d3dcompiler_39.dll", "d3dcompiler_43.dll" },
-    { "d3dcompiler_40.dll", "d3dcompiler_43.dll" },
-    { "d3dcompiler_41.dll", "d3dcompiler_43.dll" },
-    { "d3dcompiler_42.dll", "d3dcompiler_43.dll" },
+    /* The two D3DCompiler generations that have no binary anywhere. See above:
+     * d3dcompiler_47 is a verified superset of both bracketing generations. */
     { "d3dcompiler_44.dll", "d3dcompiler_47.dll" },
     { "d3dcompiler_45.dll", "d3dcompiler_47.dll" },
-    { "d3dcompiler_46.dll", "d3dcompiler_47.dll" },
 };
 
 #define MADEIRA_DLL_ALIAS_COUNT \

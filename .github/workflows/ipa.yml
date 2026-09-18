@@ -180,6 +180,45 @@ jobs:
       - name: Prepare Wine toolchain, headers and FreeType
         run: bash scripts/prepare-wine-ios.sh 2>&1 | tee wine-prepare-build.log
 
+      # The PE modules a DirectX-era title imports. They are a few hundred files
+      # and ~170 MB, so they are not committed; they are built here from the same
+      # pinned tree as everything else, which is also what makes them provably
+      # match the ntdll they will be loaded next to. Cached because the build is
+      # ~35 minutes and the modules are only valid for one Wine revision, which is
+      # in the key.
+      - name: Restore the Wine PE module cache
+        id: pe-modules-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: build/wine-pe-modules
+          key: ipa-pe-modules-${{ runner.arch }}-${{ steps.revisions.outputs.wine }}-${{ hashFiles('scripts/build-wine-pe-modules.sh', 'tools/pe-module-manifest.txt', 'patches/wine-*.patch') }}
+
+      - name: Build the Wine PE modules
+        if: steps.pe-modules-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          PE_MODULES_OUT=build/wine-pe-modules \
+            bash scripts/build-wine-pe-modules.sh 2>&1 | tee wine-pe-modules-build.log
+        # The script fails if any requested module did not build and checks the
+        # machine word of every one it installs, so a set that reaches the cache is
+        # complete; check-pe-module-set.py --strict has the final say below.
+
+      - name: Save the Wine PE module cache
+        if: steps.pe-modules-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: build/wine-pe-modules
+          key: ${{ steps.pe-modules-cache.outputs.cache-primary-key }}
+
+      - name: Install the Wine PE modules into the bundle
+        run: |
+          set -euo pipefail
+          for arch in arm64ec-windows aarch64-windows; do
+            mkdir -p "app/Madeira/$arch"
+            cp build/wine-pe-modules/"$arch"/*.dll "app/Madeira/$arch/"
+          done
+          du -sh app/Madeira/arm64ec-windows app/Madeira/aarch64-windows
+
       - name: Save native dependency cache
         if: steps.native-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
@@ -236,7 +275,16 @@ jobs:
           key: ${{ steps.wine-unix-cache.outputs.cache-primary-key }}
 
       - name: Fetch and validate Microsoft runtime inputs
-        run: bash tools/fetch-vcruntime.sh 2>&1 | tee vcruntime-build.log
+        run: |
+          set -euo pipefail
+          bash tools/fetch-vcruntime.sh 2>&1 | tee vcruntime-build.log
+          bash tools/fetch-directx.sh 2>&1 | tee directx-build.log
+
+      # Everything the manifest says a title imports is now in the tree: the Wine
+      # modules were installed above, the native ones by the component fetch. This
+      # is the gate that says so, and it is the only place that sees both.
+      - name: Verify the bundle covers the compat manifest
+        run: python3 tools/check-pe-module-set.py --strict
 
       - name: Restore LLVM source and host/iOS builds
         id: llvm-cache

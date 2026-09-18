@@ -1,29 +1,31 @@
 name: Build Wine PE modules (compat set)
 
-# Builds the Windows PE modules tools/pe-module-manifest.txt lists and the
-# bundle does not ship, for both guest architectures, and uploads them as one
-# artifact. tools/check-pe-module-set.py --strict is the gate at the end: it
-# fails until every `wine` module in the manifest is present, so a run that
-# reports success is a run whose artifact closes the gap.
+# The standalone builder for the Windows PE modules tools/pe-module-manifest.txt
+# lists. Use it to produce and inspect the set on its own, or to force a rebuild
+# after a Wine revision change, without publishing a release.
 #
-# Why a separate workflow rather than a step in ipa.yml: the DLLs in
-# app/Madeira/{arm64ec,aarch64}-windows are committed and shipped, and the IPA
-# pipeline restores its Wine tree from cache, so adding ~240 modules to the
-# release build changes the shipped app in a way nothing here has exercised
-# yet. This runs them on their own first, so the artifact can be inspected and
-# committed; once a run has been green, the same two steps (prepare-wine-ios.sh
-# then build-wine-pe-modules.sh) can move into ipa.yml unchanged.
+# The IPA workflow (.github/workflows/ipa.yml) builds and caches the same set
+# itself, because a title that cannot load its imports is a title that does not
+# run: the modules are not committed (a few hundred files, valid for one Wine
+# revision only) and an IPA that lacks them is not something to hand to someone.
+# This workflow is the way to produce them on their own and look at them, and it
+# uploads both bundle directories as one artifact.
 #
-# The DLLs must be committed with the same Wine revision the workflow recorded
-# in its summary: a module built against a different revision than the ntdll and
-# kernel32 in the bundle is a version mismatch the loader reports as a crash
-# inside the guest rather than as a build error.
+# tools/check-pe-module-set.py --strict is the gate at the end: it fails until
+# every `wine` module in the manifest is present, so a green run is a run whose
+# artifact closes the gap.
+#
+# The DLLs must match the Wine revision the workflow records in its summary. A
+# module built against a different revision than the ntdll and kernel32 in the
+# bundle is a version mismatch the loader reports as a crash inside the guest
+# rather than as a build error -- which is why the IPA cache keys on the wine
+# revision, and why committing these by hand is not a thing to do casually.
 
 on:
   workflow_dispatch:
     inputs:
       force:
-        description: "Rebuild modules that are already in the bundle"
+        description: "Rebuild modules that are already present"
         type: boolean
         default: false
   push:
@@ -111,6 +113,9 @@ jobs:
           fi
           bash scripts/build-wine-pe-modules.sh ${args[@]+"${args[@]}"} \
             2>&1 | tee wine-pe-modules-build.log
+
+      - name: Fetch the Microsoft DirectX component
+        run: bash tools/fetch-directx.sh 2>&1 | tee directx-build.log
 
       - name: Verify the manifest is closed
         run: python3 tools/check-pe-module-set.py --strict

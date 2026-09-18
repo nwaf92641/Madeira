@@ -14,6 +14,17 @@
 # rule Wine's makedep generates, and the arm64ec rules only exist with
 # patches/wine-makedep-per-arch-pe.patch applied before configure.
 #
+# The four typelib modules are built first and for both architectures. widl
+# resolves an `importlib` through tools/tools.h:get_arch_dir(), which maps
+# CPU_ARM64EC onto "aarch64-windows" -- correct upstream, where the two
+# architectures share one ARM64X image, but not in this tree, where
+# patches/wine-makedep-per-arch-pe.patch splits them into two directories.
+# So an arm64ec build of quartz asks for dlls/stdole2.tlb/aarch64-windows/
+# stdole2.tlb, and the dependency makedep recorded is the arm64ec one, which
+# does not help. The build then fails with "cannot find stdole2.tlb" on a
+# module that is not in the requested set, which reads like a broken checkout.
+# Building the typelibs up front for both architectures satisfies the lookup.
+#
 # Two things it deliberately does NOT do:
 #
 #   * It never overwrites a module that is already in the bundle unless --force
@@ -29,14 +40,24 @@
 # Usage:
 #   scripts/build-wine-pe-modules.sh [--force] [--arch aarch64-windows|arm64ec-windows] [--dry-run]
 #
-# Requires an Apple Silicon Mac: the modules are PE/COFF, but they are linked by
-# Wine's build tree, which is a macOS build with llvm-mingw cross compilers.
+# Environment:
+#   PE_MODULES_OUT  install directory (default app/Madeira). The IPA workflow sets
+#                   it to a cached staging directory and copies from there, so a
+#                   run that only needs the modules does not rebuild them.
+#
+# The modules are PE/COFF, but they are produced by Wine's build tree, which is a
+# macOS configure with llvm-mingw cross compilers, so this needs that tree and
+# toolchain rather than a Mac as such.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 WINE_SRC="$REPO_ROOT/wine"
 WINE_BUILD="$WINE_SRC/build-macos"
-BUNDLE="$REPO_ROOT/app/Madeira"
+# Where the modules are installed. The IPA workflow points this at a directory it
+# caches, then copies from there into the bundle, because a Wine tree configure is
+# ~40 minutes and rebuilding 143 modules on every run is ~35 more; a module set is
+# only valid for the Wine revision it was built against, so it keys on that.
+BUNDLE="${PE_MODULES_OUT:-$REPO_ROOT/app/Madeira}"
 MANIFEST="$REPO_ROOT/tools/pe-module-manifest.txt"
 PATCH_DIR="$REPO_ROOT/patches"
 MINGW="$REPO_ROOT/toolchains/llvm-mingw-20260421-ucrt-macos-universal"
@@ -91,14 +112,23 @@ apply_patch() {
     fi
 }
 
-if [[ "$(uname -s)" != Darwin || "$(uname -m)" != arm64 ]]; then
-    echo "ERROR: this builds PE binaries with llvm-mingw and needs an Apple Silicon Mac." >&2
+if [[ ! -f "$WINE_SRC/configure" ]]; then
+    echo "ERROR: initialize the wine submodule first." >&2
     exit 1
 fi
-[[ -f "$WINE_SRC/configure" ]] || { echo "ERROR: initialize the wine submodule first." >&2; exit 1; }
 [[ -f "$WINE_BUILD/Makefile" ]] || {
     echo "ERROR: $WINE_BUILD is not configured; run scripts/prepare-wine-ios.sh first." >&2
     exit 1
+}
+
+# llvm-mingw's strip, per architecture, so the modules land in the bundle the
+# same size the committed ones are (see the strip comment where they are
+# installed). Absent, the build still works and says how many modules went in
+# unstripped -- a silent 3x IPA is worse than a warning.
+strip_for() {
+    local arch="$1" candidate="$MINGW/bin/${arch%%-windows}-w64-mingw32-strip"
+    [[ -x "$candidate" ]] || return 1
+    printf '%s' "$candidate"
 }
 for prefix in aarch64 arm64ec; do
     [[ -x "$MINGW/bin/$prefix-w64-mingw32-clang" ]] || {
@@ -116,11 +146,11 @@ skipped_protected=()
 native_only=()
 missing_rule=()
 
-while read -r kind module _; do
+while read -r kind module component _; do
     [[ "$kind" == "wine" || "$kind" == "native" ]] || continue
     [[ -n "${module:-}" ]] || continue
     if [[ "$kind" == "native" ]]; then
-        native_only+=("$module")
+        native_only+=("$module${component:+ ($component)}")
         continue
     fi
     if is_protected "$module"; then
@@ -153,6 +183,23 @@ for arch in "${WANTED_ARCHS[@]}"; do
     done
 done
 
+# Typelibs precede the modules that import them, for both architectures, and
+# whether or not the module that needs one is in the requested set -- an arm64ec
+# build asks widl for the aarch64 copy (see the note at the top of the file).
+# They are always rebuilt with the modules, so they are not in skipped_present.
+TYPELIBS=(stdole2.tlb stdole32.tlb activeds.tlb mshtml.tlb)
+typelib_targets=()
+for arch in "${WANTED_ARCHS[@]}"; do
+    for tlb in "${TYPELIBS[@]}"; do
+        target="dlls/$tlb/$arch/$tlb"
+        if has_rule "$target"; then
+            typelib_targets+=("$target")
+        else
+            missing_rule+=("$target")
+        fi
+    done
+done
+
 if [[ ${#missing_rule[@]} -gt 0 ]]; then
     echo "ERROR: the generated Makefile has no rule for ${#missing_rule[@]} of the requested targets:" >&2
     printf '         %s\n' "${missing_rule[@]}" >&2
@@ -170,21 +217,23 @@ fi
 
 echo "Building ${#targets[@]} PE modules for ${WANTED_ARCHS[*]} (${#native_only[@]} native modules are not buildable from Wine)."
 if [[ "$DRY_RUN" == 1 ]]; then
-    printf '  %s\n' "${targets[@]}"
+    printf '  %s\n' "${typelib_targets[@]}" "${targets[@]}"
     exit 0
 fi
 
 # A forced rebuild has to delete the outputs first: make cannot see that a
 # target is stale with respect to a patch or a configure flag.
 if [[ "$FORCE" == 1 ]]; then
-    for target in "${targets[@]}"; do rm -f "$WINE_BUILD/$target"; done
+    for target in "${targets[@]}" "${typelib_targets[@]}"; do rm -f "$WINE_BUILD/$target"; done
 fi
 # -k so one module that fails to compile does not hide the state of the other
 # 200; the per-file check below is what decides success.
+make -C "$WINE_BUILD" -j"$JOBS" "${typelib_targets[@]}"
 make -C "$WINE_BUILD" -k -j"$JOBS" "${targets[@]}"
 
 built=0
 failed=()
+unstripped=0
 for arch in "${WANTED_ARCHS[@]}"; do
     mkdir -p "$BUNDLE/$arch"
 done
@@ -196,6 +245,19 @@ for target in "${targets[@]}"; do
         continue
     fi
     install -m 755 "$WINE_BUILD/$target" "$BUNDLE/$arch/$name"
+
+    # Wine's build leaves full DWARF in every module (-gdwarf-4 -g), and it is
+    # most of the file. Measured on this tree: stripping takes d2d1 from 4.6 MB
+    # to 0.7 MB, msxml3 from 10.9 MB to 2.6 MB, and the 143 modules from 168 MB
+    # to 50 MB (arm64ec) and 267 MB to 111 MB (aarch64), byte counts not du. Debug info in a shipped DLL is pure payload, and --strip-debug
+    # leaves the export table bit-identical (verified: 336 exports in, 336 out on
+    # a d3dx9_41 arm64ec module). Not --strip-all: 16% smaller again, but it drops
+    # the COFF symbol table, which is a risk with no reward here.
+    if STRIP="$(strip_for "$arch")"; then
+        "$STRIP" --strip-debug "$BUNDLE/$arch/$name" 2>/dev/null || unstripped=$((unstripped + 1))
+    else
+        unstripped=$((unstripped + 1))
+    fi
     built=$((built + 1))
 done
 
@@ -228,14 +290,24 @@ print(f"Validated {checked} PE modules in both architecture directories ({built}
 PY
 
 echo "Built and installed $built modules."
+if [[ $unstripped -gt 0 ]]; then
+    echo "WARNING: $unstripped module(s) went in with debug info; the IPA will be"
+    echo "         several times larger than it needs to be. Check that"
+    echo "         $MINGW/bin has the *-w64-mingw32-strip binaries." >&2
+fi
 if [[ ${#skipped_present[@]} -gt 0 ]]; then
     echo "Already present, left alone: ${#skipped_present[@]} modules (--force rebuilds them)."
 fi
 if [[ ${#native_only[@]} -gt 0 ]]; then
-    echo "Not built, Microsoft-only: ${native_only[*]}"
-    echo "  These need a redistributable component like app/Madeira/x86_64-vcruntime, not a Wine build."
+    echo "Not built, Microsoft-only: ${#native_only[@]} modules"
+    printf '  %s\n' "${native_only[@]}"
+    echo "  These need the redistributable component, not a Wine build:"
+    echo "    tools/fetch-directx.sh   -> app/Madeira/x86_64-directx/"
 fi
 if [[ ${#skipped_protected[@]} -gt 0 ]]; then
     echo "Refused (owned by DXMT or the XInput patch): ${skipped_protected[*]}"
 fi
-echo "Next: python3 tools/check-pe-module-set.py --strict, then commit app/Madeira/{arm64ec,aarch64}-windows/*.dll"
+echo "Next: python3 tools/check-pe-module-set.py --strict"
+echo "The modules land in app/Madeira/{arm64ec,aarch64}-windows/ and are packaged"
+echo "into the IPA by .github/workflows/ipa.yml, which runs this script; they are"
+echo "not committed, so they always match the pinned wine revision."

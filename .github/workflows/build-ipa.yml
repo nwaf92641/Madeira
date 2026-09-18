@@ -83,6 +83,12 @@ jobs:
 
           Sideload with AltStore / Sideloadly / TrollStore, or re-sign it with your own
           Apple ID. Nothing in the repo signs it -- see scripts/make-ipa.sh.
+
+          The app overlays Microsoft's Visual C++ and DirectX runtime DLLs (from the
+          official redistributables, unmodified) into the Wine session, because Wine's
+          own DirectX helper modules stub the texture-loading entry points a DirectX 9,
+          10 or 11 title calls. Those Microsoft binaries are redistributed under their
+          own terms, recorded in the app's third-party notices.
           EOF
           gh release create "$tag" Madeira-unsigned.ipa \
             --repo "$GITHUB_REPOSITORY" \

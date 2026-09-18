@@ -120,6 +120,19 @@ build/x64-tests/asmconf_obj/
 # redistributable terms and only unmodified. Not ours to ship -- obtain them
 # yourself, see tools/fetch-vcruntime.md.
 app/Madeira/x86_64-vcruntime/*.dll
+
+# Microsoft DirectX End-User Runtimes (June 2010).
+# Same situation as the VC++ runtime above: Microsoft-authored binaries, ours to
+# redistribute only under their terms and only unmodified, so the tree carries the
+# extractor (tools/extract-directx.py, tools/fetch-directx.sh) and the list of what
+# goes in (tools/directx-component.txt) rather than the DLLs. The IPA workflow runs
+# the fetch before packaging, so a release always has them.
+app/Madeira/x86_64-directx/*.dll
+
+# Wine PE modules built by scripts/build-wine-pe-modules.sh. The IPA workflow
+# stages them here so the 35-minute build is cacheable, then copies them into
+# app/Madeira/{arm64ec,aarch64}-windows.
+build/wine-pe-modules/
 research/remote-metal/host/rmetald
 research/remote-metal/guest/rmtest
 

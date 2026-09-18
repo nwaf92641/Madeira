@@ -55,6 +55,15 @@ bash scripts/stage-nls.sh
 # Fail here, with the real reason, rather than inside ld.
 tools/check-build-inputs.sh
 
+# And fail here rather than shipping the bundle. The manifest is what a
+# DirectX-era title imports; two thirds of it is built (scripts/
+# build-wine-pe-modules.sh) and the Microsoft half is fetched
+# (tools/fetch-directx.sh, tools/fetch-vcruntime.sh), so a clone that has only
+# been linked looks complete and packages an app that cannot load a game. The
+# IPA workflow runs the same three commands, which is why a release and a local
+# build are the same build.
+python3 tools/check-pe-module-set.py --strict
+
 BUILD_DIR="$ROOT/build/ipa-build"
 STAGE="$ROOT/build/ipa-stage"
 

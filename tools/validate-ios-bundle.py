@@ -17,6 +17,23 @@ from pathlib import Path
 # nothing upstream in these modules does, so its name is the marker.
 PAD_IMPORT = b'__wine_init_unix_call'
 
+# The DirectX component the app overlays onto system32 in an x64 session
+# (WineProcessBridge.m). Where the vcruntime list below is spelled out here, this
+# one is read from the file the fetcher installs from: Wine's d3dx11_43 and
+# d3dx10_43 answer the CreateShaderResourceViewFromFile calls a DX11 title makes
+# with E_NOTIMPL, so "the module is there" and "the module works" are different
+# claims and only the component has the second one.
+DIRECTX_COMPONENT = Path(__file__).resolve().parent / 'directx-component.txt'
+
+
+def directx_resources(read):
+    for line in DIRECTX_COMPONENT.read_text().splitlines():
+        name = line.split('#', 1)[0].strip()
+        if not name:
+            continue
+        stem = name[:-4] if name.lower().endswith('.dll') else name
+        pe(read(f'x86_64-directx/{stem.lower()}.dll'), 0x8664)
+
 
 def require(condition, message):
     if not condition:
@@ -102,6 +119,7 @@ def runtime_resources(read):
                     f'(rebuild it with patches/wine-xinput-virtual-pad.patch)')
     pe(read('arm64ec-windows/xtajit64.dll'), 0x8664)
     pe(read('arm64ec-windows/cube-x64.exe'), 0x8664)
+    directx_resources(read)
     with tarfile.open(fileobj=io.BytesIO(read('prefix-template.tar.gz')), mode='r:gz') as prefix:
         for name in ('system.reg', 'user.reg', 'userdef.reg'):
             member = prefix.getmember(f'prefix/{name}')

@@ -15,8 +15,14 @@ requires a debugger to attach, so it cannot go through the App Store.
 - `app/Madeira/` — the iOS app (Swift + the C/C++ JIT and Wine bridge code).
 - `app/Madeira/AppLayout.swift` — the tooling-vs-fullscreen decision, pure and
   unit-tested. Read the header before touching `ContentView`'s body.
-- `app/Madeira/GamepadMap.swift` — controller → key/mouse mapping, pure and
-  unit-tested. `app/Madeira/GamepadBridge.swift` is the only GCController code.
+- `app/Madeira/GamepadMap.swift` — controller → key/mouse mapping and the
+  XInput frame, pure and unit-tested. `app/Madeira/GamepadBridge.swift` is the
+  only place a controller is *read* (`GCController`); `XInputBridge.swift` looks
+  one up only to find a haptic actuator to rumble.
+- `app/Madeira/MadeiraXInput.c` / `.h` — the app's half of the virtual XInput
+  pad: the frame the guest reads, the unix-call table it dispatches through, and
+  the ABI header the wine patch mirrors. `tools/test-xinput-pad.sh` checks all
+  three.
 - `app/Madeira/VirtualPad.swift` — the on-screen PlayStation-style pad, as pure
   layout and touch-state functions. `app/Madeira/VirtualPadView.swift` is the
   SwiftUI window that draws it and the gestures that drive it.
@@ -360,10 +366,11 @@ Now:
 - `tools/validate-ios-bundle.py` and the workflow gate check all four modules in
   both directories, each at its own expected machine word.
 - `scripts/prepare-wine-ios.sh` configures Wine with
-  `--enable-archs=aarch64,arm64ec` so the `arm64ec-windows` import archives
-  (`libwinecrt0.a`, `libntdll.a`, `libdbghelp.a`) exist. DXMT links the arm64ec
-  DLLs against those; without them the failure is a link error that reads like a
-  DXMT bug rather than a missing Wine target.
+  `--enable-archs=aarch64,arm64ec` and builds the six import archives (three per
+  architecture) that DXMT links against; without them the failure is a link
+  error that reads like a DXMT bug rather than a missing Wine target. The
+  `--enable-archs` list alone is not sufficient and never was: see "Fusing
+  aarch64+arm64ec into ARM64X leaves arm64ec with no make rules" below.
 
 To check a built bundle, test the machine word rather than mere existence:
 
@@ -597,28 +604,34 @@ Two things about the fullscreen layout are load-bearing:
 `tools/test-app-ui.sh` asserts the whole table. It is cheap; extend it rather
 than reasoning about this again.
 
-## Controllers: no XInput, and a keyboard/pointer bridge instead (checked ml790)
+## Controllers: XInput first, the keyboard/pointer bridge beside it (ml790, updated by ml808)
 
-Do not claim gamepad support exists in the guest. It does not:
+A controller now reaches the guest two ways, from one merged frame, and both are
+on at once (`GamepadBridge`'s header argues the trade):
 
-- There is no XInput, DInput or HID gamepad plumbing anywhere. The `wine/`
-  submodule is not checked out in this environment, and nothing in `build/`
-  (the Madeira-side glue that IS here: `win32u-unix/`, `wineserver/`,
-  `ntdll-unix/`) presents a gamepad device. `build/wineios-drv/wineios.c` is
-  only a PE stub for the audio driver.
-- `ControlAction.pad(...)` and the mapping panel's "gamecontroller" tab are
-  therefore deliberately inert (ml645), and the panel says so. Wiring them up
-  needs work in the `wine/` submodule plus `build/`, not in this target.
-- The touch-controls overlay is what "the controller" in the app actually means:
-  on-screen buttons and a thumbstick that post through `winios_post_key`.
+- As **XInput** — an Xbox 360 pad in player slot 0, served by the app itself,
+  which is what a game that knows what a gamepad is reads. See "The virtual
+  XInput pad" below for the path, the ABI and the wine patch. Before ml808 this
+  did not exist at all.
+- As **virtual keys and pointer motion** through `winios_post_key` /
+  `winios_pointer` — the same two calls the key buttons, the on-screen stick and
+  the S2 trackpad use — so a game that only understands a keyboard and a mouse
+  still gets one, mouse-look included. `GamepadMap` and `GamepadBridge` are that
+  half, and it is unchanged by ml808.
 
-What DOES work for a physical controller is `GamepadBridge`, added ml790. It
-maps a real controller onto virtual keys and relative pointer motion through
-`winios_post_key` / `winios_pointer` — the same two calls the key buttons, the
-on-screen stick and the S2 trackpad already use — so any game that accepts
-keyboard and mouse accepts it, mouse-look included. A game that accepts ONLY
-XInput still will not see it, and no change on this side fixes that.
+What is still true, and was the whole of ml790:
 
+- There is no HID gamepad: no winebus.sys, no hidclass.sys, no winedevice host to
+  enumerate one, and `build/wineios-drv/wineios.c` is only a PE stub for the
+  audio driver. Autostarting winebus on iOS wedged the driver host behind the
+  service startup lock (task #19), which is why the pad is a unix call into our
+  own process instead.
+- `ControlAction.pad(...)` and the mapping panel's "gamecontroller" tab stay
+  inert (ml645), and the panel says so.
+- No per-vendor mapping table is needed or wanted: `GCExtendedGamepad`
+  normalizes Xbox, PlayStation and MFi pads into the same buttons and sticks and
+  this side reads that profile. A pad without a full profile (Siri Remote, basic
+  MFi) arrives as `microGamepad` and gets face buttons and a d-pad, no look axis.
 - Defaults are on when a controller is connected (a plugged-in gamepad that is
   ignored is the more surprising behaviour) and rebindable in
   `Documents/madeira-gamepad.txt`: `ENABLED = 0`, `MOUSE_SPEED = 1.0`, and
@@ -634,6 +647,64 @@ XInput still will not see it, and no change on this side fixes that.
 `tools/test-app-ui.sh` covers the mapping, including the sign. The
 `GamepadBridge` glue itself cannot be compiled or run off-device; it still needs
 one on-iPad confirmation.
+
+## The virtual XInput pad: the app's own table, not a HID device (ml808)
+
+`xinput1_4.dll` in the guest is upstream wine's `dlls/xinput1_3/main.c` plus one
+patch, `patches/wine-xinput-virtual-pad.patch`, and every `xinput1_*` module is
+built from that same source (`xinput1_1/1_2/1_4` set `PARENTSRC`). `xinput9_1_0`
+is untouched on purpose: it does not link a unixlib and forwards to `xinput1_4`
+at runtime.
+
+The path, end to end:
+
+    GamepadBridge.tick()         merged frame, main thread, 60fps while a source is live
+      -> XInputBridge.publish    GamepadMap.xinputState(for:) converts to XINPUT_* units
+      -> madeira_xinput_publish  stores it (app/Madeira/MadeiraXInput.c, under a lock)
+      -> xinput1_4!XInputGetState
+      -> WINE_UNIX_CALL(madeira_pad_get_state)
+      -> madeira_pad_unix_get_state  copies the frame back
+
+- The guest finds the table through `load_builtin_unixlib` in
+  `build/ntdll-unix/virtual_ios.c`, which matches on the module name. There is no
+  `unix_path` for xinput on iOS, so it falls back to the name in the PE export
+  directory — the same fallback `dwrite` needs, and the reason this branch
+  matches "xinput1_"/"xinput9_1_0" and not "xinput" (winexinput.sys contains the
+  word). A new unixlib branch that matches only a `.so` path will never fire.
+- The ABI is written twice — `app/Madeira/MadeiraXInput.h` (arm64, app) and
+  `dlls/xinput1_3/madeira_xinput.h` (arm64ec, guest) — and
+  `tools/test-xinput-pad.sh` compiles both and compares sizeof/offsetof, so a
+  field added on one side only fails a gate instead of handing the guest garbage.
+  Fixed-width fields only; append to the function table, never reorder it.
+- The DLLs are committed binaries
+  (`app/Madeira/{aarch64,arm64ec}-windows/xinput*.dll`) because no runner builds
+  them: the workflow restores native archives from cache, exactly as with the
+  DXMT modules (ml807). `scripts/build-wine-xinput-pe.sh` rebuilds them on an
+  Apple Silicon Mac and writes `app/Madeira/.wine-pe-xinput-stamp`; a patch
+  edited without a rebuild fails `tools/check-wine-pe-stamp.py`. Every shipped
+  module's machine word and the pad's unix-call import are checked by
+  `tools/validate-ios-bundle.py`.
+- The pad exists exactly while a source is live — a paired controller or the
+  on-screen pad. `GamepadBridge.stop()` calls `XInputBridge.clear()`, so the
+  guest's slot 0 reports `DEVICE_NOT_CONNECTED` and a game falls back to the
+  keyboard rather than reading a stick still held when the last thumb lifted.
+- Opting out is `ENABLED = 0` for the physical controller or the pad's own
+  Settings switch for the on-screen one; with both off the guest has no pad at
+  all, which is the opt-out for a game that reacts badly to one being present.
+- Rumble comes back the other way: `XInputSetState` -> the handler `XInputBridge`
+  installs -> Core Haptics on the paired pad. It is quantised to 32 steps so a
+  ramping motor does not rebuild a player every frame, drives one actuator from
+  the stronger of the two motors, and fails quietly: a pad whose haptics we
+  cannot reach must not cost the game its input.
+- These values are an ABI a game reads: A/B/X/Y are 0x1000/0x2000/0x4000/0x8000,
+  a trigger is travel 0...255 with no button bit, a stick is -32768...32767 with
+  +y up. `GamepadMap.xinputBits` and `tools/test-app-ui.sh` pin them. A `.lt`/`.rt`
+  that is only "pressed" (on-screen pad, keyboard binding) arrives as 255.
+- Not verified on a device yet. The app's C layer, the ABI and the mapping have
+  host tests; "a Windows game reads the pad" needs an iPad and a game. The first
+  run should check stderr for `[unixlib] module ... ->
+  madeira_xinput_unix_call_table`, which is the line that says the guest found
+  the table at all, and then that a stick moves in-game.
 
 ## The on-screen pad goes through the same bridge, not around it (ml800)
 
@@ -768,6 +839,26 @@ Two things about the pad are load-bearing, and both were wrong:
     two `SettingsView`/`FPSOverlay` changes in ml803 are still unverified by a
     compiler until a Mac or a build touches them. Keep new logic in the
     Foundation-only files when a test can reach it instead.
+- `tools/test-xinput-pad.sh` is the one gate that is not Swift: it compiles
+  `app/Madeira/MadeiraXInput.c` against the guest-side structs lifted out of
+  `patches/wine-xinput-virtual-pad.patch`, compares the ABI by sizeof/offsetof,
+  and then drives the unix-call table the way ntdll does. It needs a C compiler
+  (`cc`, `clang` or `gcc`) and skips without one.
+  `tools/check-wine-pe-stamp.py` is pure Python: it pairs the committed XInput
+  DLLs with the patch they were built from, so a patch edit without a rebuild
+  fails the gate instead of shipping a binary that does something else.
+- `tools/check-swift-c-symbols.py` is the gap between "the file parses" and
+  "the compiler accepts it": Swift can only call a C function that a header the
+  bridging header imports declares, and `swiftc -parse` does not resolve names.
+  When it fires, add the header to `Madeira-Bridging-Header.h` — that is exactly
+  what `MadeiraXInput.h` was missing from (ml808).
+- `scripts/typecheck-app.sh` is the real check: `swiftc -typecheck` over every
+  app Swift file with the project's bridging header, Swift version and
+  deployment target, against the iOS SDK. It needs a Mac with Xcode 26, so it is
+  its own job (`app-compile` in `ipa.yml`) that the build job lists in `needs`,
+  and a mistake in the app then fails in ~2 minutes instead of after FEX + Wine
+  + LLVM + DXMT have all been built. That is the ml808 lesson: three consecutive
+  ~25-minute runs each ended on a Swift error this job reports at the top.
 - `.github/workflows/gates.yml` runs `tools/check-all.sh` on every push and PR,
   on `macos-15` because three gates need `swiftc`.
 - `scripts/make-ipa.sh` builds and packages the unsigned `Madeira-unsigned.ipa`
@@ -794,6 +885,19 @@ Two things about the pad are load-bearing, and both were wrong:
   `build/win32u-unix/build.sh` then compile the Wine unix libs for iOS from
   source — `libwineserver.a` included, so there is no patch-an-existing-archive
   step any more and no base archive to supply.
+- The two caches in `ipa.yml` have to agree about FreeType, and did not once.
+  The native cache held `build/freetype-ios/build` — the cmake output — but not
+  `research/freetype`, and it is `research/freetype/include` that
+  `build/ntdll-unix/build.sh` and `build/win32u-unix/build.sh` put on their
+  include path. With a native cache hit the FreeType step skipped its rebuild
+  ("FreeType outputs valid"), so the headers were never fetched; with a Wine
+  unix cache hit, nothing compiled them and the run passed. Only a *cold* Wine
+  unix cache exposed it, as `ERROR: required Wine input missing:
+  research/freetype/include/ft2build.h` — which reads like a broken checkout
+  rather than a missing cache path. Both halves are now fixed: the skip test
+  requires the headers, and `research/freetype` is in the native cache's path
+  list. The general rule: a build input that CI can only obtain inside a
+  "skip if already valid" branch must be named by the test that skips it.
 - `scripts/publish-build-libs.sh` (ml792) tars archives for a `build-libs`
   release. It predates the self-building workflow and is now optional; the
   workflow does not consume it.
@@ -853,6 +957,124 @@ What actually changed in this pass:
   `secrets.GH_TOKEN` falling back to `github.token` — no token is embedded.
   `ipa.yml`'s own `push` trigger (branch `jit-disconnect-hardening`) is
   unchanged.
+
+## The arm64ec PE rebuild broke, and the stamp made it fatal (ml807)
+
+A cold DXMT build (cache miss) fails at `Build the DXMT native library`, not in
+any code this tree compiles on a Mac. Two pre-existing states combine:
+
+- The committed `.dxmt-pe-stamp` is stale: `dxmt-no-abort-on-optional-features.patch`
+  and `dxmt-resource-residency-and-reclaim.patch` landed after the DLLs were last
+  built (`998f623`, `e5e201f`), so `build-all.sh` correctly decides to rebuild the
+  PE DLLs. A warm cache hides this -- the previous green IPAs shipped the stale
+  DLLs because the DXMT cache hit skipped `build-all.sh` entirely.
+- That rebuild fails in Wine's `libs/winecrt0/arm64ec-windows/*.o`.
+
+### Why arm64ec breaks on x86 asm that arm64 never touches
+
+`arm64ec-w64-mingw32-clang` defines `__x86_64__` (ARM64EC keeps x86_64 type
+layouts for x64 source compatibility), `__arm64ec__`, and `_M_ARM64EC` -- and
+deliberately *not* `__aarch64__` (`clang/lib/Basic/Targets/AArch64.cpp`). Wine
+guards most of its inline asm on architecture macros, so arm64ec compiles the
+x86 branches. Two places did exactly that:
+
+1. `include/winnt.h` `__fastfail()` -- `#if defined(__x86_64__) || defined(__i386__)`
+   first, so arm64ec reached the x86 `int $0x29` whose `"c"` (ECX) constraint does
+   not exist on AArch64: `error: invalid input constraint 'c' in asm`.
+2. `InterlockedExchange` / `InterlockedExchangePointer` -- their fast path is
+   `#if (__GNUC__ > 4) || ((__GNUC__ == 4) && (__GNUC_MINOR__ >= 7))` with the x86
+   `lock; xchgl` asm as `#elif`. clang reports `__GNUC__ == 4`/`__GNUC_MINOR__ == 2`,
+   so it misses that test and lands on the asm: `unrecognized instruction mnemonic`.
+
+### The fix is a backport, not a new workaround
+
+`patches/wine-arm64ec-fastfail.patch` is a two-hunk backport of what upstream
+Wine already does for both, so the fork can drop it on the next submodule bump
+rather than carrying a private idiom:
+
+- `__fastfail`: move the `__aarch64__ || __arm64ec__` branch *first* (upstream
+  Wine master orders it that way).
+- both `Interlocked*`: add `|| defined(__clang__)`, so clang takes the portable
+  `__atomic_exchange_n` builtin on every architecture (upstream Wine master has
+  the identical `|| defined(__clang__)` in four functions; the pinned revision
+  only contains two of them).
+
+`build/dxmt-ios/build-all.sh` applies it, together with
+`wine-makedep-per-arch-pe.patch` below, right before
+`prepare-wine-ios.sh --dxmt-pe`, and only when the PE rebuild is actually
+needed, so a stamp-matching build never touches the wine tree.
+
+### What was checked, and what was left alone
+
+Every x86 inline-asm site reachable from the arm64ec PE build (all of `include/`,
+`libs/`, `dlls/ntdll/`, `dlls/dbghelp/`) was audited. These are not reachable and
+were left untouched: `NtCurrentTeb` (its aarch64/arm64ec `#elif` precedes the
+x86_64 one), `InterlockedCompareExchange128` and `YieldProcessor` (already
+`!__arm64ec__` / arm-first), the `__WINE_ATOMIC_*` macro block and
+`include/msvcrt/crtdbg.h`'s `_CrtDbgBreak()` -- upstream leaves both as-is at
+`__x86_64__`, and `_CrtDbgBreak` is a macro that only fails if a PE translation
+unit expands it.
+
+Consequence: after this fix the runner rebuilds the four PE DLLs (both archs)
+with the two DXMT patches applied, so the produced IPA is correct; the committed
+DLLs and stamp stay stale until someone runs `build-pe.sh` on a Mac and commits
+the result. Do not "fix" the failure by bumping the stamp to the patch hash
+without rebuilding -- that is exactly the "claim the patches are in when they
+are not" state the stamp exists to prevent.
+
+### Fusing aarch64+arm64ec into ARM64X leaves arm64ec with no make rules
+
+With the fastfail backport in, every arm64ec `.o` compiles and the build dies at
+the archive step instead:
+
+    make: *** No rule to make target 'libs/winecrt0/arm64ec-windows/libwinecrt0.a'.  Stop.
+
+Not a missing file. Wine will not generate that rule while `aarch64` *and*
+`arm64ec` are both PE architectures. `tools/makedep.c` reads `HOST_ARCH` plus
+`PE_ARCHS` into an `archs` array -- `aarch64` (host), `aarch64`, `arm64ec` here
+-- and then pairs the two PE architectures into one ARM64X image:
+
+    if ((ec_arch = find_pe_arch( "arm64ec" )) && (arch = find_pe_arch( "aarch64" )))
+    {
+        native_archs[ec_arch] = arch;
+        hybrid_archs[arch] = ec_arch;
+        strarray_add( &hybrid_target_flags[ec_arch], "-marm64x" );
+    }
+
+`output_static_lib()` and `output_import_lib()` each begin with
+`if (native_archs[arch]) return;`, and `native_archs[arm64ec]` is now set, so
+the arm64ec import archives are never emitted. The arm64ec objects are still
+compiled -- as prerequisites of the *aarch64* archive, which is linked with
+`-b arm64ec-w64-mingw32 -marm64x`. So `arm64ec-windows/` gets `.o` files and
+nothing else, `aarch64-windows/` gets a hybrid archive, and five of the six
+targets in `prepare-wine-ios.sh --dxmt-pe` cannot exist, whatever
+`--enable-archs` says.
+
+An ARM64X image is not what this tree ships: the committed DLLs are genuinely
+per-architecture (`aarch64-windows/ntdll.dll` is machine `0xAA64`,
+`arm64ec-windows/ntdll.dll` is `0x8664`, no ARM64X `0xA641` anywhere), and
+`WineProcessBridge.m` picks the directory per session. ARM64X is how one image
+serves both; Madeira ships two.
+
+`patches/wine-makedep-per-arch-pe.patch` removes the pairing block, which makes
+makedep treat the two as independent PE architectures -- the `i386` + `x86_64`
+case -- and emit every output twice, each from its own objects and with its own
+`-b <target>`: `libs/winecrt0/`, `dlls/ntdll/` and `dlls/dbghelp/` each get both
+`aarch64-windows/libX.a` and `arm64ec-windows/libX.a`.
+
+That was measured, not reasoned about: makedep from the pinned `7817e22` was
+built and run over `libs/winecrt0`, `dlls/ntdll` and `dlls/dbghelp` with
+`HOST_ARCH=aarch64` and `PE_ARCHS="aarch64 arm64ec"`, twice. Before the change,
+all three directories offered only `aarch64-windows/` -- the rule set behind the
+CI failure. After it, all six archives exist, `-marm64x` is gone, and the
+arm64ec archives list only `arm64ec-windows/*.o` and `-b arm64ec-w64-mingw32`.
+`configure` compiles `tools/makedep.c` itself (`AC_CONFIG_COMMANDS([tools/makedep])`),
+so applying the patch before the `--dxmt-pe` configure is enough; the regenerated
+Makefiles carry it.
+
+`prepare-wine-ios.sh` now greps the generated `Makefile` for each of the six
+targets before running make, so a configure that did not see the patch fails
+with that sentence instead of "No rule to make target".
 
 ## Handing an unsigned IPA to the user
 

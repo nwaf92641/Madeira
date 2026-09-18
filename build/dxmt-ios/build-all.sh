@@ -52,6 +52,34 @@ dxmt_patch_hash() {
     done | sha256_of | cut -d' ' -f1
 }
 
+# Two Wine-side fixes are not yet in the pinned submodule (ml807). Both are
+# applied only when the PE rebuild actually runs, so a stamp-matching build does
+# not touch the wine tree:
+#
+#  - wine-arm64ec-fastfail.patch: include/winnt.h's __fastfail() guards on
+#    __x86_64__ without excluding __arm64ec__, so the arm64ec target takes the
+#    x86 "int $0x29" path and clang rejects the "c" (ECX) constraint.
+#  - wine-makedep-per-arch-pe.patch: tools/makedep.c pairs aarch64+arm64ec into
+#    a single ARM64X image, which leaves the arm64ec-windows import archives
+#    with no make rule at all, so the --dxmt-pe targets below die with "No rule
+#    to make target libs/winecrt0/arm64ec-windows/libwinecrt0.a".
+apply_wine_patch() {
+    local name patch
+    for name in wine-arm64ec-fastfail.patch wine-makedep-per-arch-pe.patch; do
+        patch="$REPO_ROOT/patches/$name"
+        if git -C "$REPO_ROOT/wine" apply --check "$patch" 2>/dev/null; then
+            git -C "$REPO_ROOT/wine" apply "$patch"
+            echo "Applied patches/$name"
+        elif git -C "$REPO_ROOT/wine" apply --reverse --check "$patch" 2>/dev/null; then
+            echo "patches/$name already applied"
+        else
+            echo "ERROR: patches/$name does not apply and is not already applied." >&2
+            echo "       wine is at $(git -C "$REPO_ROOT/wine" rev-parse --short HEAD)." >&2
+            exit 1
+        fi
+    done
+}
+
 apply_dxmt_patches
 patch_hash="$(dxmt_patch_hash)"
 
@@ -92,6 +120,7 @@ fi
 
 if [[ "$rebuild_pe" == 1 ]]; then
     echo "Rebuilding the DXMT PE DLLs ($reason)."
+    apply_wine_patch
     bash "$REPO_ROOT/scripts/prepare-wine-ios.sh" --dxmt-pe
     bash "$BUILD_DIR/build-pe.sh"
     echo "$patch_hash" > "$STAMP"

@@ -5512,6 +5512,13 @@ extern const void *nsi_unix_call_funcs[];
  * never called). Chromium drew no text anywhere as a result. */
 extern const void *dwrite_unix_call_funcs[];
 
+/* iOS-Madeira ml808 (virtual XInput pad): the app's own controller, served to
+ * xinput1_*.dll. Not a unixlib built from wine sources — it is a function in
+ * the app target (app/Madeira/MadeiraXInput.c) that returns the table, because
+ * the state it serves (the on-screen pad's frame and a paired Bluetooth pad's)
+ * lives on that side and never passes through the wine tree. */
+extern const void *const *madeira_xinput_unix_call_table(void);
+
 /* win32u's unix init, statically linked via libwin32u_unix.a. Renamed
  * from __wine_unix_lib_init in build/win32u-unix/build.sh so future
  * statically-linked unix libs can keep their own init without colliding.
@@ -5607,6 +5614,25 @@ static NTSTATUS load_builtin_unixlib( void *module, BOOL wow, const void **funcs
             *funcs = (const void *)nsi_unix_call_funcs;
             dprintf(2, "[unixlib] module %p (%s) -> nsi_unix_call_funcs (%p) rev=ml472\n",
                 module, match, (void *)nsi_unix_call_funcs);
+            status = STATUS_SUCCESS;
+        } else if (match && (strstr(match, "xinput1_") || strstr(match, "xinput9_1_0"))) {
+            /* ml808: the app's virtual XInput pad, so a game that reads a pad
+             * and not a keyboard sees the on-screen pad or a paired Bluetooth
+             * controller as an Xbox 360 pad in slot 0.
+             *
+             * Wine serves real pads through winebus.sys + hidclass.sys +
+             * winexinput.sys, none of which this tree ships, and there is no
+             * winedevice host to enumerate one (autostarting winebus is task
+             * #19). The frame already exists on the app side — GamepadBridge
+             * merges the on-screen pad with a paired controller — so the PE
+             * module only needs somewhere to ask for the current one.
+             *
+             * Matched on the module names rather than on "xinput" so that
+             * winexinput.sys, which contains the word, cannot land here if the
+             * driver stack is ever brought up. */
+            *funcs = (const void *)madeira_xinput_unix_call_table();
+            dprintf(2, "[unixlib] module %p (%s) -> madeira_xinput_unix_call_table (%p) rev=ml808\n",
+                module, match, (void *)madeira_xinput_unix_call_table());
             status = STATUS_SUCCESS;
         } else if (match && strstr(match, "win32u")) {
             /* Register win32u's NtUser / NtGdi syscall table in slot 1.

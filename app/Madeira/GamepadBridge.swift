@@ -2,29 +2,39 @@ import Foundation
 import Dispatch
 import GameController
 
-/// Turns a physical controller into input the guest already understands.
+/// Turns a controller into input the guest understands — two ways, from one
+/// merged frame.
 ///
-/// There is no XInput in this build and there cannot be one from this file:
-/// the guest sees a gamepad only if something on the wine side presents a HID
-/// device or an XInput stub, and that work lives in the wine submodule and
-/// build/, not in this target. The `ControlAction.pad` bindings in the mapping
-/// panel stay inert for exactly that reason — do not wire them here.
+/// Through **XInput**, which is what a game that knows what a gamepad is reads:
+/// the frame also goes to `XInputBridge`, and the guest's `xinput1_4.dll` serves
+/// it as an Xbox 360 pad in player slot 0 (the wine half is
+/// `patches/wine-xinput-virtual-pad.patch`). Nothing in this file needs to know
+/// how that works, only that a frame must be published while a source is live and
+/// withdrawn when one is not.
 ///
-/// What this does instead is the thing that works today. It maps the controller
-/// onto virtual keys and pointer motion through `winios_post_key` and
-/// `winios_pointer`, the same two calls the key buttons, the on-screen stick and
-/// the S2 trackpad already use, so any game that accepts keyboard and mouse
-/// accepts the controller — including mouse-look on the right stick. A game that
-/// accepts ONLY XInput still will not see it, and no amount of work on this side
-/// changes that.
+/// Through **the keyboard and pointer**, which is what a game that does not know
+/// what a gamepad is reads. It maps the controller onto virtual keys and pointer
+/// motion through `winios_post_key` and `winios_pointer`, the same two calls the
+/// key buttons, the on-screen stick and the S2 trackpad already use, so any game
+/// that accepts keyboard and mouse accepts the controller — including mouse-look
+/// on the right stick.
+///
+/// Both run at once on purpose, and that is a deliberate trade: a game that reads
+/// XInput gets proper analogue sticks and triggers instead of eight-way arrow
+/// keys, a game that does not still works exactly as it did, and a game that
+/// reads both sees its own binding for each key. A user whose game maps SPACE to
+/// something other than jump can rebind that button in
+/// `Documents/madeira-gamepad.txt`, or turn the pad off entirely — see the
+/// class comment on `XInputBridge` for how.
 ///
 /// The on-screen PlayStation-style pad (`VirtualPadView`) is the same kind of
 /// source and goes through this same class, not a parallel one: one differ means
 /// one opinion about what is held down. See `setVirtual`.
 ///
-/// Opt out, or rebind anything, with `Documents/madeira-gamepad.txt`; see
-/// GamepadSettings. A connected controller is taken as intent, so the default
-/// is on — a gamepad plugged in and ignored is the more surprising behaviour.
+/// Opt out of the physical controller, or rebind anything, with
+/// `Documents/madeira-gamepad.txt`; see GamepadSettings. A connected controller
+/// is taken as intent, so the default is on — a gamepad plugged in and ignored is
+/// the more surprising behaviour.
 final class GamepadBridge {
     static let shared = GamepadBridge()
 
@@ -72,7 +82,7 @@ final class GamepadBridge {
             return "controller: off (madeira-gamepad.txt)"
         }
         guard let c = controller else { return "controller: no gamepad connected\(pad)" }
-        return "controller: \(c.vendorName ?? "gamepad") → keyboard + pointer\(pad)"
+        return "controller: \(c.vendorName ?? "gamepad") → XInput + keyboard/pointer\(pad)"
     }
 
     /// Hand the on-screen pad's current frame to the bridge.
@@ -159,6 +169,10 @@ final class GamepadBridge {
         previous = GamepadOutput()
         carryX = 0
         carryY = 0
+        // The guest's XInput slot goes with it. A game that finds a pad still
+        // holding a trigger after the thumb came off would steer into a wall on
+        // its own; better that it sees no pad and falls back to the keyboard.
+        XInputBridge.shared.clear()
     }
 
     private func tick() {
@@ -171,6 +185,10 @@ final class GamepadBridge {
         if let c = physical {
             frame = GamepadInput.merged(input(from: c), virtual)
         }
+        // Same frame, second delivery path: this is what a game that reads
+        // XInput sees, and it is the only reason the sticks are analogue rather
+        // than eight-way arrow keys.
+        XInputBridge.shared.publish(frame)
         let next = GamepadMap.output(for: frame,
                                      bindings: settings.bindings,
                                      mouseSpeed: settings.mouseSpeed)
@@ -230,6 +248,12 @@ final class GamepadBridge {
             i.leftY  = Double(g.leftThumbstick.yAxis.value)
             i.rightX = Double(g.rightThumbstick.xAxis.value)
             i.rightY = Double(g.rightThumbstick.yAxis.value)
+            // Travel as well as the press. `isPressed` above is what the keyboard
+            // path binds (a key has no half-way), but XInput hands a game
+            // 0...255, and a throttle that is either on or off is a worse pad
+            // than the one the game is expecting.
+            i.leftTrigger = Double(g.leftTrigger.value)
+            i.rightTrigger = Double(g.rightTrigger.value)
         } else if let m = c.microGamepad {
             // Siri Remote and MFi pads without sticks: the touch surface is the
             // only direction source, and there is no look axis to read.

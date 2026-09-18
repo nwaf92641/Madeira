@@ -50,6 +50,14 @@ struct GamepadInput: Equatable {
     /// translation is negated, so the two steer identically.
     var leftX = 0.0, leftY = 0.0
     var rightX = 0.0, rightY = 0.0
+    /// Triggers, 0...1, analogue.
+    ///
+    /// Separate from the `.lt`/`.rt` entries in `buttons`, which are the
+    /// keyboard path's binary view of the same controls and stay exactly as
+    /// they were. A game whose accelerator is a trigger needs the travel (XInput
+    /// hands it 0...255); a game whose handbrake is a key needs the press. Both
+    /// consumers read the field they understand, and neither has to guess.
+    var leftTrigger = 0.0, rightTrigger = 0.0
 }
 
 extension GamepadInput {
@@ -69,6 +77,11 @@ extension GamepadInput {
         out.buttons = a.buttons.union(b.buttons)
         (out.leftX, out.leftY) = pick(a.leftX, a.leftY, b.leftX, b.leftY)
         (out.rightX, out.rightY) = pick(a.rightX, a.rightY, b.rightX, b.rightY)
+        // Same rule as the sticks: a trigger on either source that is pulled
+        // further wins. max() rather than pick() because a trigger is one axis,
+        // not a pair.
+        out.leftTrigger = max(a.leftTrigger, b.leftTrigger)
+        out.rightTrigger = max(a.rightTrigger, b.rightTrigger)
         return out
     }
 
@@ -96,6 +109,25 @@ struct GamepadOutput: Equatable {
     /// DOWNWARD, so pushing the look stick up produces a NEGATIVE dy. That is
     /// the same sign MetalBackedView posts when a finger drags up.
     var mouseDX = 0.0, mouseDY = 0.0
+}
+
+/// One frame of controller state as the guest's XInput sees it.
+///
+/// This is the other way a controller reaches a game. `GamepadOutput` above is
+/// the keyboard-and-pointer bridge, for games that do not know what a gamepad
+/// is; this one is a real XInput pad in player slot 0, for the games that do —
+/// which is most of them, and the only thing that works for a game with no
+/// keyboard mapping at all. Both are produced from the same `GamepadInput`
+/// frame, so the two can never disagree about what is held.
+struct XInputState: Equatable {
+    /// XINPUT_GAMEPAD_* bits. Spelled out in `GamepadMap.xinputBits` rather than
+    /// derived, because a game reads these values and they are an ABI.
+    var buttons: UInt16 = 0
+    /// Triggers, 0...255 — XInput's range, not ours.
+    var leftTrigger: UInt8 = 0, rightTrigger: UInt8 = 0
+    /// Sticks in XInput's own range, -32768...32767, `y` positive UP: the same
+    /// sense GameController reports and GamepadInput stores, so nothing flips.
+    var leftX: Int16 = 0, leftY: Int16 = 0, rightX: Int16 = 0, rightY: Int16 = 0
 }
 
 /// Full configuration, parsed from `Documents/madeira-gamepad.txt`.
@@ -263,5 +295,61 @@ enum GamepadMap {
         out.mouseDX = scaled(input.rightX) * mousePixelsPerFrame * mouseSpeed
         out.mouseDY = -scaled(input.rightY) * mousePixelsPerFrame * mouseSpeed
         return out
+    }
+
+    // MARK: - XInput
+
+    /// XINPUT_GAMEPAD_* bits, by our button name.
+    ///
+    /// `.lt` and `.rt` are absent on purpose: XInput has no button bit for a
+    /// trigger, only `bLeftTrigger`/`bRightTrigger`. Their binary press still
+    /// reaches a game — as full travel, below — because a game that reads them
+    /// as a button reads `> 0` anyway.
+    static let xinputBits: [GamepadButton: UInt16] = [
+        .up: 0x0001, .down: 0x0002, .left: 0x0004, .right: 0x0008,
+        .menu: 0x0010,                                  // XINPUT_GAMEPAD_START
+        .view: 0x0020,                                  // XINPUT_GAMEPAD_BACK
+        .ls: 0x0040, .rs: 0x0080,                       // stick clicks
+        .lb: 0x0100, .rb: 0x0200,
+        .a: 0x1000, .b: 0x2000, .x: 0x4000, .y: 0x8000,
+    ]
+
+    /// Deadzone applied to a stick on its way to an XInput axis.
+    ///
+    /// Much smaller than `deadzone`, and for a different job: that one makes a
+    /// *direction* unambiguous for the eight-way keyboard snap, and reusing it
+    /// here would throw away the first third of every stick's travel in a game
+    /// that is perfectly able to use it. This one only takes out hardware drift,
+    /// so a resting stick still reports exactly zero and a game's own
+    /// XINPUT_GAMEPAD_*_DEADZONE keeps its meaning.
+    static let xinputDeadzone = 0.08
+
+    /// The frame the guest's XInput sees.
+    ///
+    /// Values are clamped rather than trusted: `Int16(_:)` traps on overflow in
+    /// Swift, and a source that reports 1.0000001 — or a hand-edited override
+    /// that reports 3 — would otherwise crash the app rather than pin a stick.
+    static func xinputState(for input: GamepadInput) -> XInputState {
+        var out = XInputState()
+        for (button, bit) in xinputBits where input.buttons.contains(button) {
+            out.buttons |= bit
+        }
+        // A source that only knows "trigger pressed" still gets full travel; an
+        // analogue one wins with whatever it actually reports.
+        out.leftTrigger = trigger(max(input.leftTrigger, input.buttons.contains(.lt) ? 1 : 0))
+        out.rightTrigger = trigger(max(input.rightTrigger, input.buttons.contains(.rt) ? 1 : 0))
+        out.leftX = axis(scaled(input.leftX, deadzone: xinputDeadzone))
+        out.leftY = axis(scaled(input.leftY, deadzone: xinputDeadzone))
+        out.rightX = axis(scaled(input.rightX, deadzone: xinputDeadzone))
+        out.rightY = axis(scaled(input.rightY, deadzone: xinputDeadzone))
+        return out
+    }
+
+    private static func axis(_ v: Double) -> Int16 {
+        Int16((min(max(v, -1), 1) * 32767).rounded())
+    }
+
+    private static func trigger(_ v: Double) -> UInt8 {
+        UInt8((min(max(v, 0), 1) * 255).rounded())
     }
 }

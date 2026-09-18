@@ -592,6 +592,84 @@ check("an idle thumb cannot cancel a controller stick", both.rightX, 0.9)
 check("a merged frame with nothing held is empty",
       GamepadInput.merged(GamepadInput(), GamepadInput()).buttons.isEmpty, true)
 
+print("XInput frame:")
+// What the guest's xinput1_4.dll serves as player 0. The bit values are
+// XINPUT_GAMEPAD_* -- an ABI a game reads -- so they are written out here rather
+// than trusted to the table's own comment, and a swap of X and Y would look
+// perfectly fine in the source.
+var xi = GamepadInput()
+xi.buttons = [.a]
+check("A is the A bit", GamepadMap.xinputState(for: xi).buttons, 0x1000)
+xi.buttons = [.b, .x, .y]
+check("B/X/Y are the high bits", GamepadMap.xinputState(for: xi).buttons, 0xe000)
+xi.buttons = [.up, .down, .left, .right]
+check("the d-pad is one bit per direction", GamepadMap.xinputState(for: xi).buttons, 0x000f)
+xi.buttons = [.menu, .view]
+check("START and BACK", GamepadMap.xinputState(for: xi).buttons, 0x0030)
+xi.buttons = [.lb, .rb, .ls, .rs]
+check("bumpers and stick clicks", GamepadMap.xinputState(for: xi).buttons, 0x03c0)
+
+// A trigger is travel in XInput, not a bit, and a source that only knows
+// "pressed" -- the on-screen pad, and every keyboard binding -- means fully
+// pulled. Both spellings have to reach the guest as 255.
+xi = GamepadInput()
+xi.buttons = [.lt, .rt]
+let pressed = GamepadMap.xinputState(for: xi)
+check("a binary trigger is full travel", pressed.leftTrigger, 255)
+check("and so is the other", pressed.rightTrigger, 255)
+check("and neither is a button bit", pressed.buttons, 0)
+xi.buttons = []
+xi.leftTrigger = 1
+xi.rightTrigger = 0.5
+let analogue = GamepadMap.xinputState(for: xi)
+check("full travel is 255", analogue.leftTrigger, 255)
+check("half a trigger is half travel", analogue.rightTrigger, 128)
+
+// Sticks leave here in XInput's units, -32768...32767 with +y up: the same
+// sense the on-screen pad and GameController report, so nothing flips and a
+// game's own XINPUT_GAMEPAD_*_DEADZONE keeps its meaning.
+xi = GamepadInput()
+xi.leftX = 1
+xi.leftY = -1
+let full = GamepadMap.xinputState(for: xi)
+check("a fully deflected stick is 32767", full.leftX, 32767)
+check("and the sign survives", full.leftY, -32767)
+xi.leftX = 0.05
+check("drift inside the XInput deadzone is zero", GamepadMap.xinputState(for: xi).leftX, 0)
+xi.leftX = 3
+check("an out-of-range value pins the axis rather than trapping",
+      GamepadMap.xinputState(for: xi).leftX, 32767)
+check("a resting frame is an untouched pad",
+      GamepadMap.xinputState(for: GamepadInput()), XInputState())
+// The pad's buttons plus the two stick clicks it cannot reach, minus the
+// triggers -- travel, not bits -- and nothing else, so a button added to the
+// pad without a bit is caught here rather than in a game.
+check("every pad button has a bit except the triggers",
+      Set(GamepadMap.xinputBits.keys),
+      expectedPadButtons.subtracting([.lt, .rt]).union([.ls, .rs]))
+
+// The union is the keyboard path's merge, so the keyboard and XInput halves of
+// one frame cannot disagree about which thumb is pushing harder.
+var xiPhysical = GamepadInput()
+xiPhysical.buttons = [.a]
+xiPhysical.leftTrigger = 0.25
+xiPhysical.rightTrigger = 0.5
+var xiVirtual = GamepadInput()
+xiVirtual.buttons = [.b]
+xiVirtual.leftTrigger = 0.75
+let xiMerged = GamepadInput.merged(xiPhysical, xiVirtual)
+check("buttons merge", xiMerged.buttons, Set([GamepadButton.a, GamepadButton.b]))
+check("the harder trigger wins", xiMerged.rightTrigger, 0.5)
+check("a trigger only one source has survives", xiMerged.leftTrigger, 0.75)
+
+print("on-screen triggers:")
+var triggerTouches = VirtualPadTouchState()
+triggerTouches.begin(.button(.lt), touch: 0)
+check("a touch reports full travel", triggerTouches.input.leftTrigger, 1)
+check("which reaches XInput as 255",
+      GamepadMap.xinputState(for: triggerTouches.input).leftTrigger, 255)
+triggerTouches.end(touch: 0)
+check("and releasing it lets the trigger up", triggerTouches.input.leftTrigger, 0)
 print("multi-touch bookkeeping:")
 var touches = VirtualPadTouchState()
 touches.begin(.button(.a), touch: 0)

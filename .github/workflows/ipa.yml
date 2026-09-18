@@ -37,7 +37,31 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Runs before the build, and gates it. The app's Swift compiles only on a Mac
+  # with the iOS SDK, so without this job a mistake in it -- a C function the
+  # bridging header does not import, a property a framework does not have -- is
+  # first found by xcodebuild, after FEX, Wine, LLVM and DXMT have all been
+  # built. ml808 lost three runs that way at ~25 minutes each; this job reports
+  # the same errors in about two.
+  app-compile:
+    name: App Swift typecheck
+    runs-on: macos-15
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+          submodules: false
+
+      - name: Typecheck the app
+        run: scripts/typecheck-app.sh
+
   ipa:
+    needs: app-compile
     runs-on: macos-15
     timeout-minutes: 360
     defaults:
@@ -91,6 +115,11 @@ jobs:
           echo "dxmt=$(git -C research/dxmt rev-parse HEAD)" >> "$GITHUB_OUTPUT"
           echo "deployment=$IOS_DEPLOYMENT_TARGET" >> "$GITHUB_OUTPUT"
 
+      # research/freetype is cached as well as its cmake output: the headers
+      # under research/freetype/include are on the include path of
+      # build/ntdll-unix/build.sh and build/win32u-unix/build.sh, so a cache
+      # holding only build/freetype-ios/build restores a libfreetype.a those
+      # builds cannot use.
       - name: Restore native dependency cache
         id: native-cache
         uses: actions/cache/restore@v4
@@ -100,6 +129,7 @@ jobs:
             toolchains/gnutls-ios
             build/gnutls-ios/obj
             build/freetype-ios/build
+            research/freetype
             wine/build-macos
             toolchains/llvm-mingw-20260421-ucrt-macos-universal
           key: ipa-native-${{ runner.arch }}-${{ steps.revisions.outputs.fex }}-${{ steps.revisions.outputs.wine }}-${{ steps.revisions.outputs.dxmt }}-${{ hashFiles('scripts/build-fex-ios.sh', 'scripts/prepare-wine-ios.sh', 'patches/fex-ios-arm64-mbi.patch', 'build/gnutls-ios/build.sh', 'build/gnutls-ios/src/SHA256SUMS', 'build/freetype-ios/build.sh') }}
@@ -159,6 +189,7 @@ jobs:
             toolchains/gnutls-ios
             build/gnutls-ios/obj
             build/freetype-ios/build
+            research/freetype
             wine/build-macos
             toolchains/llvm-mingw-20260421-ucrt-macos-universal
           key: ${{ steps.native-cache.outputs.cache-primary-key }}

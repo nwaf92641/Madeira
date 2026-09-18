@@ -1278,6 +1278,21 @@ finish and stay finished:
   shipped DLL is pure payload; not `--strip-all`, which is 16% smaller again but
   drops the COFF symbol table for no reward. The export table is untouched
   either way (336 exports in, 336 out, on a d3dx9_41 arm64ec module).
+- **The patch order is load-bearing, and the script now enforces it.** Wine
+  generates one flat `Makefile` with `tools/makedep`, so a patch to `makedep.c`
+  only changes the rules once makedep has been rebuilt *and* re-run. A build
+  directory configured before `wine-makedep-per-arch-pe.patch` -- which is every
+  caller that runs `prepare-wine-ios.sh` first, the IPA workflow included -- holds
+  a Makefile from the unpatched makedep, where the arm64ec half of every module
+  does not exist as a separate target: it is folded into `aarch64-windows/` as one
+  ARM64X hybrid (0 arm64ec DLL rules, 880 `-marm64x` flags, measured). The
+  `has_rule` loop then reports all ~150 arm64ec targets as unbuildable and stops,
+  which reads like a tree that cannot build the set. `build-wine-pe-modules.sh`
+  now runs `make Makefile` straight after applying the patches: that is Wine's own
+  regeneration path (the Makefile depends on `config.status` and `tools/makedep`),
+  it rebuilds makedep from the patched source and re-runs it, and it is a no-op
+  when the file is current. CI failed once on exactly this before the line was
+  added.
 - `PE_MODULES_OUT`, so the install directory is not hardcoded: the IPA workflow
   builds into `build/wine-pe-modules` and caches *that*, then copies from it.
 

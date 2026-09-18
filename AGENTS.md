@@ -1076,6 +1076,300 @@ Makefiles carry it.
 targets before running make, so a configure that did not see the patch fails
 with that sentence instead of "No rule to make target".
 
+## The launch-path audit (ml809–ml811): three silent failures, one launch
+
+The request was a DX11 "compatibility" pass. The DX11 layer (DXMT) was already
+hardened by ml806 and nothing in this pass changed it; what actually broke last
+launches was the path *to* DX11, in three places that each fail quietly and
+produce a symptom that points somewhere else. All three are fixed; none of them
+needed a new subsystem.
+
+### ml810 — Wine was asking the loader for display drivers this build does not contain
+
+`explorer`'s and `win32u`'s compiled default for the display driver is the
+string `"mac,x11,wayland"` (`wine/programs/explorer/desktop.c`). With no
+`GraphicsDriver` value in the prefix -- which is the state of every prefix this
+app has ever seeded -- `load_display_driver` walked all three names and called
+`LoadLibraryW("wine<name>.drv")` for each. All three fail on iOS: `configure`
+ran `--without-x`, `winemac` is macOS-only, and no display `.drv` ships at all.
+So every launch logged three `LoadLibrary` misses (`0xc0000034`) before landing
+on the winios driver it was always going to use anyway -- noise that reads like
+a missing-file bug, and three syscalls of loader work per launch.
+
+Two independent fixes, because they cover different prefixes:
+
+- `build/win32u-unix/driver_ios.c`: `load_desktop_driver()` now returns `FALSE`
+  immediately `#ifdef WINE_IOS`, before the registry is consulted. There is
+  nothing to look for on this platform, so there is nothing to probe. The
+  `#else` branch is Wine's code, untouched. The consequence in
+  `load_display_driver()` is that `winios_user_driver` is installed
+  *unconditionally* rather than as the fallback of a doomed probe -- which also
+  removes a real (if unreachable today) hazard: a prefix whose stale GUID
+  happened to name a loadable module would have taken the winemac path.
+- `WineProcessBridge.m`: `ios_ensure_graphics_driver()` pins
+  `HKCU\Software\Wine\Drivers\Graphics="null"` in `user.reg` at seed time. It
+  must run *before* the wineserver boots, because the wineserver parses and
+  rewrites `user.reg`; after that the on-disk value is no longer authoritative.
+  `"null"` is not a placeholder -- it is the one value that tells Wine's driver
+  loop to stop without attempting a load.
+
+`scripts/build-prefix-snapshot.sh` writes the same value when it generates a
+template, so a regenerated `prefix-template.tar.gz` ships correct and the app's
+repair is a no-op on it. `tools/test-graphics-driver-pin.sh` asserts the edit
+does the right thing to fixtures *and to the shipped template*, and -- the half
+that matters more for a file holding every application setting the prefix has --
+that it is byte-for-byte inert when there is nothing to do.
+
+### ml809 — the codepage tables never reached the bundle (STATUS_OBJECT_NAME_NOT_FOUND)
+
+Reported as `NtCreateFile`/NLS errors. Root cause was mundane: `wine/nls`
+contains 76 tables (68 codepages) in the source tree, and only four of them
+(`c_437`, `c_1252`, `c_20127`, `c_28591`) were ever committed into
+`app/Madeira/nls/`. A title asking for CP932, CP1251 or anything else got a
+failed lookup in locale setup. Three parts to the fix:
+
+- `scripts/stage-nls.sh` now stages the full set from `wine/nls` and **fails**
+  (exit 1) if fewer than 68 codepages are present, instead of silently shipping
+  a subset. It stays soft when there is no Wine tree at all, which is what makes
+  a source-only checkout still packageable.
+- `WineProcessBridge.m` links every bundled `nls/*.nls` into
+  `drive_c/windows/system32` at seed time. That is the *second* path ntdll tries
+  (`env_ios.c: open_nls_data_file` resolves `<data_dir>/nls/<name>.nls` first,
+  then `C:\windows\system32\<name>.nls`), and the template strips every `.nls`
+  out of system32 -- so before this the fallback could not succeed for any
+  codepage. Symlinks, not copies: the bundle owns the files, and a copy goes
+  stale on the next Wine bump. It also logs loudly when the bundle carries fewer
+  than 60 tables, because that failure is otherwise invisible on the device.
+- `tools/check-nls-set.py` compares source against bundle (component-wise, by
+  name) and is wired into `tools/check-all.sh`, so a stale or partial bundle
+  fails the gate rather than the game.
+
+### ml811 — "JIT pool allocation failed" was usually "no debugger attached"
+
+`StikJITHelper.pollForJIT` completed on `jit_check_debugged()`, which is
+`CS_DEBUGGED` -- a flag that is **sticky across detach**. On the first launch
+that is a fine signal (`CS_DEBUGGED` is clear until StikDebug arrives). On every
+launch after it, the flag is already set before anything is opened, so the poll
+returned `true` on its first tick, StikDebug was still launching, and the caller
+went straight to allocating the JIT pool. The pool is allocated through a
+`BRK #0xf00d` that only the debugger answers; with nobody attached it is not
+answered at all, the returned pointer is zero, and every placement wave fails.
+The user then saw an *address-space* error ("BAD POOL: no placement", "Debugger
+failed to allocate RX memory") for a problem that was never about memory, and
+pressing launch again "fixed" it whenever the race went the other way.
+
+- The wait is now on `P_TRACED` (`isDebuggerAttached()`), which answers "is
+  StikDebug on this process right now".
+- `ensureAttached(attempts:)` retries the URL open up to three times, spaced by
+  1.5s, and re-checks `P_TRACED` itself rather than trusting the completion --
+  a caller can no longer run on a success that is only a sticky flag. The launch
+  sequence uses it; the single-shot re-attach is gone.
+- The pool failure now names the cause when `P_TRACED` is clear, so the next
+  reader of that log does not go looking in the allocator.
+
+`isDebuggerAttached()` and `jit_check_debugged()` are the two questions
+`JITState` keeps apart in the UI chip ("JIT ready · detached"); ml811 makes the
+launch path keep them apart too.
+
+### Verified, not changed
+
+- `d3dcompiler_43.dll` ships real; `44/45/46` are aliased onto `47` at session
+  start (ml806, `WineProcessBridge.m`), and the cross-arch link pass covers them
+  for the non-session arch. All five names resolve in either arch.
+- The `dxvk.conf` request: `dxvk.*` keys remain documented-but-inert (DXMT is
+  the layer; see the ml806 section). The device identity stays
+  `dxgi.customDeviceId=1b81` (`nvidiaGeForceGTX1070`), *not* the `1b80` asked
+  for -- `1b80` is the GTX 1080's id and would contradict the descriptor string
+  next to it.
+
+## The Winlator audit (ml812): compatibility is a missing-module problem
+
+Studied `brunodev85/winlator` at `bae41e0` (11.2) for reusable compatibility
+work. The full audit, mechanism by mechanism, is `research/winlator-compat-audit.md`;
+the short version is that its value is the *shape* of its layer, not its code --
+it is Android, this is iOS, and its graphics stack is Vulkan where this one is
+Metal. Three things came out of it that are true regardless:
+
+**The number.** Winlator's `common_dlls.json` expects 580 DLLs in system32.
+This bundle ships 120 for the x64 guest and 115 for the ARM64 one, and 124 of
+them overlap. The set was never a compatibility decision -- it is the
+transitive closure of the imports of Wine's own test executables (twelve test
+`.exe` files ship in `arm64ec-windows/`) plus the four DXMT modules. That is
+why `xaudio2_7.dll` is absent while its helper `X3DAudio1_7.dll` is present,
+and why the previous round's DXMT tuning did not move the "this game does not
+start" number: a title whose `LoadLibrary` fails is not a title that can be
+tuned. `tools/pe-module-manifest.txt` is the missing list (121 modules Wine
+builds, 12 Microsoft-only), `tools/check-pe-module-set.py` prints it on every
+gate run, and `--strict` fails until it is closed.
+
+**The alias table (`app/Madeira/DLLAliases.h`).** ml812 made 32 names resolve to
+a module the bundle ships (`d3dx9_24..42 -> d3dx9_43`, `d3dcompiler_33..42 ->
+d3dcompiler_43`, `d3dcompiler_44..46 -> d3dcompiler_47`) on the argument that
+the families export unversioned symbols (`D3DXMatrixMultiply`, `D3DCompile`) and
+Wine models every generation as a forwarder to one implementation. **The first
+two ladders are wrong and ml813 removed them.** `d3dx9_24` exports nine names
+`d3dx9_43` does not (`D3DXCreateFragmentLinker`, `D3DXGatherFragments{,FromFileA,
+FromFileW,FromResourceA,FromResourceW}`, `D3DXCpuOptimizations`,
+`D3DXGetTargetDescByName/ByVersion`), `d3dx9_33` six, `d3dx9_36/39` seven, and
+`d3dcompiler_33` is missing six from `d3dcompiler_43`
+(`D3DCompileFromMemory`, `D3DDisassembleCode`, `D3DDisassembleEffect`,
+`D3DGetCodeDebugInfo`, `D3DPreprocessFromMemory`, `D3DReflectCode`). A title that
+imports one of those does not load the module, which is the same symptom as the
+missing DLL the alias was meant to cure -- but now with a module present, so the
+next reader has further to look. Only `d3dx9_42` (nothing missing) and
+`d3dcompiler_43 -> d3dcompiler_47` (its 17 exports are all in 47's 29) are sound,
+and the table keeps the latter, plus `d3dcompiler_44/45 -> 47` for the two
+generations Microsoft only ever shipped in the SDK.
+The runtime loop in `WineProcessBridge.m` links into the session's `system32`,
+skips names that already exist (a real copy, a native component, or a user's
+drop-in always wins) and clears stale links, so it is idempotent.
+`tools/check-dll-aliases.py` gates the table: a target must be shipped for the
+x64 session, an alias may never shadow a shipped module, no chains, and (ml813)
+every alias must carry a reference set -- the aliased name's real exports -- so
+that the exporting half of the claim is checked rather than assumed. It found a
+real asymmetry on its first run: `d3dx9_43.dll` and `d3dcompiler_43/47.dll` exist
+only in `arm64ec-windows/`, so the ARM64 session has no DirectX 9 shader compiler
+at all. Still true, and still not on the critical path: see ml813.
+
+**The build (`scripts/build-wine-pe-modules.sh` +
+`.github/workflows/wine-pe-modules.yml`).** Builds the manifest's modules from
+the pinned tree for both guest architectures with the per-module recipe
+`scripts/build-wine-xinput-pe.sh` already proves
+(`make dlls/<module>/<arch>/<module>.dll`), refusing to touch the modules DXMT
+and the XInput patch own, validating every installed module's machine word, and
+additive unless `--force`. It was a separate workflow from `ipa.yml` on purpose:
+the DLLs are committed and the IPA job restores its Wine tree from cache, so
+shipping ~240 new modules into the release build before one run has exercised
+them is risk with no upside. Run it, inspect the artifact, commit the DLLs with
+the Wine revision in its summary, then the same two steps (prepare-wine-ios.sh,
+build-wine-pe-modules.sh) move into `ipa.yml` unchanged. **ml813 took the second
+option and did not commit the DLLs** -- 161 MB of binaries that are only valid
+for one Wine revision is a worse trade than 35 minutes of runner time, and the
+IPA workflow builds and caches them (see that section).
+
+What was deliberately *not* taken: gladio/vortek (Android GL/Vulkan process
+shims; DXMT links Metal directly), DXVK/VKD3D/Zink (Vulkan-only), Box64's
+presets (different emulator; only its stability-ladder shape transfers, and
+that is backlog item 4), and its rootfs/pulseaudio packaging.
+
+Items 1-3 are done in ml813 (the module build ran to completion for both
+architectures, the DirectX component exists, and the ARM64-side modules are the
+same 143). Still open: per-title settings profiles (item 4) and wine-mono for the
+managed titles (item 5).
+
+## The compat set is built, shipped and gated (ml813)
+
+ml812 ended with a manifest, a gate and a build script that had never run to
+completion. This pass ran it, closed the Microsoft half, and fixed one thing
+ml812 got wrong (the alias ladder, above). The order matters: the manifest is
+what a DirectX-era title imports, so "DX11 support" here is a packaging property
+before it is a rendering one -- a title whose `LoadLibrary` fails is not a title
+any layer can translate for.
+
+**The Wine half: 143 modules, both architectures, 0 errors.** The build is per
+module (`make dlls/<module>/<arch>/<module>.dll`), it refuses to touch anything
+DXMT or the XInput patch owns, and it is additive. What changed to make it
+finish and stay finished:
+
+- `--strip-debug` with the arch-specific `llvm-mingw` strip, which is what made
+  the set shippable. Measured, not assumed: across the 143 modules, arm64ec
+  168 MB -> 50 MB and aarch64 267 MB -> 111 MB, and the only PE modules left with
+  `.debug_info` are the DXMT ones `build-all.sh` produces. Debug info in a
+  shipped DLL is pure payload; not `--strip-all`, which is 16% smaller again but
+  drops the COFF symbol table for no reward. The export table is untouched
+  either way (336 exports in, 336 out, on a d3dx9_41 arm64ec module).
+- **The patch order is load-bearing, and the script now enforces it.** Wine
+  generates one flat `Makefile` with `tools/makedep`, so a patch to `makedep.c`
+  only changes the rules once makedep has been rebuilt *and* re-run. A build
+  directory configured before `wine-makedep-per-arch-pe.patch` -- which is every
+  caller that runs `prepare-wine-ios.sh` first, the IPA workflow included -- holds
+  a Makefile from the unpatched makedep, where the arm64ec half of every module
+  does not exist as a separate target: it is folded into `aarch64-windows/` as one
+  ARM64X hybrid (0 arm64ec DLL rules, 880 `-marm64x` flags, measured). The
+  `has_rule` loop then reports all ~150 arm64ec targets as unbuildable and stops,
+  which reads like a tree that cannot build the set. `build-wine-pe-modules.sh`
+  now runs `make Makefile` straight after applying the patches: that is Wine's own
+  regeneration path (the Makefile depends on `config.status` and `tools/makedep`),
+  it rebuilds makedep from the patched source and re-runs it, and it is a no-op
+  when the file is current. CI failed once on exactly this before the line was
+  added.
+- `PE_MODULES_OUT`, so the install directory is not hardcoded: the IPA workflow
+  builds into `build/wine-pe-modules` and caches *that*, then copies from it.
+
+The script already refused to overwrite a module the bundle has, refused to
+touch what DXMT and the XInput patch own, aborted when the generated Makefile had
+no rule for a requested target, and verified every installed module's machine
+word. Those four are why the first full run came back 143/143 with 0 errors
+instead of compiling Wine's own test dependencies into the bundle.
+
+**The Microsoft half: a `x86_64-directx` component, built like the vcruntime
+one.** Wine's DirectX helper libraries are reimplementations with holes exactly
+where a title calls them: `d3dx11_43` declares 19 of its 44 exports `@ stub`
+including `D3DX11CreateShaderResourceViewFromFile{A,W}` -- the call a DX11 game
+makes to load a texture -- and all four async processors and all six
+`D3DX11PreprocessShader*`; `d3dx10_43` stubs 26 of 176, keeping both
+`D3DX10CreateShaderResourceViewFromFile{A,W}`; `d3dcompiler_47` stubs 10 of 29
+(`D3DCompile2`, the `d3dcompiler_47`-era entry points). A stub is worse than a
+missing module: it answers `E_NOTIMPL`, so the module loads, the title starts,
+and it dies at the first texture -- the "missing DLL" symptom one level down.
+
+`tools/extract-directx.py` + `tools/fetch-directx.sh` produce the real ones from
+the June 2010 DirectX redistributable, and `tools/directx-component.txt` is the
+list (16 modules, 15.9 MB). Details that are load-bearing:
+
+- The redistributable is self-extracting and its cabinets nest, so the extractor
+  descends into them and proves the machine word of every file it installs -- a
+  wrong arch here is a load failure inside the guest, not an error at build time.
+- x64 only. The component is overlaid onto the x64 session's `system32`; an ARM64
+  copy would be a module the ARM64 guest loads *instead of* the ARM64EC one,
+  which is the class of mistake the vcruntime exemptions exist for.
+- Names are lowercased on install. The cabinet spells some of them
+  `D3DCompiler_43.dll`, the rest of the bundle is lower case, and the packaged
+  bundle is read by name out of a zip (`tools/validate-ios-bundle.py`), where
+  the difference is a hit or a miss.
+- Nothing in the list replaces a module DXMT owns (`d3d11`, `dxgi`,
+  `d3d10core`, `winemetal`), and `tools/check-pe-module-set.py` fails if one is
+  ever added. The overlay runs *after* the bundle symlinks and unlinks first, so
+  Microsoft's `d3dx11_43` is what the guest gets, not Wine's stub.
+
+The risk to watch, and the fix if it shows: this is an x86_64 Microsoft DLL
+running under FEX, which is the arrangement that killed `msvcp140` (its C++
+throw path corrupted guest RSP; see the exemption notes in
+`WineProcessBridge.m`). `d3dx11_43` is C with no exception path, so it is
+expected to be fine -- but if DX11 titles start failing at the first texture
+*after* this component ships, the first thing to try is exempting that module in
+the overlay table and keeping the stub, which is a one-line change.
+
+**The gates now say what "complete" means.** `check-pe-module-set.py` accounts
+for every manifest entry in one of three ways: a Wine module the bundle should
+have built, a native module the DirectX component provides, or a native module
+with no source anywhere in the tree (`dpmodemx`, `wmcodecdspuuid` -- reported in
+the summary and never failed, because there is nothing to fail *on*).
+`--strict` fails when either of the first two is incomplete, and it is now run by
+`make-ipa.sh` before packaging as well as by both workflows, so a local release
+build and the release are the same build. `check-dll-aliases.py` verifies alias
+exports against a reference set generated from Wine's `.spec`, and
+`validate-ios-bundle.py` reads `tools/directx-component.txt` and requires all 16
+modules, x64, in the *packaged* app -- so "the runtime is in the IPA" is a
+property the gate checks rather than a property of the build script.
+
+**CI builds the thing it ships.** `ipa.yml` restores a
+`build/wine-pe-modules` cache keyed on the Wine revision, the manifest and the
+build script; builds and installs the 143 modules; runs the two fetchers; runs
+`--strict`; then builds and packages. Nothing about the release depends on
+someone having committed the right binaries. `.github/workflows/
+wine-pe-modules.yml` stays as the standalone inspector (`--force` rebuild, one
+artifact of both directories), and `build-ipa.yml` is unchanged: it still wraps
+`ipa.yml`, and still publishes an unsigned IPA with a Release on push/dispatch.
+
+What was deliberately not done: committing the module set (161 MB, valid for one
+Wine revision); a `dxvk.conf` full of `dxvk.*` keys (ml806 -- DXMT does not read
+them, and a config file that promises more than the layer implements is worse
+than no file); and closing the ARM64 DirectX 9 asymmetry (`d3dx9_43`,
+`d3dcompiler_43/47` still exist only for x64). That last one is real but not
+reachable: DX11 requires DXMT's x64 path, and an ARM64-native DX9 title is not a
+thing that exists in the wild.
+
 ## Handing an unsigned IPA to the user
 
 The build lives in CI, so "give me an IPA" is three steps, and the third is the

@@ -55,6 +55,15 @@ bash scripts/stage-nls.sh
 # Fail here, with the real reason, rather than inside ld.
 tools/check-build-inputs.sh
 
+# And fail here rather than shipping the bundle. The manifest is what a
+# DirectX-era title imports; two thirds of it is built (scripts/
+# build-wine-pe-modules.sh) and the Microsoft half is fetched
+# (tools/fetch-directx.sh, tools/fetch-vcruntime.sh), so a clone that has only
+# been linked looks complete and packages an app that cannot load a game. The
+# IPA workflow runs the same three commands, which is why a release and a local
+# build are the same build.
+python3 tools/check-pe-module-set.py --strict
+
 BUILD_DIR="$ROOT/build/ipa-build"
 STAGE="$ROOT/build/ipa-stage"
 
@@ -102,6 +111,24 @@ if [ "$BUILT_ID" != "$EXPECTED_ID" ]; then
     echo "  app/source.json and deploy-thumper.sh assume the latter." >&2
     exit 1
 fi
+
+# ml809: the codepage tables must be IN THE BUILT APP, not merely in the tree.
+# A folder reference builds as whatever it finds at build time, so this is the
+# only place that proves the stage step ran before xcodebuild did and that the
+# bundle actually carries all 68 tables. A shortfall here is the difference
+# between "a Japanese title starts" and "it dies in locale setup with
+# STATUS_OBJECT_NAME_NOT_FOUND", which no later check would attribute to the
+# package.
+NLS_DIR="$APP/nls"
+NLS_CP=$(find "$NLS_DIR" -maxdepth 1 -name 'c_*.nls' 2>/dev/null | wc -l | tr -d ' ')
+if [ "${NLS_CP:-0}" -lt 60 ]; then
+    echo "make-ipa: built app carries only ${NLS_CP:-0} codepage table(s) in nls/." >&2
+    echo "  Expected the 68 the pinned Wine ships. Run scripts/stage-nls.sh before" >&2
+    echo "  the build (make-ipa does), and check that app/Madeira/nls is in the" >&2
+    echo "  Xcode target's Copy Bundle Resources as a folder reference." >&2
+    exit 1
+fi
+echo "make-ipa: nls/ carries $NLS_CP codepage table(s)"
 
 [ "$KEEP_BUILD" -eq 1 ] || rm -rf "$BUILD_DIR" "$STAGE"
 

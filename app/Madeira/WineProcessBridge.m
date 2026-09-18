@@ -25,6 +25,7 @@
 #include "WineServerBridge.h"
 #include "PrefixExtractor.h"
 #include "FEXBridge.h"  // fex_get_jit_write_offset()
+#include "DLLAliases.h" // kMadeiraDLLAliases: DirectX module-name aliases (ml812)
 
 // Thread-local globals for wine_ios_exit longjmp (used by wine_ios_exit.h shim in ntdll)
 // Each Wine "process" thread has its own jmpbuf so child processes can exit independently.
@@ -219,6 +220,145 @@ static void ios_merge_move(const char *src, const char *dst, int depth)
     rmdir( src );                       /* only succeeds once genuinely empty */
 }
 
+/* ---- ml810: NO DISPLAY-DRIVER MODULE EXISTS ON iOS, SO STOP LOOKING ------
+ *
+ * The reported errors are Wine asking for a driver this build does not have:
+ *
+ *     err:module:import_dll Library winemac.drv not found     0xc0000034
+ *     err:module:import_dll Library winex11.drv not found     0xc0000034
+ *     err:module:import_dll Library winewayland.drv not found 0xc0000034
+ *
+ * 0xc0000034 is STATUS_OBJECT_NAME_NOT_FOUND out of NtCreateFile, i.e. the
+ * loader searched for the DLL and the file genuinely is not there -- not a
+ * permission or init failure. Two independent places ask for it:
+ *
+ *   1. explorer.exe. Its compiled default is
+ *        programs/explorer/desktop.c: default_driver[] = L"mac,x11,wayland"
+ *      and load_graphics_driver() walks that list building "wine%s.drv" and
+ *      calling LoadLibraryW on each hit. HKCU\Software\Wine\Drivers\Graphics
+ *      overrides the list, and the ONLY value that stops the walk without a
+ *      load is "null" -- which sets null_driver=TRUE, breaks out before
+ *      LoadLibraryW, and records GraphicsDriver="null" in the volatile video
+ *      device key. Any other value, including the mac/x11/wayland default,
+ *      costs one failed loader search per name, every launch.
+ *   2. win32u's load_desktop_driver(), reading GraphicsDriver back out of that
+ *      video key. That half is fixed in build/win32u-unix/driver_ios.c, which
+ *      now returns FALSE unconditionally under WINE_IOS so no value can make it
+ *      load a module. This half cannot be fixed in C: the name is built inside
+ *      explorer.exe, which is a Windows PE binary.
+ *
+ * So pin the key. "null" is the branch Wine takes when no driver is desired,
+ * and it is honest here -- winios.drv is installed by the port, not by this
+ * lookup, and it is what actually owns the display. It also makes the log
+ * lines stop rather than merely become harmless.
+ *
+ * Editing user.reg on disk is what makes this work for prefixes already on a
+ * device: Wine parses the file at boot and rewrites it, so a value set through
+ * regedit in a previous session is not something we can rely on here, and the
+ * app has not started a wineserver yet at this point. Same doctrine as the
+ * ml666 repair above -- fix the file before anything reads it.
+ *
+ * Idempotent, and it leaves a foreign value alone if the section is missing in
+ * a way we do not understand: a missing section means the prefix has bigger
+ * problems than this key, and inventing a section could shadow a real one. */
+static int ios_reg_pin_graphics_null(const char *path)
+{
+    FILE *f = fopen( path, "rb" );
+    if (!f) return 0;
+    fseek( f, 0, SEEK_END ); long n = ftell( f ); fseek( f, 0, SEEK_SET );
+    if (n <= 0 || n > (64 << 20)) { fclose( f ); return 0; }
+    char *buf = malloc( (size_t)n + 1 );
+    if (!buf) { fclose( f ); return 0; }
+    size_t got = fread( buf, 1, (size_t)n, f );
+    fclose( f );
+    if (got != (size_t)n) { free( buf ); return 0; }
+    buf[n] = 0;
+
+    /* Section headers in a Wine .reg are literal text with a trailing write
+     * timestamp:   [Software\\Wine\\Drivers] 1776969700 */
+    static const char SECTION[] = "[Software\\\\Wine\\\\Drivers]";
+    static const char KEY[]     = "\"Graphics\"=";
+    static const char LINE[]    = "\"Graphics\"=\"null\"";
+    const size_t kl = sizeof(KEY) - 1;
+    const size_t ll = sizeof(LINE) - 1;
+
+    char *sec = strstr( buf, SECTION );
+    if (!sec) { free( buf ); return 0; }   /* no section: leave the prefix alone */
+
+    char *eol = strchr( sec, '\n' );       /* end of the header line */
+    if (!eol) { free( buf ); return 0; }   /* nothing after the header */
+
+    /* The section runs to the next line that opens with '['. */
+    char *sec_end = buf + n;
+    for (char *q = eol + 1; q < buf + n; )
+    {
+        if (*q == '[') { sec_end = q; break; }
+        char *nl = strchr( q, '\n' );
+        if (!nl) break;
+        q = nl + 1;
+    }
+
+    /* Find an existing "Graphics" line inside the section. */
+    char *val = NULL, *val_nl = NULL;
+    for (char *q = eol + 1; q < sec_end; )
+    {
+        if (!strncmp( q, KEY, kl )) { val = q; val_nl = strchr( q, '\n' ); break; }
+        char *nl = strchr( q, '\n' );
+        if (!nl) break;
+        q = nl + 1;
+    }
+
+    /* Already pinned? Then there is nothing to write and no reason to touch the
+     * file -- rewriting a 3.7MB registry on every launch is its own kind of bug. */
+    if (val && val_nl && (size_t)(val_nl - val) == ll && !strncmp( val, LINE, ll ))
+    {
+        free( buf );
+        return 0;
+    }
+
+    /* header (inclusive of its newline) | our line | the rest, minus any stale
+     * "Graphics" line. An existing value is REPLACED rather than shadowed:
+     * two entries for one name is not something the parser resolves. */
+    size_t head = (size_t)(eol - buf) + 1;
+    const char *tail = val ? (val_nl ? val_nl + 1 : sec_end) : (buf + head);
+    size_t taillen = (size_t)(buf + n - tail);
+
+    char *out = malloc( head + ll + 1 + taillen + 1 );
+    if (!out) { free( buf ); return 0; }
+    memcpy( out, buf, head );
+    memcpy( out + head, LINE, ll );
+    out[head + ll] = '\n';
+    memcpy( out + head + ll + 1, tail, taillen );
+    out[head + ll + 1 + taillen] = 0;
+    size_t outlen = head + ll + 1 + taillen;
+
+    char tmp[PATH_MAX];
+    snprintf( tmp, sizeof(tmp), "%s.ml810", path );
+    FILE *o = fopen( tmp, "wb" );
+    int ok = 0;
+    if (o)
+    {
+        ok = fwrite( out, 1, outlen, o ) == outlen;
+        if (fclose( o ) != 0) ok = 0;
+        if (ok && rename( tmp, path ) != 0) ok = 0;
+        if (!ok) unlink( tmp );
+    }
+    if (ok) LOG( "graphics-driver: pinned Graphics=null in %{public}s", path );
+    else    LOG( "graphics-driver: FAILED to update %{public}s", path );
+    free( buf ); free( out );
+    return ok ? 1 : 0;
+}
+
+/* Called from madeira_seed_prefix_if_needed(), which runs before the wineserver
+ * loads the registry -- the only window in which editing user.reg on disk is
+ * still the value Wine will use. */
+static int ios_ensure_graphics_driver(NSString *prefix)
+{
+    NSString *user_reg = [prefix stringByAppendingPathComponent:@"user.reg"];
+    if (![[NSFileManager defaultManager] fileExistsAtPath:user_reg]) return 0;
+    return ios_reg_pin_graphics_null( user_reg.fileSystemRepresentation );
+}
+
 static void madeira_repair_profile(NSString *prefix)
 {
     NSFileManager *fm = [NSFileManager defaultManager];
@@ -355,6 +495,52 @@ void madeira_seed_prefix_if_needed(const char *prefix_path) {
         madeira_repair_profile( prefix );
         /* ml581: see madeira_undo_appdata_skeleton() above. */
         madeira_undo_appdata_skeleton( prefix );
+
+        /* ml810: pin HKCU\Software\Wine\Drivers\Graphics=null, so explorer.exe
+         * stops walking its compiled "mac,x11,wayland" default and asking the
+         * loader for three display drivers this build does not contain. Must be
+         * here rather than at Wine start: the wineserver parses user.reg at boot
+         * and rewrites it, so after that the on-disk value is not authoritative
+         * any more. */
+        ios_ensure_graphics_driver( prefix );
+
+        /* ml809: put the codepage tables where the NT fallback path looks.
+         * ntdll resolves a table as <resources>/nls/<name>.nls and, when that
+         * open fails, as C:\windows\system32\<name>.nls (env_ios.c:
+         * open_nls_data_file). The template strips every *.nls out of system32
+         * and only the four hand-committed tables were ever linked back, so the
+         * fallback could not succeed for any other codepage: a title asking for
+         * CP932 or CP1251 got STATUS_OBJECT_NAME_NOT_FOUND and stalled in
+         * locale setup. Link the whole bundled set in, which also covers a
+         * child process whose resource dir differs from ours.
+         *
+         * Symlinks, not copies: the bundle owns the files, and a copy would go
+         * stale the moment a Wine bump changes a table. Recreated every launch
+         * because the bundle path changes on reinstall. */
+        {
+            NSString *nlsDir = [[[NSBundle mainBundle] resourcePath] stringByAppendingPathComponent:@"nls"];
+            NSString *sys32 = [prefix stringByAppendingPathComponent:@"drive_c/windows/system32"];
+            NSFileManager *fm = [NSFileManager defaultManager];
+            [fm createDirectoryAtPath:sys32 withIntermediateDirectories:YES attributes:nil error:nil];
+            int nlsLinked = 0, nlsSeen = 0;
+            for (NSString *nls in [fm contentsOfDirectoryAtPath:nlsDir error:nil]) {
+                if (![nls hasSuffix:@".nls"]) continue;
+                nlsSeen++;
+                NSString *src = [nlsDir stringByAppendingPathComponent:nls];
+                NSString *dst = [sys32 stringByAppendingPathComponent:nls];
+                if ([fm fileExistsAtPath:dst]) continue;   /* already linked/copied */
+                if ([fm createSymbolicLinkAtPath:dst withDestinationPath:src error:nil])
+                    nlsLinked++;
+            }
+            LOG("nls: linked %d of %d table(s) into %{public}s", nlsLinked, nlsSeen,
+                sys32.UTF8String);
+            if (nlsSeen < 60) {
+                /* Loud on purpose: this is the ml809 failure, and it is silent
+                 * on the device otherwise. */
+                LOG("nls: only %d table(s) in the bundle -- codepage lookups will "
+                    "fail with STATUS_OBJECT_NAME_NOT_FOUND", nlsSeen);
+            }
+        }
     }
 }
 
@@ -757,29 +943,33 @@ static void *wine_process_thread(void *arg) {
                 }
             }
 
-            /* ml806: alias d3dcompiler_44/45/46 onto _47. Wine ships 43 and 47;
-             * titles import 44/45/46 by name (the per-SDK D3DCompiler build) and
-             * a failed load of any of them is a failed game start, not a
-             * degradation. The three are byte-compatible for the callers that
-             * matter, so point the missing names at the _47 that is already in
-             * system32 (from the session arch, or the cross-link pass above). */
+            /* ml806/ml812: alias the DirectX module names a title imports but
+             * this bundle does not ship at one module the bundle does ship.
+             * Wine ships one build per SDK generation (d3dx9_43,
+             * d3dcompiler_43/47) where Microsoft shipped two dozen; a game
+             * linked against d3dx9_35.dll fails to load it and fails to start.
+             * The table and the reasoning are in DLLAliases.h.
+             *
+             * A real file always wins and a stale link is always cleared, so
+             * this is idempotent and it never shadows whatever else may have
+             * put a module there -- a native Microsoft component, a game's own
+             * copy, or a user's drop-in. */
             {
-                NSString *c47 = [sys32Dir stringByAppendingPathComponent:@"d3dcompiler_47.dll"];
-                if ([fm fileExistsAtPath:c47]) {
-                    NSArray *aliases = @[@"d3dcompiler_44.dll",
-                                         @"d3dcompiler_45.dll",
-                                         @"d3dcompiler_46.dll"];
-                    int aliasLinked = 0;
-                    for (NSString *alias in aliases) {
-                        NSString *dst = [sys32Dir stringByAppendingPathComponent:alias];
-                        if ([fm fileExistsAtPath:dst]) continue;  // a real copy wins
-                        [fm removeItemAtPath:dst error:nil];      // clear a stale link
-                        if ([fm createSymbolicLinkAtPath:dst withDestinationPath:c47 error:nil])
-                            aliasLinked++;
-                    }
-                    if (aliasLinked)
-                        dprintf(STDERR_FILENO, "[WineProc] d3dcompiler 44/45/46 -> _47: %d aliases\n", aliasLinked);
+                int aliasLinked = 0, aliasSkipped = 0;
+                for (size_t i = 0; i < MADEIRA_DLL_ALIAS_COUNT; i++) {
+                    NSString *target = [sys32Dir stringByAppendingPathComponent:
+                        [NSString stringWithUTF8String:kMadeiraDLLAliases[i].target]];
+                    if (![fm fileExistsAtPath:target]) { aliasSkipped++; continue; }
+                    NSString *dst = [sys32Dir stringByAppendingPathComponent:
+                        [NSString stringWithUTF8String:kMadeiraDLLAliases[i].name]];
+                    if ([fm fileExistsAtPath:dst]) continue;  // a real copy wins
+                    [fm removeItemAtPath:dst error:nil];      // clear a stale link
+                    if ([fm createSymbolicLinkAtPath:dst withDestinationPath:target error:nil])
+                        aliasLinked++;
                 }
+                if (aliasLinked)
+                    dprintf(STDERR_FILENO, "[WineProc] DirectX DLL aliases: %d linked (%d targets absent)\n",
+                            aliasLinked, aliasSkipped);
             }
 
             /* ml719: REPAIR THE SHELL FOLDERS. They ship as symlinks to the BUILD
@@ -847,53 +1037,88 @@ static void *wine_process_thread(void *arg) {
             // that exercise the full C++ runtime (parallel_for, atomic_wait,
             // <filesystem>, etc.) don't trip __wine_unimplemented stubs.
             if (use_arm64ec) {
-                NSString *vcrtSource = [bundlePath stringByAppendingPathComponent:@"x86_64-vcruntime"];
-                NSArray *vcrtDlls = [fm contentsOfDirectoryAtPath:vcrtSource error:nil];
-                int vcrtLinked = 0, vcrtSkipped = 0;
-                for (NSString *dll in vcrtDlls) {
-                    /* NOTE 2026-07-03 (late): retried lifting BOTH exemptions
-                     * below after the fast-write bisect, hoping trap-mode had
-                     * fixed the corruption class (and to keep hot CRT calls
-                     * like memcpy inside the JIT — they cost a full x64→EC
-                     * round trip as ARM64EC builtins, a large share of the
-                     * 57ms menu frame). Result: guest RIP jumped to junk
-                     * (0x600000010xx, lr=0xa59696ff...) right after
-                     * MSVCP140/VCRUNTIME140 loaded x86_64, before present #1.
-                     * So the x86→EC SEH/transition corruption is NOT the
-                     * fast-write bug — it's still unfixed, and these
-                     * exemptions must stay until it is. */
-                    /* Keep vcruntime140.dll as the ARM64EC builtin: its
-                     * __C_specific_handler is invoked by Wine's SEH dispatch,
-                     * and routing that through FEX corrupts x86 RSP (SEH
-                     * dispatcher's exit-thunk arg setup is broken). With the
-                     * native arm64ec vcruntime140, Wine calls the handler
-                     * directly in ARM64 — no FEX bridging on the exception
-                     * path. Other vcruntime/msvcp/concrt DLLs still overlay. */
-                    if ([[dll lowercaseString] isEqualToString:@"vcruntime140.dll"]) {
-                        vcrtSkipped++;
-                        continue;
+                /* Two components ship this way. Both are directories of
+                 * unmodified Microsoft x64 DLLs that take precedence over the
+                 * ARM64EC builtins of the same name; `exempt` lists the modules
+                 * that must stay ARM64EC, and the notes on the vcruntime
+                 * exemptions below apply to that component only.
+                 *
+                 * x86_64-directx exists because Wine's DirectX helper libraries
+                 * are reimplementations with holes where titles call them:
+                 * d3dx11_43 stubs 19 of its 44 exports including
+                 * D3DX11CreateShaderResourceViewFromFile{A,W} -- the call a DX11
+                 * game makes to load a texture -- and d3dx10_43 stubs 26 of 176
+                 * including D3DX10CreateShaderResourceViewFromFile{A,W}. A stub
+                 * returns E_NOTIMPL: the module loads, the title starts, and it
+                 * fails at the first texture, which is the "missing DLL" symptom
+                 * one level down. Microsoft's real DLLs come from the DirectX
+                 * redistributable (tools/fetch-directx.sh) and are listed in
+                 * tools/directx-component.txt. Nothing in that set replaces a
+                 * module DXMT owns (d3d11, dxgi, d3d10core, winemetal), and
+                 * nothing in it is a module Wine implements without stubs. */
+                struct {
+                    const char *dir;
+                    const char *exempt[3];   /* NULL-terminated */
+                    const char *label;
+                } overlays[] = {
+                    { "x86_64-vcruntime", { "vcruntime140.dll", "msvcp140.dll", NULL },
+                      "MS VC++ Runtime" },
+                    { "x86_64-directx", { NULL }, "MS DirectX" },
+                };
+                for (size_t overlay = 0; overlay < sizeof(overlays) / sizeof(overlays[0]); overlay++) {
+                    NSString *componentSource = [bundlePath stringByAppendingPathComponent:
+                        [NSString stringWithUTF8String:overlays[overlay].dir]];
+                    NSArray *componentDlls = [fm contentsOfDirectoryAtPath:componentSource error:nil];
+                    if (!componentDlls) continue;   /* component not fetched: not an error */
+                    int linked = 0, skipped = 0;
+                    for (NSString *dll in componentDlls) {
+                        /* NOTE 2026-07-03 (late): retried lifting BOTH vcruntime
+                         * exemptions below after the fast-write bisect, hoping
+                         * trap-mode had fixed the corruption class (and to keep
+                         * hot CRT calls like memcpy inside the JIT — they cost a
+                         * full x64→EC round trip as ARM64EC builtins, a large
+                         * share of the 57ms menu frame). Result: guest RIP jumped
+                         * to junk (0x600000010xx, lr=0xa59696ff...) right after
+                         * MSVCP140/VCRUNTIME140 loaded x86_64, before present #1.
+                         * So the x86→EC SEH/transition corruption is NOT the
+                         * fast-write bug — it's still unfixed, and these
+                         * exemptions must stay until it is. */
+                        /* Keep vcruntime140.dll as the ARM64EC builtin: its
+                         * __C_specific_handler is invoked by Wine's SEH dispatch,
+                         * and routing that through FEX corrupts x86 RSP (SEH
+                         * dispatcher's exit-thunk arg setup is broken). With the
+                         * native arm64ec vcruntime140, Wine calls the handler
+                         * directly in ARM64 — no FEX bridging on the exception
+                         * path. Other vcruntime/msvcp/concrt DLLs still overlay. */
+                        /* msvcp140.dll: same exemption as vcruntime140, found
+                         * 2026-07-03. The MS x86_64 msvcp140 throws a C++
+                         * exception during its own DllMain; the x86 throw-record
+                         * builder calls RtlPcToFileHeader cross-arch and the
+                         * exception-path exit thunk corrupts guest RSP — the
+                         * returned module base lands in the return-address slot
+                         * and RIP jumps to the MZ header (NoExec loop, no
+                         * splash). Keep the ARM64EC builtin so msvcp140's EH
+                         * runs natively, like vcruntime140. */
+                        BOOL keepBuiltin = NO;
+                        for (int i = 0; overlays[overlay].exempt[i]; i++) {
+                            if ([[dll lowercaseString] isEqualToString:
+                                    [NSString stringWithUTF8String:overlays[overlay].exempt[i]]]) {
+                                keepBuiltin = YES;
+                                break;
+                            }
+                        }
+                        if (keepBuiltin) { skipped++; continue; }
+                        NSString *src = [componentSource stringByAppendingPathComponent:dll];
+                        NSString *dst = [sys32Dir stringByAppendingPathComponent:dll];
+                        [fm removeItemAtPath:dst error:nil];
+                        if ([fm createSymbolicLinkAtPath:dst withDestinationPath:src error:nil])
+                            linked++;
                     }
-                    /* msvcp140.dll: same exemption as vcruntime140, found
-                     * 2026-07-03. The MS x86_64 msvcp140 throws a C++
-                     * exception during its own DllMain; the x86 throw-record
-                     * builder calls RtlPcToFileHeader cross-arch and the
-                     * exception-path exit thunk corrupts guest RSP — the
-                     * returned module base lands in the return-address slot
-                     * and RIP jumps to the MZ header (NoExec loop, no
-                     * splash). Keep the ARM64EC builtin so msvcp140's EH
-                     * runs natively, like vcruntime140. */
-                    if ([[dll lowercaseString] isEqualToString:@"msvcp140.dll"]) {
-                        vcrtSkipped++;
-                        continue;
-                    }
-                    NSString *src = [vcrtSource stringByAppendingPathComponent:dll];
-                    NSString *dst = [sys32Dir stringByAppendingPathComponent:dll];
-                    [fm removeItemAtPath:dst error:nil];
-                    if ([fm createSymbolicLinkAtPath:dst withDestinationPath:src error:nil])
-                        vcrtLinked++;
+                    LOG("Symlinked %d %{public}s DLLs (x86_64 native) over arm64ec builtins, skipped %d",
+                        linked, overlays[overlay].label);
+                    dprintf(STDERR_FILENO, "[WineProc] Symlinked %d %s DLLs over arm64ec builtins (skipped %d for native EC SEH)\n",
+                            linked, overlays[overlay].label, skipped);
                 }
-                LOG("Symlinked %d MS VC++ Runtime DLLs (x86_64 native) over arm64ec builtins, skipped %d", vcrtLinked, vcrtSkipped);
-                dprintf(STDERR_FILENO, "[WineProc] Symlinked %d MS VC++ Runtime DLLs over arm64ec builtins (skipped %d for native EC SEH)\n", vcrtLinked, vcrtSkipped);
             }
         }
 

@@ -1876,9 +1876,14 @@ struct ContentView: View {
             logStore.log("JIT is enabled but StikDebug has detached (it does that after "
                          + "every run) — re-attaching before this launch...", level: .info)
             RunStatus.shared.begin(preparing: true)
-            StikJITHelper.enableJIT { ok in
+            // ml811: ensureAttached retries and verifies P_TRACED. The old
+            // single enableJIT(ok) here could return true on the strength of
+            // sticky CS_DEBUGGED alone, and the launch then died later in the
+            // pool allocator with a memory error that had nothing to do with
+            // memory.
+            StikJITHelper.ensureAttached { ok in
                 DispatchQueue.main.async {
-                    guard ok else {
+                    guard ok, isDebuggerAttached() else {
                         RunStatus.shared.fail("JIT is enabled but StikDebug is detached, and it could not be re-attached. Open StikDebug, press Enable JIT, then launch again.")
                         return
                     }

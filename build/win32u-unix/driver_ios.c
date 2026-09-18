@@ -1462,6 +1462,39 @@ static const WCHAR guid_key_suffixW[] = {'}','\\','0','0','0','0'};
 
 static BOOL load_desktop_driver( HWND hwnd )
 {
+#ifdef WINE_IOS
+    /* iOS ships no display-driver module at all, so there is nothing here to
+     * look for and no result worth having. Wine's own drivers are per-platform
+     * PE DLLs -- winemac.drv, winex11.drv, winewayland.drv -- loaded by name
+     * from the video device key, and every one of them is absent from this
+     * build (configured --without-x, and winemac is macOS-only). Asking the PE
+     * side to load one is therefore a guaranteed loader miss: LoadLibrary
+     * walks the search path, NtCreateFile returns STATUS_OBJECT_NAME_NOT_FOUND
+     * (0xc0000034), and the run pays a full search plus a callback round trip
+     * per window-station init for each stale name in the prefix.
+     *
+     * The value is stale by construction, not by accident. explorer.exe writes
+     * GraphicsDriver into the key from HKCU\Software\Wine\Drivers\Graphics
+     * (programs/explorer/desktop.c: load_graphics_driver), and the shipped
+     * template inherits whatever a macOS prefix recorded -- "winemac.drv" --
+     * for every prefix already on a device.
+     *
+     * Returning FALSE is the same answer Wine gives when the key is missing
+     * entirely, which is the state this port has always run in. It makes
+     * load_display_driver() take the null/winios branch below and install
+     * winios.drv, which is the only driver this platform has. It also means a
+     * foreign driver name can never cost a loader search, whatever the prefix
+     * says.
+     *
+     * The other half of the probe lives in the explorer process, not here:
+     * it builds "wine%s.drv" from HKCU\Software\Wine\Drivers\Graphics and calls
+     * LoadLibraryW directly. The app pins that value to "null" in
+     * WineProcessBridge.m (ios_reg_ensure_graphics_driver), which is the
+     * comma-separated branch that skips LoadLibrary entirely. Fixing only one
+     * of the two leaves the log lines coming. */
+    (void)hwnd;
+    return FALSE;
+#else
     static const WCHAR guid_nullW[] = {'0','0','0','0','0','0','0','0','-','0','0','0','0','-','0','0','0','0','-',
                                        '0','0','0','0','-','0','0','0','0','0','0','0','0','0','0','0','0',0};
     WCHAR key[ARRAYSIZE(guid_key_prefixW) + 40 + ARRAYSIZE(guid_key_suffixW)], *ptr;
@@ -1526,6 +1559,7 @@ static BOOL load_desktop_driver( HWND hwnd )
 
     NtClose( hkey );
     return ret;
+#endif /* WINE_IOS */
 }
 
 /**********************************************************************

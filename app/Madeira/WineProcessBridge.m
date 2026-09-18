@@ -219,6 +219,145 @@ static void ios_merge_move(const char *src, const char *dst, int depth)
     rmdir( src );                       /* only succeeds once genuinely empty */
 }
 
+/* ---- ml810: NO DISPLAY-DRIVER MODULE EXISTS ON iOS, SO STOP LOOKING ------
+ *
+ * The reported errors are Wine asking for a driver this build does not have:
+ *
+ *     err:module:import_dll Library winemac.drv not found     0xc0000034
+ *     err:module:import_dll Library winex11.drv not found     0xc0000034
+ *     err:module:import_dll Library winewayland.drv not found 0xc0000034
+ *
+ * 0xc0000034 is STATUS_OBJECT_NAME_NOT_FOUND out of NtCreateFile, i.e. the
+ * loader searched for the DLL and the file genuinely is not there -- not a
+ * permission or init failure. Two independent places ask for it:
+ *
+ *   1. explorer.exe. Its compiled default is
+ *        programs/explorer/desktop.c: default_driver[] = L"mac,x11,wayland"
+ *      and load_graphics_driver() walks that list building "wine%s.drv" and
+ *      calling LoadLibraryW on each hit. HKCU\Software\Wine\Drivers\Graphics
+ *      overrides the list, and the ONLY value that stops the walk without a
+ *      load is "null" -- which sets null_driver=TRUE, breaks out before
+ *      LoadLibraryW, and records GraphicsDriver="null" in the volatile video
+ *      device key. Any other value, including the mac/x11/wayland default,
+ *      costs one failed loader search per name, every launch.
+ *   2. win32u's load_desktop_driver(), reading GraphicsDriver back out of that
+ *      video key. That half is fixed in build/win32u-unix/driver_ios.c, which
+ *      now returns FALSE unconditionally under WINE_IOS so no value can make it
+ *      load a module. This half cannot be fixed in C: the name is built inside
+ *      explorer.exe, which is a Windows PE binary.
+ *
+ * So pin the key. "null" is the branch Wine takes when no driver is desired,
+ * and it is honest here -- winios.drv is installed by the port, not by this
+ * lookup, and it is what actually owns the display. It also makes the log
+ * lines stop rather than merely become harmless.
+ *
+ * Editing user.reg on disk is what makes this work for prefixes already on a
+ * device: Wine parses the file at boot and rewrites it, so a value set through
+ * regedit in a previous session is not something we can rely on here, and the
+ * app has not started a wineserver yet at this point. Same doctrine as the
+ * ml666 repair above -- fix the file before anything reads it.
+ *
+ * Idempotent, and it leaves a foreign value alone if the section is missing in
+ * a way we do not understand: a missing section means the prefix has bigger
+ * problems than this key, and inventing a section could shadow a real one. */
+static int ios_reg_pin_graphics_null(const char *path)
+{
+    FILE *f = fopen( path, "rb" );
+    if (!f) return 0;
+    fseek( f, 0, SEEK_END ); long n = ftell( f ); fseek( f, 0, SEEK_SET );
+    if (n <= 0 || n > (64 << 20)) { fclose( f ); return 0; }
+    char *buf = malloc( (size_t)n + 1 );
+    if (!buf) { fclose( f ); return 0; }
+    size_t got = fread( buf, 1, (size_t)n, f );
+    fclose( f );
+    if (got != (size_t)n) { free( buf ); return 0; }
+    buf[n] = 0;
+
+    /* Section headers in a Wine .reg are literal text with a trailing write
+     * timestamp:   [Software\\Wine\\Drivers] 1776969700 */
+    static const char SECTION[] = "[Software\\\\Wine\\\\Drivers]";
+    static const char KEY[]     = "\"Graphics\"=";
+    static const char LINE[]    = "\"Graphics\"=\"null\"";
+    const size_t kl = sizeof(KEY) - 1;
+    const size_t ll = sizeof(LINE) - 1;
+
+    char *sec = strstr( buf, SECTION );
+    if (!sec) { free( buf ); return 0; }   /* no section: leave the prefix alone */
+
+    char *eol = strchr( sec, '\n' );       /* end of the header line */
+    if (!eol) { free( buf ); return 0; }   /* nothing after the header */
+
+    /* The section runs to the next line that opens with '['. */
+    char *sec_end = buf + n;
+    for (char *q = eol + 1; q < buf + n; )
+    {
+        if (*q == '[') { sec_end = q; break; }
+        char *nl = strchr( q, '\n' );
+        if (!nl) break;
+        q = nl + 1;
+    }
+
+    /* Find an existing "Graphics" line inside the section. */
+    char *val = NULL, *val_nl = NULL;
+    for (char *q = eol + 1; q < sec_end; )
+    {
+        if (!strncmp( q, KEY, kl )) { val = q; val_nl = strchr( q, '\n' ); break; }
+        char *nl = strchr( q, '\n' );
+        if (!nl) break;
+        q = nl + 1;
+    }
+
+    /* Already pinned? Then there is nothing to write and no reason to touch the
+     * file -- rewriting a 3.7MB registry on every launch is its own kind of bug. */
+    if (val && val_nl && (size_t)(val_nl - val) == ll && !strncmp( val, LINE, ll ))
+    {
+        free( buf );
+        return 0;
+    }
+
+    /* header (inclusive of its newline) | our line | the rest, minus any stale
+     * "Graphics" line. An existing value is REPLACED rather than shadowed:
+     * two entries for one name is not something the parser resolves. */
+    size_t head = (size_t)(eol - buf) + 1;
+    const char *tail = val ? (val_nl ? val_nl + 1 : sec_end) : (buf + head);
+    size_t taillen = (size_t)(buf + n - tail);
+
+    char *out = malloc( head + ll + 1 + taillen + 1 );
+    if (!out) { free( buf ); return 0; }
+    memcpy( out, buf, head );
+    memcpy( out + head, LINE, ll );
+    out[head + ll] = '\n';
+    memcpy( out + head + ll + 1, tail, taillen );
+    out[head + ll + 1 + taillen] = 0;
+    size_t outlen = head + ll + 1 + taillen;
+
+    char tmp[PATH_MAX];
+    snprintf( tmp, sizeof(tmp), "%s.ml810", path );
+    FILE *o = fopen( tmp, "wb" );
+    int ok = 0;
+    if (o)
+    {
+        ok = fwrite( out, 1, outlen, o ) == outlen;
+        if (fclose( o ) != 0) ok = 0;
+        if (ok && rename( tmp, path ) != 0) ok = 0;
+        if (!ok) unlink( tmp );
+    }
+    if (ok) LOG( "graphics-driver: pinned Graphics=null in %{public}s", path );
+    else    LOG( "graphics-driver: FAILED to update %{public}s", path );
+    free( buf ); free( out );
+    return ok ? 1 : 0;
+}
+
+/* Called from madeira_seed_prefix_if_needed(), which runs before the wineserver
+ * loads the registry -- the only window in which editing user.reg on disk is
+ * still the value Wine will use. */
+static int ios_ensure_graphics_driver(NSString *prefix)
+{
+    NSString *user_reg = [prefix stringByAppendingPathComponent:@"user.reg"];
+    if (![[NSFileManager defaultManager] fileExistsAtPath:user_reg]) return 0;
+    return ios_reg_pin_graphics_null( user_reg.fileSystemRepresentation );
+}
+
 static void madeira_repair_profile(NSString *prefix)
 {
     NSFileManager *fm = [NSFileManager defaultManager];
@@ -355,6 +494,52 @@ void madeira_seed_prefix_if_needed(const char *prefix_path) {
         madeira_repair_profile( prefix );
         /* ml581: see madeira_undo_appdata_skeleton() above. */
         madeira_undo_appdata_skeleton( prefix );
+
+        /* ml810: pin HKCU\Software\Wine\Drivers\Graphics=null, so explorer.exe
+         * stops walking its compiled "mac,x11,wayland" default and asking the
+         * loader for three display drivers this build does not contain. Must be
+         * here rather than at Wine start: the wineserver parses user.reg at boot
+         * and rewrites it, so after that the on-disk value is not authoritative
+         * any more. */
+        ios_ensure_graphics_driver( prefix );
+
+        /* ml809: put the codepage tables where the NT fallback path looks.
+         * ntdll resolves a table as <resources>/nls/<name>.nls and, when that
+         * open fails, as C:\windows\system32\<name>.nls (env_ios.c:
+         * open_nls_data_file). The template strips every *.nls out of system32
+         * and only the four hand-committed tables were ever linked back, so the
+         * fallback could not succeed for any other codepage: a title asking for
+         * CP932 or CP1251 got STATUS_OBJECT_NAME_NOT_FOUND and stalled in
+         * locale setup. Link the whole bundled set in, which also covers a
+         * child process whose resource dir differs from ours.
+         *
+         * Symlinks, not copies: the bundle owns the files, and a copy would go
+         * stale the moment a Wine bump changes a table. Recreated every launch
+         * because the bundle path changes on reinstall. */
+        {
+            NSString *nlsDir = [[[NSBundle mainBundle] resourcePath] stringByAppendingPathComponent:@"nls"];
+            NSString *sys32 = [prefix stringByAppendingPathComponent:@"drive_c/windows/system32"];
+            NSFileManager *fm = [NSFileManager defaultManager];
+            [fm createDirectoryAtPath:sys32 withIntermediateDirectories:YES attributes:nil error:nil];
+            int nlsLinked = 0, nlsSeen = 0;
+            for (NSString *nls in [fm contentsOfDirectoryAtPath:nlsDir error:nil]) {
+                if (![nls hasSuffix:@".nls"]) continue;
+                nlsSeen++;
+                NSString *src = [nlsDir stringByAppendingPathComponent:nls];
+                NSString *dst = [sys32 stringByAppendingPathComponent:nls];
+                if ([fm fileExistsAtPath:dst]) continue;   /* already linked/copied */
+                if ([fm createSymbolicLinkAtPath:dst withDestinationPath:src error:nil])
+                    nlsLinked++;
+            }
+            LOG("nls: linked %d of %d table(s) into %{public}s", nlsLinked, nlsSeen,
+                sys32.UTF8String);
+            if (nlsSeen < 60) {
+                /* Loud on purpose: this is the ml809 failure, and it is silent
+                 * on the device otherwise. */
+                LOG("nls: only %d table(s) in the bundle -- codepage lookups will "
+                    "fail with STATUS_OBJECT_NAME_NOT_FOUND", nlsSeen);
+            }
+        }
     }
 }
 

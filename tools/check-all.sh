@@ -37,6 +37,15 @@
 #     the guest dispatches through. The struct is written twice -- app and
 #     guest -- and a field added on one side only compiles in both places and
 #     hands the guest garbage. Needs a C compiler; skips (exit 0) without one.
+#   - check-nls-set: the codepage tables the loader resolves by name. Four of
+#     the sixty-eight the pinned Wine ships reached the bundle for months (ml809)
+#     and every title that asked for its own codepage died in locale setup with
+#     STATUS_OBJECT_NAME_NOT_FOUND. Compares the bundle against wine/nls.
+#   - test-graphics-driver-pin: the registry edit that stops Wine looking for
+#     winemac/x11/wayland.drv (ml810). It rewrites a user's user.reg on disk, so
+#     a bug there corrupts their settings rather than failing a build. Asserts
+#     both that it writes when it should and that it is byte-for-byte inert when
+#     it should be, against fixtures and the shipped prefix template.
 #
 # Run from the repo root before tagging/packaging a release. Exits non-zero on
 # the first failure.
@@ -61,6 +70,12 @@ tools/check-swift-c-symbols.py
 
 echo "== wine PE stamp =="
 tools/check-wine-pe-stamp.py
+
+echo "== NLS codepage set =="
+python3 tools/check-nls-set.py
+
+echo "== graphics driver pin =="
+sh tools/test-graphics-driver-pin.sh
 
 echo "== device capabilities =="
 tools/test-device-capabilities.sh

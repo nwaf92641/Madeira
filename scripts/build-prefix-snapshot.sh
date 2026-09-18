@@ -55,6 +55,24 @@ for reg in "$PREFIX"/system.reg "$PREFIX"/user.reg "$PREFIX"/userdef.reg; do
     sed -i '' -E "s|\\\\\\\\users\\\\\\\\$BUILD_USER\"|\\\\users\\\\madeira\"|g" "$reg"
 done
 
+# ml810: explorer.exe builds "wine<name>.drv" from this value and calls
+# LoadLibraryW on it; its compiled default is "mac,x11,wayland", so an unset
+# value means three guaranteed loader misses (0xc0000034) on every launch. Only
+# "null" stops the walk without a load. Setting it here means a freshly
+# generated template ships correct, and the app's own repair
+# (ios_ensure_graphics_driver in WineProcessBridge.m) is a no-op on it rather
+# than the only thing making it work.
+if grep -q '^\[Software\\\\Wine\\\\Drivers\]' "$PREFIX/user.reg"; then
+    if ! grep -q '^"Graphics"=' "$PREFIX/user.reg"; then
+        # Insert directly after the [Software\\Wine\\Drivers] header line.
+        awk 'BEGIN{done=0}
+             /^\[Software\\\\Wine\\\\Drivers\]/ { print; if (!done) { print "\"Graphics\"=\"null\""; done=1 }; next }
+             { print }' "$PREFIX/user.reg" > "$PREFIX/user.reg.ml810" \
+            && mv "$PREFIX/user.reg.ml810" "$PREFIX/user.reg"
+        echo "==> Pinned [Software\\\\Wine\\\\Drivers] Graphics=null"
+    fi
+fi
+
 echo "==> Stripping files shipped in app bundle"
 # Drop all PE binaries (iOS app symlinks aarch64 versions from bundle)
 find "$PREFIX/drive_c" -type f \( \

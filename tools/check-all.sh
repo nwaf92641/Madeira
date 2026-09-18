@@ -22,6 +22,12 @@
 #   - check-swift-syntax: `swiftc -parse` every app source. The UI is SwiftUI,
 #     so nothing in it can be type-checked off a Mac; this at least proves the
 #     files parse, which is what a dropped brace costs a build for.
+#   - check-swift-c-symbols: every C function Swift calls must be declared in a
+#     header the bridging header imports, because that is the only way Swift can
+#     see it. Parsing does not resolve names, so this is the gap between
+#     check-swift-syntax and a real compile -- and the one ml808 fell into twice.
+#     The full typecheck (scripts/typecheck-app.sh) needs the iOS SDK and runs
+#     as its own CI job instead.
 #   - check-wine-pe-stamp: the XInput PE DLLs are committed binaries and no
 #     runner rebuilds them, so a patch edited without re-running
 #     scripts/build-wine-xinput-pe.sh would ship behavior the tree says it does
@@ -49,6 +55,9 @@ tools/check-xcodeproj.py
 
 echo "== swift syntax =="
 tools/check-swift-syntax.sh
+
+echo "== swift -> C symbols =="
+tools/check-swift-c-symbols.py
 
 echo "== wine PE stamp =="
 tools/check-wine-pe-stamp.py

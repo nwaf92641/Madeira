@@ -847,6 +847,18 @@ Two things about the pad are load-bearing, and both were wrong:
   `tools/check-wine-pe-stamp.py` is pure Python: it pairs the committed XInput
   DLLs with the patch they were built from, so a patch edit without a rebuild
   fails the gate instead of shipping a binary that does something else.
+- `tools/check-swift-c-symbols.py` is the gap between "the file parses" and
+  "the compiler accepts it": Swift can only call a C function that a header the
+  bridging header imports declares, and `swiftc -parse` does not resolve names.
+  When it fires, add the header to `Madeira-Bridging-Header.h` — that is exactly
+  what `MadeiraXInput.h` was missing from (ml808).
+- `scripts/typecheck-app.sh` is the real check: `swiftc -typecheck` over every
+  app Swift file with the project's bridging header, Swift version and
+  deployment target, against the iOS SDK. It needs a Mac with Xcode 26, so it is
+  its own job (`app-compile` in `ipa.yml`) that the build job lists in `needs`,
+  and a mistake in the app then fails in ~2 minutes instead of after FEX + Wine
+  + LLVM + DXMT have all been built. That is the ml808 lesson: three consecutive
+  ~25-minute runs each ended on a Swift error this job reports at the top.
 - `.github/workflows/gates.yml` runs `tools/check-all.sh` on every push and PR,
   on `macos-15` because three gates need `swiftc`.
 - `scripts/make-ipa.sh` builds and packages the unsigned `Madeira-unsigned.ipa`

@@ -3,6 +3,7 @@
 #import "WineServerBridge.h"
 #import "WineProcessBridge.h"
 #import "IOSDisplayShim.h"
+#import "MadeiraXInput.h"
 #import "Winios/Winios.h"
 
 // Wine file-based logging (server_ios.c)

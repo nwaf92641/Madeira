@@ -37,7 +37,31 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Runs before the build, and gates it. The app's Swift compiles only on a Mac
+  # with the iOS SDK, so without this job a mistake in it -- a C function the
+  # bridging header does not import, a property a framework does not have -- is
+  # first found by xcodebuild, after FEX, Wine, LLVM and DXMT have all been
+  # built. ml808 lost three runs that way at ~25 minutes each; this job reports
+  # the same errors in about two.
+  app-compile:
+    name: App Swift typecheck
+    runs-on: macos-15
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+          submodules: false
+
+      - name: Typecheck the app
+        run: scripts/typecheck-app.sh
+
   ipa:
+    needs: app-compile
     runs-on: macos-15
     timeout-minutes: 360
     defaults:

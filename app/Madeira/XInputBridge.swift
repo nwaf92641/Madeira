@@ -121,6 +121,11 @@ private final class HapticRumble {
 
     private weak var controller: GCController?
     private var engine: CHHapticEngine?
+    /// `CHHapticEngine` has no `isRunning`, so the state is tracked here. Only
+    /// this class starts and stops the engine, so the flag is accurate; it is
+    /// cleared whenever a call throws or `stop()` runs, so the next frame tries
+    /// a start again rather than playing into a stopped engine forever.
+    private var engineStarted = false
     private var player: CHHapticPatternPlayer?
     /// The level the running player was started with, in steps.
     private var steps = -1
@@ -141,7 +146,10 @@ private final class HapticRumble {
 
         do {
             try player?.stop(atTime: CHHapticTimeImmediate)
-            if !engine.isRunning { try engine.start() }
+            if !engineStarted {
+                try engine.start()
+                engineStarted = true
+            }
             let event = CHHapticEvent(
                 eventType: .hapticContinuous,
                 parameters: [
@@ -157,6 +165,7 @@ private final class HapticRumble {
             steps = wanted
         } catch {
             reportOnce("rumble failed: \(error.localizedDescription)")
+            engineStarted = false
             steps = 0
         }
     }
@@ -164,6 +173,7 @@ private final class HapticRumble {
     func stop() {
         try? player?.stop(atTime: CHHapticTimeImmediate)
         engine?.stop(completionHandler: nil)
+        engineStarted = false
         player = nil
         engine = nil
         controller = nil

@@ -46,6 +46,15 @@
 #     a bug there corrupts their settings rather than failing a build. Asserts
 #     both that it writes when it should and that it is byte-for-byte inert when
 #     it should be, against fixtures and the shipped prefix template.
+#   - check-dll-aliases: the DirectX name aliases (ml812). The alias table is a
+#     claim that a name a title imports resolves to a module the bundle ships
+#     from the session's system32; a target that is not shipped, or a name that
+#     would shadow a real implementation, makes that claim false silently.
+#   - check-pe-module-set: the modules a title imports and the bundle does not
+#     build (ml812). The shipped ~120 DLLs are the test binaries' imports, so
+#     "the game does not start" is usually a LoadLibrary that was never going to
+#     succeed. Fails on a machine word that does not match its directory and
+#     prints the gap; --strict (the PE-module workflow) fails on the gap itself.
 #
 # Run from the repo root before tagging/packaging a release. Exits non-zero on
 # the first failure.
@@ -76,6 +85,12 @@ python3 tools/check-nls-set.py
 
 echo "== graphics driver pin =="
 sh tools/test-graphics-driver-pin.sh
+
+echo "== DirectX DLL aliases =="
+python3 tools/check-dll-aliases.py
+
+echo "== shipped PE module set =="
+python3 tools/check-pe-module-set.py
 
 echo "== device capabilities =="
 tools/test-device-capabilities.sh

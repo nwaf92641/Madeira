@@ -1182,6 +1182,66 @@ launch path keep them apart too.
   for -- `1b80` is the GTX 1080's id and would contradict the descriptor string
   next to it.
 
+## The Winlator audit (ml812): compatibility is a missing-module problem
+
+Studied `brunodev85/winlator` at `bae41e0` (11.2) for reusable compatibility
+work. The full audit, mechanism by mechanism, is `research/winlator-compat-audit.md`;
+the short version is that its value is the *shape* of its layer, not its code --
+it is Android, this is iOS, and its graphics stack is Vulkan where this one is
+Metal. Three things came out of it that are true regardless:
+
+**The number.** Winlator's `common_dlls.json` expects 580 DLLs in system32.
+This bundle ships 120 for the x64 guest and 115 for the ARM64 one, and 124 of
+them overlap. The set was never a compatibility decision -- it is the
+transitive closure of the imports of Wine's own test executables (twelve test
+`.exe` files ship in `arm64ec-windows/`) plus the four DXMT modules. That is
+why `xaudio2_7.dll` is absent while its helper `X3DAudio1_7.dll` is present,
+and why the previous round's DXMT tuning did not move the "this game does not
+start" number: a title whose `LoadLibrary` fails is not a title that can be
+tuned. `tools/pe-module-manifest.txt` is the missing list (121 modules Wine
+builds, 12 Microsoft-only), `tools/check-pe-module-set.py` prints it on every
+gate run, and `--strict` fails until it is closed.
+
+**The alias table (`app/Madeira/DLLAliases.h`).** 32 names a title imports now
+resolve to a module the bundle already ships: `d3dx9_24..42 -> d3dx9_43`,
+`d3dcompiler_33..42 -> d3dcompiler_43`, `d3dcompiler_44..46 -> d3dcompiler_47`.
+This is the part of Winlator's component model that needs no new binaries: the
+families export unversioned symbols (`D3DXMatrixMultiply`, `D3DCompile`), which
+is why Wine itself models `d3dx9_24..42` as forwarders to one implementation.
+The runtime loop in `WineProcessBridge.m` replaced the three hardcoded
+`d3dcompiler` names, links into the session's `system32`, skips names that
+already exist (a real copy, a native component, or a user's drop-in always
+wins) and clears stale links, so it is idempotent. `tools/check-dll-aliases.py`
+gates it: a target must be shipped for the x64 session, an alias may never
+shadow a shipped module, no chains, and the family must be *closed* -- the
+coverage rule is what makes "we aliased the ones we remembered" a build
+failure. It found a real asymmetry on its first run: `d3dx9_43.dll` and
+`d3dcompiler_43/47.dll` exist only in `arm64ec-windows/`, so the ARM64 session
+has no DirectX 9 shader compiler at all.
+
+**The build (`scripts/build-wine-pe-modules.sh` +
+`.github/workflows/wine-pe-modules.yml`).** Builds the manifest's modules from
+the pinned tree for both guest architectures with the per-module recipe
+`scripts/build-wine-xinput-pe.sh` already proves
+(`make dlls/<module>/<arch>/<module>.dll`), refusing to touch the modules DXMT
+and the XInput patch own, validating every installed module's machine word, and
+additive unless `--force`. It is a separate workflow from `ipa.yml` on purpose:
+the DLLs are committed and the IPA job restores its Wine tree from cache, so
+shipping ~240 new modules into the release build before one run has exercised
+them is risk with no upside. Run it, inspect the artifact, commit the DLLs with
+the Wine revision in its summary, then the same two steps (prepare-wine-ios.sh,
+build-wine-pe-modules.sh) move into `ipa.yml` unchanged.
+
+What was deliberately *not* taken: gladio/vortek (Android GL/Vulkan process
+shims; DXMT links Metal directly), DXVK/VKD3D/Zink (Vulkan-only), Box64's
+presets (different emulator; only its stability-ladder shape transfers, and
+that is backlog item 4), and its rootfs/pulseaudio packaging.
+
+Still open, in evidence order: the module build itself (item 1), a DirectX
+redistributable component built like `x86_64-vcruntime` for the Microsoft-only
+half (item 2), the ARM64-side modules (item 3), per-title settings profiles
+(item 4), and wine-mono for the managed titles (item 5).
+
 ## Handing an unsigned IPA to the user
 
 The build lives in CI, so "give me an IPA" is three steps, and the third is the

@@ -25,6 +25,7 @@
 #include "WineServerBridge.h"
 #include "PrefixExtractor.h"
 #include "FEXBridge.h"  // fex_get_jit_write_offset()
+#include "DLLAliases.h" // kMadeiraDLLAliases: DirectX module-name aliases (ml812)
 
 // Thread-local globals for wine_ios_exit longjmp (used by wine_ios_exit.h shim in ntdll)
 // Each Wine "process" thread has its own jmpbuf so child processes can exit independently.
@@ -942,29 +943,33 @@ static void *wine_process_thread(void *arg) {
                 }
             }
 
-            /* ml806: alias d3dcompiler_44/45/46 onto _47. Wine ships 43 and 47;
-             * titles import 44/45/46 by name (the per-SDK D3DCompiler build) and
-             * a failed load of any of them is a failed game start, not a
-             * degradation. The three are byte-compatible for the callers that
-             * matter, so point the missing names at the _47 that is already in
-             * system32 (from the session arch, or the cross-link pass above). */
+            /* ml806/ml812: alias the DirectX module names a title imports but
+             * this bundle does not ship at one module the bundle does ship.
+             * Wine ships one build per SDK generation (d3dx9_43,
+             * d3dcompiler_43/47) where Microsoft shipped two dozen; a game
+             * linked against d3dx9_35.dll fails to load it and fails to start.
+             * The table and the reasoning are in DLLAliases.h.
+             *
+             * A real file always wins and a stale link is always cleared, so
+             * this is idempotent and it never shadows whatever else may have
+             * put a module there -- a native Microsoft component, a game's own
+             * copy, or a user's drop-in. */
             {
-                NSString *c47 = [sys32Dir stringByAppendingPathComponent:@"d3dcompiler_47.dll"];
-                if ([fm fileExistsAtPath:c47]) {
-                    NSArray *aliases = @[@"d3dcompiler_44.dll",
-                                         @"d3dcompiler_45.dll",
-                                         @"d3dcompiler_46.dll"];
-                    int aliasLinked = 0;
-                    for (NSString *alias in aliases) {
-                        NSString *dst = [sys32Dir stringByAppendingPathComponent:alias];
-                        if ([fm fileExistsAtPath:dst]) continue;  // a real copy wins
-                        [fm removeItemAtPath:dst error:nil];      // clear a stale link
-                        if ([fm createSymbolicLinkAtPath:dst withDestinationPath:c47 error:nil])
-                            aliasLinked++;
-                    }
-                    if (aliasLinked)
-                        dprintf(STDERR_FILENO, "[WineProc] d3dcompiler 44/45/46 -> _47: %d aliases\n", aliasLinked);
+                int aliasLinked = 0, aliasSkipped = 0;
+                for (size_t i = 0; i < MADEIRA_DLL_ALIAS_COUNT; i++) {
+                    NSString *target = [sys32Dir stringByAppendingPathComponent:
+                        [NSString stringWithUTF8String:kMadeiraDLLAliases[i].target]];
+                    if (![fm fileExistsAtPath:target]) { aliasSkipped++; continue; }
+                    NSString *dst = [sys32Dir stringByAppendingPathComponent:
+                        [NSString stringWithUTF8String:kMadeiraDLLAliases[i].name]];
+                    if ([fm fileExistsAtPath:dst]) continue;  // a real copy wins
+                    [fm removeItemAtPath:dst error:nil];      // clear a stale link
+                    if ([fm createSymbolicLinkAtPath:dst withDestinationPath:target error:nil])
+                        aliasLinked++;
                 }
+                if (aliasLinked)
+                    dprintf(STDERR_FILENO, "[WineProc] DirectX DLL aliases: %d linked (%d targets absent)\n",
+                            aliasLinked, aliasSkipped);
             }
 
             /* ml719: REPAIR THE SHELL FOLDERS. They ship as symlinks to the BUILD

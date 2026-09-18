@@ -1,0 +1,188 @@
+# Windows PE modules a game commonly imports and this bundle does not ship.
+# Format: `<kind> <module-stem>`, `#` starts a comment.
+#
+# This file is a to-build list, not a wish list: every entry below was checked
+# against app/Madeira/{arm64ec,aarch64}-windows and none of them is there.
+# Only ~120 DLLs ship, and that set was never a compatibility decision: it is
+# the transitive closure of the test binaries' imports (fourteen of the files
+# in app/Madeira/arm64ec-windows are wine's own test exes) plus what DXMT
+# needs. Every module below is one a real title links against, and a missing one
+# is not a degraded feature -- LoadLibrary fails, the title's startup path
+# aborts, and the user sees a game that does not start. This is the gap Winlator
+# closes with its components, and the list is taken from that:
+# wincomponents/wincomponents.json ships Microsoft's DirectX redistributable
+# (direct3d, 30 MB compressed: d3dx9_24..43, d3dx10_33..43, d3dx11_42/43,
+# d3dcsx_42/43, d3dcompiler_33..47), DirectMusic, DirectShow, DirectPlay,
+# XAudio2, the 2005/2010 VC++ runtimes and the WMV decoders, and installs each
+# into system32 with a DllOverrides `native,builtin` entry.
+#
+#   wine    -- Wine builds it (dlls/<module>), so scripts/build-wine-pe-modules.sh
+#              can produce it from the pinned tree; a missing one is a defect.
+#   native  -- Wine does not implement it at all; the only source is Microsoft's
+#              redistributable. Reported, never failed: these need a component
+#              like app/Madeira/x86_64-vcruntime, not a build.
+#
+# The two halves are complements, not alternatives. The aliases in
+# app/Madeira/DLLAliases.h paper over the d3dx9/d3dcompiler generations with the
+# modules that are already shipped, which is free and immediate; building the
+# real modules gives a title the implementation it was linked against, and both
+# routes stay open in the directory that wins (the runtime never overwrites).
+
+# --- DirectDraw / Direct3D 8/10 -------------------------------------------------
+wine ddraw
+wine ddrawex
+wine d3d8
+wine d3d8thk
+wine d3d10
+wine d3d10_1
+
+# --- D3DX and the shader compiler ----------------------------------------------
+# d3dx9_43, d3dcompiler_43 and d3dcompiler_47 ship; DLLAliases.h covers the
+# generations they can answer for. These are the ones with no module behind them.
+wine d3dx10_33
+wine d3dx10_34
+wine d3dx10_35
+wine d3dx10_36
+wine d3dx10_37
+wine d3dx10_38
+wine d3dx10_39
+wine d3dx10_40
+wine d3dx10_41
+wine d3dx10_42
+wine d3dx10_43
+wine d3dx11_42
+wine d3dx11_43
+native d3dcsx_42
+native d3dcsx_43
+
+# --- DirectMusic (many 2000s titles initialise it unconditionally) --------------
+wine dmusic
+wine dmusic32
+wine dmband
+wine dmcompos
+wine dmime
+wine dmloader
+wine dmscript
+wine dmstyle
+wine dmsynth
+wine dswave
+
+# --- DirectShow / media ---------------------------------------------------------
+wine amstream
+wine devenum
+wine quartz
+wine qasf
+wine qcap
+wine qdvd
+wine qedit
+wine wmvcore
+wine wmasf
+wine wmvdecod
+wine wmadmod
+
+# --- DirectPlay (multiplayer menus probe it even in single player) --------------
+wine dplayx
+wine dplay
+native dplaysvr
+native dpmodemx
+native dpnet
+native dpnsvr
+native dpwsockx
+
+# --- XAudio2 / XACT -------------------------------------------------------------
+# X3DAudio1_7 and XAPOFX1_5 ship without xaudio2_7, so an XAudio2 title fails
+# where its 3D-audio helper would have worked.
+wine xaudio2_0
+wine xaudio2_1
+wine xaudio2_2
+wine xaudio2_3
+wine xaudio2_4
+wine xaudio2_5
+wine xaudio2_6
+wine xaudio2_7
+wine xaudio2_8
+wine xaudio2_9
+wine x3daudio1_0
+wine x3daudio1_1
+wine x3daudio1_2
+wine x3daudio1_3
+wine x3daudio1_4
+wine x3daudio1_5
+wine x3daudio1_6
+wine xapofx1_1
+wine xapofx1_2
+wine xapofx1_3
+wine xapofx1_4
+wine xactengine2_0
+wine xactengine2_4
+wine xactengine2_7
+wine xactengine2_9
+wine xactengine3_0
+wine xactengine3_1
+wine xactengine3_2
+wine xactengine3_3
+wine xactengine3_4
+wine xactengine3_5
+wine xactengine3_6
+wine xactengine3_7
+
+# --- Legacy C/C++ runtimes ------------------------------------------------------
+# Only msvcr120/msvcp140/vcruntime140 are shipped, and the VC++ component covers
+# 2015-2022 only. A 2005-2012 title links msvcr71/80/90/100/110.
+wine msvcr70
+wine msvcr71
+wine msvcr80
+wine msvcr90
+wine msvcr100
+wine msvcr110
+wine msvcp60
+wine msvcp70
+wine msvcp71
+wine msvcp80
+wine msvcp90
+wine msvcp100
+wine msvcp110
+wine msvcm80
+wine msvcm90
+wine msvcirt
+wine msvcrt20
+wine msvcrt40
+wine atl80
+wine atl100
+wine atl110
+wine vcomp
+wine vcomp90
+wine vcomp100
+wine vcomp110
+wine vcomp120
+wine vcomp140
+
+# --- Input, sound, shell and document helpers -----------------------------------
+# dinput (the pre-DirectInput8 entry point), gdiplus, riched20 and the MSXML
+# parsers are all imported by games' config and launcher code.
+wine dinput
+wine gdiplus
+wine riched20
+wine riched32
+wine msxml
+wine msxml2
+wine msxml3
+wine msxml4
+wine msxml6
+wine msi
+wine cabinet
+wine msident
+wine msgsm32.acm
+wine msadp32.acm
+wine imaadp32.acm
+wine msg711.acm
+wine msacm32.drv
+wine midimap
+wine wavemapper
+
+# --- Microsoft-only: no Wine implementation, needs a redistributable component ---
+native mfc42
+native mfc42u
+native mfc140
+native mfc140u
+native riched30

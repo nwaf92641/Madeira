@@ -33,6 +33,23 @@ enum StikJITHelper {
 
     /// Open StikDebug with our JIT script embedded in the URL.
     /// StikDebug will attach to our process and run the script.
+    ///
+    /// ml811: this completes on ATTACHMENT, not on CS_DEBUGGED. Those are not
+    /// the same question and the difference is the whole re-attach path.
+    /// CS_DEBUGGED is sticky: once StikDebug has attached even once, it stays
+    /// set across every detach for the life of the process. The old poll tested
+    /// it alone, so the SECOND launch — where it is already set before anything
+    /// is opened — completed `true` on the first tick, before StikDebug had
+    /// even finished launching, and the caller went straight to allocating the
+    /// JIT pool. A BRK #0xf00d with no debugger attached is not answered by
+    /// StikDebug; it lands in our own handler, the allocation comes back
+    /// empty, and the failure surfaces much later as "BAD POOL placement" or
+    /// "Debugger failed to allocate RX memory" — an error about memory that is
+    /// really about nobody being attached. Reported as intermittent launch
+    /// failures that "fix themselves" when the launch button is pressed again.
+    ///
+    /// P_TRACED is the flag that actually answers "is StikDebug here right
+    /// now", so wait for that.
     static func enableJIT(completion: @escaping (Bool) -> Void) {
         // A fresh attach is being requested. CS_DEBUGGED is sticky across
         // detach, so "Enable JIT" can legitimately be pressed again to
@@ -59,35 +76,82 @@ enum StikJITHelper {
                 completion(false)
                 return
             }
-
-            // Poll for CS_DEBUGGED flag
-            pollForJIT(completion: completion)
+            waitForAttachment(completion: completion)
         }
     }
 
-    /// Poll every 0.5s until CS_DEBUGGED is set, then call completion.
-    private static func pollForJIT(completion: @escaping (Bool) -> Void) {
-        // Bounded: if StikDebug never attaches (user dismissed the prompt, the
-        // script failed to vAttach, or StikDebug's scene-update watchdog killed
-        // it), the poll would otherwise fire forever and the caller would wait
-        // on a completion that never arrives — a silent hang, not an error.
-        // The caller already renders completion(false) as .unavailable.
+    /// Bounded wait for P_TRACED, i.e. StikDebug attached to THIS process.
+    private static func waitForAttachment(completion: @escaping (Bool) -> Void) {
+        // 30s, well past every observed attach. Bounded on purpose: if
+        // StikDebug never attaches (user dismissed the prompt, its script
+        // failed to vAttach, its scene-update watchdog killed it) the caller
+        // would otherwise wait on a completion that never arrives.
         var ticks = 0
-        let maxTicks = 60  // 30s, well past every observed attach
+        let maxTicks = 60
         Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { timer in
-            if jit_check_debugged() {
+            if isDebuggerAttached() {
                 timer.invalidate()
-                LogStore.shared.log("JIT enabled! (CS_DEBUGGED set)", level: .success)
+                LogStore.shared.log("JIT enabled! StikDebug attached"
+                    + (jit_check_debugged() ? " (CS_DEBUGGED set)" : ""), level: .success)
+                JITState.shared.refresh()
                 completion(true)
                 return
             }
             ticks += 1
             if ticks >= maxTicks {
                 timer.invalidate()
-                LogStore.shared.log("JIT enable timed out after \(maxTicks / 2)s: "
-                    + "StikDebug never set CS_DEBUGGED (not installed, unable to "
-                    + "attach, or its script failed).", level: .error)
+                LogStore.shared.log("JIT enable timed out after \(maxTicks / 2)s: StikDebug "
+                    + "never attached (not installed, unable to attach, or its script "
+                    + "failed). CS_DEBUGGED is \(jit_check_debugged() ? "set" : "clear").",
+                    level: .error)
                 completion(false)
+            }
+        }
+    }
+
+    /// Re-attach, with retries, and only report success once StikDebug is
+    /// really on the process. This is the path every second launch takes: the
+    /// app detaches by design when a run starts, so a new run must attach again
+    /// before it can allocate its pool.
+    ///
+    /// One attempt is not enough, and the failure it leaves behind is
+    /// misleading. Opening the StikDebug URL is a request to another app: it
+    /// can be launched, killed by its own scene-update watchdog, or lose the
+    /// race with the app coming back to the foreground. Each of those looks
+    /// identical from here — no attach — and each is fixed by asking again
+    /// rather than by telling the user to work it out. The attempts are spaced
+    /// out because the URL open is asynchronous and the debugger needs a moment
+    /// to run its script.
+    static func ensureAttached(attempts: Int = 3, completion: @escaping (Bool) -> Void) {
+        if isDebuggerAttached() {
+            LogStore.shared.log("StikDebug is already attached; no re-attach needed.")
+            JITState.shared.refresh()
+            completion(true)
+            return
+        }
+        attemptAttach(remaining: max(attempts, 1), attempt: 1, completion: completion)
+    }
+
+    private static func attemptAttach(remaining: Int, attempt: Int,
+                                      completion: @escaping (Bool) -> Void) {
+        LogStore.shared.log("Re-attaching StikDebug (attempt \(attempt))...")
+        enableJIT { ok in
+            // enableJIT already waited for P_TRACED; trust the flag, not the
+            // completion, so a caller can never run on a "success" that is only
+            // CS_DEBUGGED being sticky.
+            if ok && isDebuggerAttached() {
+                completion(true)
+                return
+            }
+            guard remaining > 1 else {
+                LogStore.shared.log("StikDebug would not attach after \(attempt) attempt(s). "
+                    + "Open StikDebug once by hand, then launch again.", level: .error)
+                completion(false)
+                return
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                attemptAttach(remaining: remaining - 1, attempt: attempt + 1,
+                              completion: completion)
             }
         }
     }
@@ -277,6 +341,20 @@ enum StikJITHelper {
                                        + "(largest hole %dMB, smallest request tried %dMB) — not starting Wine",
                                        measuredHole / 1024 / 1024, smallestTried / 1024 / 1024),
                                 level: .error)
+            // ml811: say what actually went wrong. Every wave above asks the
+            // debugger for the region (BRK #0xf00d -> CMD_PREPARE_REGION), so
+            // with StikDebug detached no size can succeed and the reason has
+            // nothing to do with address space. Without this the user gets an
+            // address-space message, presses launch again, and has the same
+            // failure — the resolution is to re-attach, which the launch path
+            // now does before it gets here.
+            if !isDebuggerAttached() {
+                LogStore.shared.log("  Cause: StikDebug is NOT attached (P_TRACED clear). The pool is "
+                    + "allocated through a BRK that only the debugger answers, so no size can "
+                    + "succeed until it re-attaches. CS_DEBUGGED is "
+                    + "\(jit_check_debugged() ? "set" : "clear") — that flag is sticky across "
+                    + "detach and does not mean a debugger is present.", level: .error)
+            }
             LogStore.shared.log("  Press launch again, or lower the JIT pool in Settings.", level: .info)
             return nil
         }

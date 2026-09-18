@@ -1076,6 +1076,112 @@ Makefiles carry it.
 targets before running make, so a configure that did not see the patch fails
 with that sentence instead of "No rule to make target".
 
+## The launch-path audit (ml809–ml811): three silent failures, one launch
+
+The request was a DX11 "compatibility" pass. The DX11 layer (DXMT) was already
+hardened by ml806 and nothing in this pass changed it; what actually broke last
+launches was the path *to* DX11, in three places that each fail quietly and
+produce a symptom that points somewhere else. All three are fixed; none of them
+needed a new subsystem.
+
+### ml810 — Wine was asking the loader for display drivers this build does not contain
+
+`explorer`'s and `win32u`'s compiled default for the display driver is the
+string `"mac,x11,wayland"` (`wine/programs/explorer/desktop.c`). With no
+`GraphicsDriver` value in the prefix -- which is the state of every prefix this
+app has ever seeded -- `load_display_driver` walked all three names and called
+`LoadLibraryW("wine<name>.drv")` for each. All three fail on iOS: `configure`
+ran `--without-x`, `winemac` is macOS-only, and no display `.drv` ships at all.
+So every launch logged three `LoadLibrary` misses (`0xc0000034`) before landing
+on the winios driver it was always going to use anyway -- noise that reads like
+a missing-file bug, and three syscalls of loader work per launch.
+
+Two independent fixes, because they cover different prefixes:
+
+- `build/win32u-unix/driver_ios.c`: `load_desktop_driver()` now returns `FALSE`
+  immediately `#ifdef WINE_IOS`, before the registry is consulted. There is
+  nothing to look for on this platform, so there is nothing to probe. The
+  `#else` branch is Wine's code, untouched. The consequence in
+  `load_display_driver()` is that `winios_user_driver` is installed
+  *unconditionally* rather than as the fallback of a doomed probe -- which also
+  removes a real (if unreachable today) hazard: a prefix whose stale GUID
+  happened to name a loadable module would have taken the winemac path.
+- `WineProcessBridge.m`: `ios_ensure_graphics_driver()` pins
+  `HKCU\Software\Wine\Drivers\Graphics="null"` in `user.reg` at seed time. It
+  must run *before* the wineserver boots, because the wineserver parses and
+  rewrites `user.reg`; after that the on-disk value is no longer authoritative.
+  `"null"` is not a placeholder -- it is the one value that tells Wine's driver
+  loop to stop without attempting a load.
+
+`scripts/build-prefix-snapshot.sh` writes the same value when it generates a
+template, so a regenerated `prefix-template.tar.gz` ships correct and the app's
+repair is a no-op on it. `tools/test-graphics-driver-pin.sh` asserts the edit
+does the right thing to fixtures *and to the shipped template*, and -- the half
+that matters more for a file holding every application setting the prefix has --
+that it is byte-for-byte inert when there is nothing to do.
+
+### ml809 — the codepage tables never reached the bundle (STATUS_OBJECT_NAME_NOT_FOUND)
+
+Reported as `NtCreateFile`/NLS errors. Root cause was mundane: `wine/nls`
+contains 76 tables (68 codepages) in the source tree, and only four of them
+(`c_437`, `c_1252`, `c_20127`, `c_28591`) were ever committed into
+`app/Madeira/nls/`. A title asking for CP932, CP1251 or anything else got a
+failed lookup in locale setup. Three parts to the fix:
+
+- `scripts/stage-nls.sh` now stages the full set from `wine/nls` and **fails**
+  (exit 1) if fewer than 68 codepages are present, instead of silently shipping
+  a subset. It stays soft when there is no Wine tree at all, which is what makes
+  a source-only checkout still packageable.
+- `WineProcessBridge.m` links every bundled `nls/*.nls` into
+  `drive_c/windows/system32` at seed time. That is the *second* path ntdll tries
+  (`env_ios.c: open_nls_data_file` resolves `<data_dir>/nls/<name>.nls` first,
+  then `C:\windows\system32\<name>.nls`), and the template strips every `.nls`
+  out of system32 -- so before this the fallback could not succeed for any
+  codepage. Symlinks, not copies: the bundle owns the files, and a copy goes
+  stale on the next Wine bump. It also logs loudly when the bundle carries fewer
+  than 60 tables, because that failure is otherwise invisible on the device.
+- `tools/check-nls-set.py` compares source against bundle (component-wise, by
+  name) and is wired into `tools/check-all.sh`, so a stale or partial bundle
+  fails the gate rather than the game.
+
+### ml811 — "JIT pool allocation failed" was usually "no debugger attached"
+
+`StikJITHelper.pollForJIT` completed on `jit_check_debugged()`, which is
+`CS_DEBUGGED` -- a flag that is **sticky across detach**. On the first launch
+that is a fine signal (`CS_DEBUGGED` is clear until StikDebug arrives). On every
+launch after it, the flag is already set before anything is opened, so the poll
+returned `true` on its first tick, StikDebug was still launching, and the caller
+went straight to allocating the JIT pool. The pool is allocated through a
+`BRK #0xf00d` that only the debugger answers; with nobody attached it is not
+answered at all, the returned pointer is zero, and every placement wave fails.
+The user then saw an *address-space* error ("BAD POOL: no placement", "Debugger
+failed to allocate RX memory") for a problem that was never about memory, and
+pressing launch again "fixed" it whenever the race went the other way.
+
+- The wait is now on `P_TRACED` (`isDebuggerAttached()`), which answers "is
+  StikDebug on this process right now".
+- `ensureAttached(attempts:)` retries the URL open up to three times, spaced by
+  1.5s, and re-checks `P_TRACED` itself rather than trusting the completion --
+  a caller can no longer run on a success that is only a sticky flag. The launch
+  sequence uses it; the single-shot re-attach is gone.
+- The pool failure now names the cause when `P_TRACED` is clear, so the next
+  reader of that log does not go looking in the allocator.
+
+`isDebuggerAttached()` and `jit_check_debugged()` are the two questions
+`JITState` keeps apart in the UI chip ("JIT ready · detached"); ml811 makes the
+launch path keep them apart too.
+
+### Verified, not changed
+
+- `d3dcompiler_43.dll` ships real; `44/45/46` are aliased onto `47` at session
+  start (ml806, `WineProcessBridge.m`), and the cross-arch link pass covers them
+  for the non-session arch. All five names resolve in either arch.
+- The `dxvk.conf` request: `dxvk.*` keys remain documented-but-inert (DXMT is
+  the layer; see the ml806 section). The device identity stays
+  `dxgi.customDeviceId=1b81` (`nvidiaGeForceGTX1070`), *not* the `1b80` asked
+  for -- `1b80` is the GTX 1080's id and would contradict the descriptor string
+  next to it.
+
 ## Handing an unsigned IPA to the user
 
 The build lives in CI, so "give me an IPA" is three steps, and the third is the

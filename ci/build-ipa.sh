@@ -251,7 +251,7 @@ bash build/wineserver/build.sh || { dump_errs; exit 1; }
 
 # ---------------------------------------------------------------- DXMT (unix)
 log "DXMT unix side + combined archive"
-bash build/dxmt-ios/build.sh
+bash build/dxmt-ios/build.sh || { dump_errs; exit 1; }
 [ -f app/Madeira/libdxmt_combined.a ] || {
     xcrun -sdk iphoneos libtool -static -o app/Madeira/libdxmt_combined.a \
         build/dxmt-ios/obj/*.o "$LLVM_BUILD"/lib/*.a
@@ -259,7 +259,7 @@ bash build/dxmt-ios/build.sh
 
 # ------------------------------------------------------------- Madeira Dock
 log "Madeira Dock (dockhost.exe)"
-bash build/madeira-dock/build.sh
+bash build/madeira-dock/build.sh || { dump_errs; exit 1; }
 
 # ------------------------------------------------- inputs not in the repo
 log "Stage inputs that are not in the repository"

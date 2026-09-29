@@ -21,6 +21,16 @@ R="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$R"
 JOBS="${JOBS:-$(sysctl -n hw.ncpu)}"
 log() { printf '\n========== %s ==========\n' "$*"; }
+# The per-file scripts keep the compiler output for each unit on disk (and only
+# print the failing name), so surface it when a step aborts.
+dump_errs() {
+    local f
+    for f in build/*/obj/*.err build/*/obj/err-*.txt; do
+        [ -s "$f" ] || continue
+        echo "----- $f"
+        sed -n '1,40p' "$f"
+    done
+}
 export PATH="/opt/homebrew/opt/bison/bin:/opt/homebrew/opt/flex/bin:$PATH:/opt/homebrew/opt/llvm/bin"
 
 MINGW_VER=20260421
@@ -153,6 +163,23 @@ wrap("FEX/FEXCore/Source/Utils/ArchHelpers/Arm64.cpp",
      "static void IosLogUnimplementedCASPAL(uint32_t Size, uint64_t* GPRs, uint32_t AddressReg) {",
      "static bool HandleCASPAL(uint32_t Instr, uint64_t* GPRs, uint32_t* StrictSplitLockMutex) {",
      else_body="static void IosLogUnimplementedCASPAL(uint32_t, uint64_t*, uint32_t) {}\n")
+
+# JemallocLibs builds AllocatorHooks.cpp without ENABLE_FEX_ALLOCATOR, but the
+# non-allocator half of that file still calls IOS_RPM_GUARD(), which only the
+# allocator half defines. Supply the no-op fallback for that configuration.
+hooks = "FEX/FEXCore/Source/Utils/AllocatorHooks.cpp"
+s = open(hooks).read()
+if "MADEIRA_RPM_GUARD_FALLBACK" in s:
+    print("%s: already patched" % hooks)
+else:
+    s = ("#ifndef MADEIRA_RPM_GUARD_FALLBACK\n"
+         "#define MADEIRA_RPM_GUARD_FALLBACK\n"
+         "#if !defined(ENABLE_FEX_ALLOCATOR) && !defined(IOS_RPM_GUARD)\n"
+         "#define IOS_RPM_GUARD() ((void)0)\n"
+         "#endif\n"
+         "#endif\n") + s
+    open(hooks, "w").write(s)
+    print("%s: patched" % hooks)
 PY
     # Options as build/fex-ios/build.sh, plus CMAKE_SYSTEM_PROCESSOR (empty when
     # cross-compiling for iOS, which FEX rejects) and generic tuning (TUNE_CPU
@@ -165,8 +192,11 @@ PY
         -DBUILD_TESTING=OFF -DBUILD_THUNKS=OFF -DBUILD_FEXCONFIG=OFF \
         -DBUILD_FEX_LINUX_TESTS=OFF -DENABLE_FEX_ALLOCATOR=OFF \
         -DENABLE_ASSERTIONS=OFF -DENABLE_CLANG_THUNKS=ON -DENABLE_CCACHE=ON
-    cmake --build FEX/build-ios --target FEXCore FEXCore_Base -j "$JOBS"
-    cmake --build FEX/build-ios --target JemallocLibs -j "$JOBS" 2>/dev/null || true
+    # JemallocLibs is referenced by the Xcode project (the app links it), so it
+    # has to exist. build/fex-ios/build.sh stops at FEXCore only.
+    cmake --build FEX/build-ios --target FEXCore FEXCore_Base JemallocLibs -j "$JOBS"
+    [ -f FEX/build-ios/FEXCore/Source/libJemallocLibs.a ] || {
+        echo "ERROR: libJemallocLibs.a was not produced"; exit 1; }
 fi
 
 # ------------------------------------------------------- Wine (macOS host tree)
@@ -209,15 +239,15 @@ done
 # ------------------------------------------------------------- Wine unix libs
 log "Wine unix libraries (ntdll, win32u, wineserver)"
 if [ ! -f app/Madeira/libntdll_unix.a ]; then
-    bash build/ntdll-unix/build.sh
+    bash build/ntdll-unix/build.sh || { dump_errs; exit 1; }
 fi
 if [ ! -f app/Madeira/libwin32u_unix.a ]; then
-    bash build/win32u-unix/build.sh
+    bash build/win32u-unix/build.sh || { dump_errs; exit 1; }
 fi
 if [ ! -f app/Madeira/libwineserver.a ]; then
-    bash ci/build-wineserver-base.sh
+    bash ci/build-wineserver-base.sh || { dump_errs; exit 1; }
 fi
-bash build/wineserver/build.sh
+bash build/wineserver/build.sh || { dump_errs; exit 1; }
 
 # ---------------------------------------------------------------- DXMT (unix)
 log "DXMT unix side + combined archive"

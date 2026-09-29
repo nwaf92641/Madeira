@@ -28,19 +28,22 @@ jobs:
           fetch-depth: 1
 
       - name: Select recent Xcode
-        # macos-15 ships several Xcodes; pick the newest 16.x so libc++ has
-        # C++20 pieces FEXCore uses (std::atomic_ref) and the Metal toolchain
-        # supports the converter's metallib output.
+        # macos-15 ships several Xcodes (16.x by default, 26.x alongside).
         run: |
           set -eu
-          for v in 16.4 16.3 16.2 16.1 16.0; do
-            if [ -d "/Applications/Xcode_${v}.app" ]; then
-              sudo xcode-select -s "/Applications/Xcode_${v}.app/Contents/Developer"
-              break
-            fi
-          done
+          # The sources need the iOS 26 SDK: ntdll's server_ios.c reads
+          # rusage_info_v6.ri_page_wait_time_mach, which earlier SDKs do not
+          # declare. They also need Apple clang 16+ for std::atomic_ref. Take the
+          # highest Xcode 26 on the image rather than the 16.4 default.
+          XC=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -1)
+          if [ -z "$XC" ]; then
+            echo "no Xcode 26 on this image; available:"; ls -d /Applications/Xcode*.app
+            exit 1
+          fi
+          echo "using $XC"
+          sudo xcode-select -s "$XC/Contents/Developer"
           xcodebuild -version
-          xcrun --sdk iphoneos --show-sdk-path
+          xcrun --sdk iphoneos --show-sdk-version
 
       - name: Install build tools
         run: brew install cmake ninja meson bison flex pkgconf autoconf automake libtool ccache llvm

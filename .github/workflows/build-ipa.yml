@@ -1,23 +1,12 @@
 name: Build unsigned IPA
 
-# Produces an unsigned Madeira.ipa artifact. Sideloaders (SideStore, StikDebug,
-# AltStore, ...) re-sign it, so no Apple certificate is needed here.
-#
-# WARNING: this is a best-effort rebuild of a chain that is not reproducible
-# from the repository alone. See docs/BUILDING.md: the app target does not
-# build from a clean clone, the Wine macOS configure recipe is not recorded,
-# and the LLVM-for-iOS build is reconstructed. The first runs are expected to
-# need iteration; every stage is cached so a retry does not redo them.
-
 on:
-  workflow_dispatch:
   push:
-    branches:
-      - 'ci/**'
-      - 'add-ipa-ci'
+    branches: [main, 'add-ipa-ci']
     paths:
-      - '.github/workflows/build-ipa.yml'
       - 'ci/**'
+      - '.github/workflows/build-ipa.yml'
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -27,8 +16,10 @@ jobs:
   ipa:
     runs-on: macos-15
     timeout-minutes: 350
+
     env:
       JOBS: 3
+
     steps:
       - name: Checkout (with submodules)
         uses: actions/checkout@v4
@@ -36,18 +27,26 @@ jobs:
           submodules: recursive
           fetch-depth: 1
 
-      - name: Show toolchain
+      - name: Select recent Xcode
+        # macos-15 ships several Xcodes; pick the newest 16.x so libc++ has
+        # C++20 pieces FEXCore uses (std::atomic_ref) and the Metal toolchain
+        # supports the converter's metallib output.
         run: |
-          sw_vers
+          set -eu
+          for v in 16.4 16.3 16.2 16.1 16.0; do
+            if [ -d "/Applications/Xcode_${v}.app" ]; then
+              sudo xcode-select -s "/Applications/Xcode_${v}.app/Contents/Developer"
+              break
+            fi
+          done
           xcodebuild -version
           xcrun --sdk iphoneos --show-sdk-path
 
       - name: Install build tools
-        run: brew install cmake ninja meson bison flex pkgconf autoconf automake libtool ccache
+        run: brew install cmake ninja meson bison flex pkgconf autoconf automake libtool ccache llvm
 
       # Restore/save are split so a *failed* run still saves its partial
       # progress (the plain cache action skips saving when the job fails).
-      # Each run saves under its own key and restores the most recent one.
       - name: Restore build cache
         uses: actions/cache/restore@v4
         with:
@@ -58,21 +57,21 @@ jobs:
             toolchains/llvm-project
             toolchains/llvm-ios-build
             toolchains/llvm-host-build
+            research/freetype
             FEX/build-ios
             wine/build-macos
             build/gnutls-ios/obj
             build/ffmpeg/obj
             build/freetype-ios/build
-          key: madeira-v1-${{ runner.os }}-${{ github.run_id }}
+            build/ntdll-unix/obj
+            build/win32u-unix/obj
+            build/wineserver/obj
+            build/dxmt-ios/obj
+          key: madeira-v2-${{ runner.os }}-${{ github.run_id }}
           restore-keys: |
-            madeira-v1-${{ runner.os }}-
+            madeira-v2-${{ runner.os }}-
 
-      - name: Download Metal Toolchain
-        # DXMT compiles a Metal library with `xcrun metal`; the component is a
-        # separate download on recent Xcode (the flag is absent on some).
-        run: xcodebuild -downloadComponent MetalToolchain || true
-
-      - name: Build
+      - name: Build and package unsigned IPA
         shell: bash
         # pipefail so a failing ci/build-ipa.sh is not masked by tee.
         run: |
@@ -90,12 +89,17 @@ jobs:
             toolchains/llvm-project
             toolchains/llvm-ios-build
             toolchains/llvm-host-build
+            research/freetype
             FEX/build-ios
             wine/build-macos
             build/gnutls-ios/obj
             build/ffmpeg/obj
             build/freetype-ios/build
-          key: madeira-v1-${{ runner.os }}-${{ github.run_id }}
+            build/ntdll-unix/obj
+            build/win32u-unix/obj
+            build/wineserver/obj
+            build/dxmt-ios/obj
+          key: madeira-v2-${{ runner.os }}-${{ github.run_id }}
 
       - name: Upload build log
         if: always()
@@ -104,10 +108,8 @@ jobs:
           name: ci-build-log
           path: build/ci-build.log
           if-no-files-found: ignore
-          retention-days: 7
 
       - name: Upload unsigned IPA
-        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: Madeira-unsigned-ipa

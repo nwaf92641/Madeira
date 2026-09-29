@@ -1,12 +1,18 @@
 #!/bin/bash
 # Build an UNSIGNED Madeira .ipa on a macOS runner.
 #
-# This mirrors the chain recorded in docs/BUILDING.md and build/*/build.sh.
-# It is deliberately best-effort: several upstream steps are marked UNVERIFIED
-# in docs/BUILDING.md (the Wine macOS configure has no recorded recipe, and the
-# LLVM-for-iOS build is reconstructed from CMakeCache values), so the first
-# runs are expected to need fixing. Everything is cached by the workflow, so a
-# retry does not redo the expensive stages.
+# Mirrors docs/BUILDING.md and build/*/build.sh in the documented order, plus
+# explicit workarounds for the inputs BUILDING.md lists as "not in the
+# repository" and for the steps it marks UNVERIFIED:
+#   * LLVM-for-iOS: the CMakeCache-derived recipe needs three fixes (below).
+#   * FEX iOS: processor/tuning variables are unset when cross-compiling, and
+#     CompileBlock reads Windows-only symbols outside any guard.
+#   * Wine: build-macos (the host tree every unix-side script includes) has no
+#     recorded recipe; it is constructed here.
+#   * app/Madeira/libwineserver.a is not in the repository and its script can
+#     only patch an existing archive -> ci/build-wineserver-base.sh rebuilds it.
+#   * app/Madeira/x86_64-vcruntime/ holds Microsoft redistributables that cannot
+#     be shipped here; an empty folder reference is staged so the bundle builds.
 #
 # Output: build/ipa-output/Madeira-unsigned.ipa
 set -euo pipefail
@@ -15,6 +21,7 @@ R="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$R"
 JOBS="${JOBS:-$(sysctl -n hw.ncpu)}"
 log() { printf '\n========== %s ==========\n' "$*"; }
+export PATH="/opt/homebrew/opt/bison/bin:/opt/homebrew/opt/flex/bin:$PATH"
 
 MINGW_VER=20260421
 MINGW_NAME="llvm-mingw-${MINGW_VER}-ucrt-macos-universal"
@@ -23,11 +30,16 @@ LLVM_COMMIT=8dfdcc7b7
 LLVM_SRC="$R/toolchains/llvm-project"
 LLVM_BUILD="$R/toolchains/llvm-ios-build"
 LLVM_HOST="$R/toolchains/llvm-host-build"
+WINE_SRC="$R/wine"
+WINE_BUILD="$WINE_SRC/build-macos"
 
 log "Host"
 sw_vers
 uname -m
 xcodebuild -version
+echo "developer dir: $(xcode-select -p)"
+echo "iOS SDK: $(xcrun --sdk iphoneos --show-sdk-path)"
+echo "jobs: $JOBS"
 
 # ---------------------------------------------------------------- llvm-mingw
 log "Toolchain: llvm-mingw ${MINGW_VER}"
@@ -55,7 +67,7 @@ log "freetype (source not tracked; cloned per build/freetype-ios/build.sh)"
 if [ ! -d research/freetype ]; then
     git clone --depth 1 --branch VER-2-13-3 https://github.com/freetype/freetype.git research/freetype
 fi
-if [ ! -d build/freetype-ios/build ]; then
+if [ ! -f build/freetype-ios/build/libfreetype.a ]; then
     bash build/freetype-ios/build.sh
 fi
 
@@ -67,10 +79,10 @@ if [ ! -d "$LLVM_SRC/.git" ]; then
 fi
 git -C "$LLVM_SRC" fetch --depth 1 origin "$LLVM_COMMIT" 2>/dev/null || true
 git -C "$LLVM_SRC" checkout "$LLVM_COMMIT"
-# The recipe needs Apple ld's -dead_strip, which AddLLVM only selects for Darwin.
+# AddLLVM only selects Apple ld's -dead_strip for a Darwin system name.
 ADDLLVM="$LLVM_SRC/llvm/cmake/modules/AddLLVM.cmake"
 if ! grep -q 'MATCHES "Darwin|iOS"' "$ADDLLVM"; then
-    sed -i '' 's/MATCHES "Darwin"/MATCHES "Darwin|iOS"/' "$ADDLLVM"
+    perl -0pi -e 's/MATCHES "Darwin"/MATCHES "Darwin|iOS"/' "$ADDLLVM"
 fi
 if [ ! -x "$LLVM_HOST/bin/llvm-tblgen" ]; then
     cmake -S "$LLVM_SRC/llvm" -B "$LLVM_HOST" -G Ninja \
@@ -79,10 +91,10 @@ if [ ! -x "$LLVM_HOST/bin/llvm-tblgen" ]; then
     cmake --build "$LLVM_HOST" --target llvm-tblgen -j "$JOBS"
 fi
 if [ ! -f "$LLVM_BUILD/lib/libLLVMCore.a" ]; then
-    # LLVM_BUILD_UTILS defaults to ON, which adds an install() rule for
-    # llvm-tblgen that fails on iOS with "install TARGETS given no BUNDLE
-    # DESTINATION for MACOSX_BUNDLE". The iOS stage only needs the libraries,
-    # and the host tblgen is supplied separately.
+    # LLVM_BUILD_UTILS adds an install() rule for llvm-tblgen that is invalid on
+    # iOS (no BUNDLE DESTINATION); LLVM_INCLUDE_TOOLS pulls in tools/lto, whose
+    # dylib fails to link for iOS (-Wl,-z,defs is not an Apple ld option). Only
+    # the static libraries are needed.
     cmake -S "$LLVM_SRC/llvm" -B "$LLVM_BUILD" -G Ninja \
         -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_SYSROOT=iphoneos \
         -DCMAKE_BUILD_TYPE=Release -DLLVM_HOST_TRIPLE=arm64-apple-ios17.0 \
@@ -100,10 +112,9 @@ fi
 # ---------------------------------------------------------------- FEX (iOS)
 log "FEX iOS static libraries"
 if [ ! -f FEX/build-ios/FEXCore/Source/libFEXCore.a ]; then
-    # FEXCore's CompileBlock has a macOS/iOS diagnostic that reads
-    # IosFfsBypassLog/IosCbEntryLog outside any guard. Those symbols only exist
-    # for the Windows PE builds (FEX_IOS_HOST), so on Darwin the file fails to
-    # compile. Wrap the diagnostic in the same guard.
+    # CompileBlock reads IosFfsBypassLog/IosCbEntryLog outside any guard. Those
+    # symbols only exist for the Windows PE builds (FEX_IOS_HOST), so the Darwin
+    # build fails to compile. Put the diagnostic back under the same guard.
     python3 - "${FEX_IOS_GUARD_PATCH:=1}" <<'PY'
 import sys
 if sys.argv[1] != "1":
@@ -124,9 +135,9 @@ if "#ifdef FEX_IOS_HOST\n" + start not in s:
 else:
     print("Core.cpp already patched")
 PY
-    # Options as build/fex-ios/build.sh, plus CMAKE_SYSTEM_PROCESSOR (empty
-    # when cross-compiling for iOS, which FEX rejects) and generic tuning
-    # (TUNE_CPU=native reads /proc/cpuinfo, absent on macOS).
+    # Options as build/fex-ios/build.sh, plus CMAKE_SYSTEM_PROCESSOR (empty when
+    # cross-compiling for iOS, which FEX rejects) and generic tuning (TUNE_CPU
+    # native reads /proc/cpuinfo, absent on macOS).
     cmake -S FEX -B FEX/build-ios -G Ninja \
         -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_ARCHITECTURES=arm64 \
         -DCMAKE_OSX_SYSROOT=iphoneos -DCMAKE_OSX_DEPLOYMENT_TARGET=17.0 \
@@ -136,52 +147,78 @@ PY
         -DBUILD_FEX_LINUX_TESTS=OFF -DENABLE_FEX_ALLOCATOR=OFF \
         -DENABLE_ASSERTIONS=OFF -DENABLE_CLANG_THUNKS=ON -DENABLE_CCACHE=ON
     cmake --build FEX/build-ios --target FEXCore FEXCore_Base -j "$JOBS"
-    # The app target also links libJemallocLibs.a; build it if the default
-    # target set did not (the option state is UNVERIFIED from clean).
     cmake --build FEX/build-ios --target JemallocLibs -j "$JOBS" 2>/dev/null || true
 fi
 
 # ------------------------------------------------------- Wine (macOS host tree)
-log "Wine macOS build tree (wine/build-macos has no recorded recipe; best-effort)"
-if [ ! -f wine/build-macos/config.status ]; then
-    if [ ! -x wine/configure ]; then
-        ( cd wine && ./autogen.sh )
-    fi
-    mkdir -p wine/build-macos
-    ( cd wine/build-macos && ../configure --without-x --disable-tests --enable-winegstreamer )
+# Every unix-side script (ntdll-unix, win32u-unix, wineserver) includes
+# $WINE_BUILD/include/config.h and generated headers from $WINE_BUILD/dlls/*;
+# d3d11-triangle also needs $WINE_BUILD/tools/winebuild/winebuild. BUILDING.md
+# gives no recipe for this tree, so configure a plain host build. llvm-mingw is
+# deliberately NOT on PATH so configure does not try to add PE targets.
+log "Wine macOS host tree (configure + host tools)"
+if [ ! -f "$WINE_BUILD/config.status" ]; then
+    [ -x "$WINE_SRC/configure" ] || ( cd "$WINE_SRC" && ./autogen.sh )
+    mkdir -p "$WINE_BUILD"
+    ( cd "$WINE_BUILD" && ../configure --without-x --disable-tests --enable-winegstreamer )
 fi
-log "Wine generated headers and host tools"
-# The unix-side scripts need config.h plus the generated include tree; build
-# whatever the tree needs. This is the heavy Wine step.
-make -C wine/build-macos -j "$JOBS"
+log "Wine host build (generated headers + winebuild)"
+set +e
+make -C "$WINE_BUILD" -j "$JOBS"
+set -e
+for need in "$WINE_BUILD/include/config.h" "$WINE_BUILD/tools/winebuild/winebuild" \
+            "$WINE_BUILD/dlls/ntdll" "$WINE_BUILD/dlls/win32u"; do
+    [ -e "$need" ] || { echo "ERROR: Wine host build did not produce $need"; exit 1; }
+done
 
 # ------------------------------------------------------------- Wine unix libs
-log "Wine unix libraries (ntdll, wineserver, win32u)"
-bash build/ntdll-unix/build.sh
+log "Wine unix libraries (ntdll, win32u, wineserver)"
+if [ ! -f app/Madeira/libntdll_unix.a ]; then
+    bash build/ntdll-unix/build.sh
+fi
+if [ ! -f app/Madeira/libwin32u_unix.a ]; then
+    bash build/win32u-unix/build.sh
+fi
+if [ ! -f app/Madeira/libwineserver.a ]; then
+    bash ci/build-wineserver-base.sh
+fi
 bash build/wineserver/build.sh
-bash build/win32u-unix/build.sh
 
 # ---------------------------------------------------------------- DXMT (unix)
-log "DXMT unix side + LLVM combined archive"
+log "DXMT unix side + combined archive"
 bash build/dxmt-ios/build.sh
-if [ ! -f app/Madeira/libdxmt_combined.a ]; then
+[ -f app/Madeira/libdxmt_combined.a ] || {
     xcrun -sdk iphoneos libtool -static -o app/Madeira/libdxmt_combined.a \
         build/dxmt-ios/obj/*.o "$LLVM_BUILD"/lib/*.a
-fi
+}
 
-# ------------------------------------------------------------------- licences
+# ------------------------------------------------------------- Madeira Dock
+log "Madeira Dock (dockhost.exe)"
+bash build/madeira-dock/build.sh
+
+# ------------------------------------------------- inputs not in the repo
+log "Stage inputs that are not in the repository"
+# Microsoft's x86-64 VC++ runtime DLLs are redistributable only under Microsoft's
+# terms, so they are not shipped here. The project references the folder as a
+# bundle resource; an empty one keeps the resource phase valid. 64-bit guest
+# programs built with MSVC will miss their runtime until the DLLs are added.
+mkdir -p app/Madeira/x86_64-vcruntime
+touch app/Madeira/x86_64-vcruntime/.gitkeep
+
 log "Refresh bundled licence copies (the Xcode phase fails when stale)"
 bash build/stage-licenses.sh
 
 # --------------------------------------------------------------------- Xcode
-log "xcodebuild (unsigned)"
+log "xcodebuild (unsigned, Debug)"
+rm -rf build/ci-derived
 xcodebuild -project app/Madeira.xcodeproj -scheme Madeira -configuration Debug \
-    -destination 'generic/platform=iOS' -derivedDataPath build/ci-ipa \
+    -destination 'generic/platform=iOS' -derivedDataPath build/ci-derived \
     CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY= \
-    DEVELOPMENT_TEAM= PROVISIONING_PROFILE_SPECIFIER= PROVISIONING_PROFILE= \
+    CODE_SIGN_ENTITLEMENTS= DEVELOPMENT_TEAM= PROVISIONING_PROFILE_SPECIFIER= \
+    PROVISIONING_PROFILE= ENABLE_USER_SCRIPT_SANDBOXING=NO \
     build
 
-APP="build/ci-ipa/Build/Products/Debug-iphoneos/Madeira.app"
+APP="build/ci-derived/Build/Products/Debug-iphoneos/Madeira.app"
 [ -d "$APP" ] || { echo "ERROR: $APP was not produced"; exit 1; }
 
 log "Package unsigned IPA"

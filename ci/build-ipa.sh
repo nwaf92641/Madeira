@@ -100,17 +100,38 @@ fi
 # ---------------------------------------------------------------- FEX (iOS)
 log "FEX iOS static libraries"
 if [ ! -f FEX/build-ios/FEXCore/Source/libFEXCore.a ]; then
-    # Same options as build/fex-ios/build.sh, plus CMAKE_SYSTEM_PROCESSOR:
-    # cross-compiling for iOS leaves it empty, and FEX's top-level CMakeLists
-    # rejects an empty processor ("Unsupported processor type .").
+    # FEXCore's CompileBlock has a macOS/iOS diagnostic that reads
+    # IosFfsBypassLog/IosCbEntryLog outside any guard. Those symbols only exist
+    # for the Windows PE builds (FEX_IOS_HOST), so on Darwin the file fails to
+    # compile. Wrap the diagnostic in the same guard.
+    python3 - "${FEX_IOS_GUARD_PATCH:=1}" <<'PY'
+import sys
+if sys.argv[1] != "1":
+    sys.exit(0)
+p = "FEX/FEXCore/Source/Interface/Core/Core.cpp"
+s = open(p).read()
+start = "  /* iOS-Madeira ml316: report ExitToX64 FFS bypasses"
+end = ("                        IosCbEntryLog[4], IosCbEntryLog[5], IosCbEntryLog[7]);\n"
+       "    }\n"
+       "  }\n")
+if "#ifdef FEX_IOS_HOST\n" + start not in s:
+    assert start in s, "Core.cpp: diagnostic block not found"
+    assert end in s, "Core.cpp: diagnostic block end not found"
+    s = s.replace(start, "#ifdef FEX_IOS_HOST\n" + start, 1)
+    s = s.replace(end, end + "#endif\n", 1)
+    open(p, "w").write(s)
+    print("patched Core.cpp")
+else:
+    print("Core.cpp already patched")
+PY
+    # Options as build/fex-ios/build.sh, plus CMAKE_SYSTEM_PROCESSOR (empty
+    # when cross-compiling for iOS, which FEX rejects) and generic tuning
+    # (TUNE_CPU=native reads /proc/cpuinfo, absent on macOS).
     cmake -S FEX -B FEX/build-ios -G Ninja \
         -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_ARCHITECTURES=arm64 \
         -DCMAKE_OSX_SYSROOT=iphoneos -DCMAKE_OSX_DEPLOYMENT_TARGET=17.0 \
         -DCMAKE_SYSTEM_PROCESSOR=arm64 -DCMAKE_BUILD_TYPE=Release \
         -DTUNE_ARCH=generic -DTUNE_CPU=none \
-        -DFEX_IOS_HOST_BUILD=ON \
-        -DCMAKE_C_FLAGS=-DFEX_IOS_HOST -DCMAKE_CXX_FLAGS=-DFEX_IOS_HOST \
-        -DCMAKE_ASM_FLAGS=-DFEX_IOS_HOST \
         -DBUILD_TESTING=OFF -DBUILD_THUNKS=OFF -DBUILD_FEXCONFIG=OFF \
         -DBUILD_FEX_LINUX_TESTS=OFF -DENABLE_FEX_ALLOCATOR=OFF \
         -DENABLE_ASSERTIONS=OFF -DENABLE_CLANG_THUNKS=ON -DENABLE_CCACHE=ON

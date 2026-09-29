@@ -123,13 +123,15 @@ fi
 
 # ---------------------------------------------------------------- FEX (iOS)
 log "FEX iOS static libraries"
-if [ ! -f FEX/build-ios/FEXCore/Source/libFEXCore.a ]; then
-    # FEXCore also compiles for Darwin, but two of its files use symbols that
-    # only the Windows PE builds (FEX_IOS_HOST) define, with no guard at all:
-    # CompileBlock reads IosFfsBypassLog/IosCbEntryLog, and the CASPAL reporter
-    # calls VirtualQuery/MEMORY_BASIC_INFORMATION. Put both back under the guard
-    # and give the reporter a Darwin no-op replacement.
-    python3 - "${FEX_IOS_GUARD_PATCH:=1}" <<'PY'
+# The patches below run unconditionally: FEX is a submodule that is checked out
+# fresh on every run, so its sources are unpatched even when the compiled
+# outputs come back from the cache.
+# FEXCore also compiles for Darwin, but two of its files use symbols that
+# only the Windows PE builds (FEX_IOS_HOST) define, with no guard at all:
+# CompileBlock reads IosFfsBypassLog/IosCbEntryLog, and the CASPAL reporter
+# calls VirtualQuery/MEMORY_BASIC_INFORMATION. Put both back under the guard
+# and give the reporter a Darwin no-op replacement.
+python3 - "${FEX_IOS_GUARD_PATCH:=1}" <<'PY'
 import sys
 
 if sys.argv[1] != "1":
@@ -181,6 +183,7 @@ else:
     open(hooks, "w").write(s)
     print("%s: patched" % hooks)
 PY
+if [ ! -f FEX/build-ios/CMakeCache.txt ]; then
     # Options as build/fex-ios/build.sh, plus CMAKE_SYSTEM_PROCESSOR (empty when
     # cross-compiling for iOS, which FEX rejects) and generic tuning (TUNE_CPU
     # native reads /proc/cpuinfo, absent on macOS).
@@ -192,12 +195,15 @@ PY
         -DBUILD_TESTING=OFF -DBUILD_THUNKS=OFF -DBUILD_FEXCONFIG=OFF \
         -DBUILD_FEX_LINUX_TESTS=OFF -DENABLE_FEX_ALLOCATOR=OFF \
         -DENABLE_ASSERTIONS=OFF -DENABLE_CLANG_THUNKS=ON -DENABLE_CCACHE=ON
-    # JemallocLibs is referenced by the Xcode project (the app links it), so it
-    # has to exist. build/fex-ios/build.sh stops at FEXCore only.
-    cmake --build FEX/build-ios --target FEXCore FEXCore_Base JemallocLibs -j "$JOBS"
-    [ -f FEX/build-ios/FEXCore/Source/libJemallocLibs.a ] || {
-        echo "ERROR: libJemallocLibs.a was not produced"; exit 1; }
 fi
+# JemallocLibs is a target of the same tree, but build/fex-ios/build.sh stops at
+# FEXCore, and the Xcode project links -lJemallocLibs. It must be built outside
+# the cache guard above: a cached tree from before this target existed still has
+# libFEXCore.a, and skipping the whole block left the app link failing with
+# "ld: library 'JemallocLibs' not found".
+cmake --build FEX/build-ios --target FEXCore FEXCore_Base JemallocLibs -j "$JOBS"
+[ -f FEX/build-ios/FEXCore/Source/libJemallocLibs.a ] || {
+    echo "ERROR: libJemallocLibs.a was not produced"; exit 1; }
 
 # ------------------------------------------------------- Wine (macOS host tree)
 # Every unix-side script (ntdll-unix, win32u-unix, wineserver) includes

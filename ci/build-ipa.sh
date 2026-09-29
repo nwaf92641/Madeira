@@ -21,7 +21,7 @@ R="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$R"
 JOBS="${JOBS:-$(sysctl -n hw.ncpu)}"
 log() { printf '\n========== %s ==========\n' "$*"; }
-export PATH="/opt/homebrew/opt/bison/bin:/opt/homebrew/opt/flex/bin:$PATH"
+export PATH="/opt/homebrew/opt/bison/bin:/opt/homebrew/opt/flex/bin:$PATH:/opt/homebrew/opt/llvm/bin"
 
 MINGW_VER=20260421
 MINGW_NAME="llvm-mingw-${MINGW_VER}-ucrt-macos-universal"
@@ -114,28 +114,42 @@ fi
 # ---------------------------------------------------------------- FEX (iOS)
 log "FEX iOS static libraries"
 if [ ! -f FEX/build-ios/FEXCore/Source/libFEXCore.a ]; then
-    # CompileBlock reads IosFfsBypassLog/IosCbEntryLog outside any guard. Those
-    # symbols only exist for the Windows PE builds (FEX_IOS_HOST), so the Darwin
-    # build fails to compile. Put the diagnostic back under the same guard.
+    # FEXCore also compiles for Darwin, but two of its files use symbols that
+    # only the Windows PE builds (FEX_IOS_HOST) define, with no guard at all:
+    # CompileBlock reads IosFfsBypassLog/IosCbEntryLog, and the CASPAL reporter
+    # calls VirtualQuery/MEMORY_BASIC_INFORMATION. Put both back under the guard
+    # and give the reporter a Darwin no-op replacement.
     python3 - "${FEX_IOS_GUARD_PATCH:=1}" <<'PY'
 import sys
+
 if sys.argv[1] != "1":
     sys.exit(0)
-p = "FEX/FEXCore/Source/Interface/Core/Core.cpp"
-s = open(p).read()
-start = "  /* iOS-Madeira ml316: report ExitToX64 FFS bypasses"
-end = ("                        IosCbEntryLog[4], IosCbEntryLog[5], IosCbEntryLog[7]);\n"
-       "    }\n"
-       "  }\n")
-if "#ifdef FEX_IOS_HOST\n" + start not in s:
-    assert start in s, "Core.cpp: diagnostic block not found"
-    assert end in s, "Core.cpp: diagnostic block end not found"
+
+
+def wrap(path, sentinel, start, end, else_body=""):
+    """Enclose [start, end) in #ifdef FEX_IOS_HOST. Idempotent."""
+    s = open(path).read()
+    if sentinel in s:
+        print("%s: already patched" % path)
+        return
+    assert start in s, "%s: start anchor not found" % path
+    assert end in s, "%s: end anchor not found" % path
     s = s.replace(start, "#ifdef FEX_IOS_HOST\n" + start, 1)
-    s = s.replace(end, end + "#endif\n", 1)
-    open(p, "w").write(s)
-    print("patched Core.cpp")
-else:
-    print("Core.cpp already patched")
+    s = s.replace(end, else_body + "#endif\n" + end, 1)
+    open(path, "w").write(s)
+    print("%s: patched" % path)
+
+
+wrap("FEX/FEXCore/Source/Interface/Core/Core.cpp",
+     "#ifdef FEX_IOS_HOST\n  /* iOS-Madeira ml316",
+     "  /* iOS-Madeira ml316: report ExitToX64 FFS bypasses",
+     "  /* iOS-Madeira: refuse to compile obviously-invalid guest RIPs.")
+
+wrap("FEX/FEXCore/Source/Utils/ArchHelpers/Arm64.cpp",
+     "#ifdef FEX_IOS_HOST\nstatic void IosLogUnimplementedCASPAL",
+     "static void IosLogUnimplementedCASPAL(uint32_t Size, uint64_t* GPRs, uint32_t AddressReg) {",
+     "static bool HandleCASPAL(uint32_t Instr, uint64_t* GPRs, uint32_t* StrictSplitLockMutex) {",
+     else_body="static void IosLogUnimplementedCASPAL(uint32_t, uint64_t*, uint32_t) {}\n")
 PY
     # Options as build/fex-ios/build.sh, plus CMAKE_SYSTEM_PROCESSOR (empty when
     # cross-compiling for iOS, which FEX rejects) and generic tuning (TUNE_CPU
@@ -162,9 +176,25 @@ log "Wine macOS host tree (configure + host tools)"
 if [ ! -f "$WINE_BUILD/config.status" ]; then
     [ -x "$WINE_SRC/configure" ] || ( cd "$WINE_SRC" && ./autogen.sh )
     mkdir -p "$WINE_BUILD"
-    ( cd "$WINE_BUILD" && ../configure --without-x --disable-tests --enable-winegstreamer )
+    # Flag set verified by running configure locally against the pinned fork:
+    #   --enable-archs=none --without-mingw  no PE/cross targets; this tree is
+    #       host-only (the win32u/ntdll unix sides are compiled separately for
+    #       iOS, and llvm-mingw is deliberately not on PATH here).
+    #   --without-freetype  Wine aborts configure when the 64-bit freetype dev
+    #       files are absent; the iOS win32u build brings its own freetype
+    #       (build/freetype-ios) and forces SONAME_LIBFREETYPE undefined.
+    #   --without-x --disable-tests --enable-winegstreamer  as the fork's own
+    #       PE-side recipe uses.
+    ( cd "$WINE_BUILD" && ../configure \
+        --enable-archs=none --without-mingw --without-freetype \
+        --without-x --disable-tests --enable-winegstreamer )
 fi
-log "Wine host build (generated headers + winebuild)"
+log "Wine host build (winebuild, then best-effort the rest)"
+# configure creates include/config.h and the dlls/{ntdll,win32u} directories;
+# tools/winebuild/winebuild is a host tool the PE-side scripts use. All three
+# were confirmed locally. The rest of the tree is not needed by the iOS build,
+# so a failure there is tolerated as long as the required outputs exist.
+make -C "$WINE_BUILD" -j "$JOBS" tools/winebuild/winebuild
 set +e
 make -C "$WINE_BUILD" -j "$JOBS"
 set -e

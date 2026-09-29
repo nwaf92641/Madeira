@@ -30,13 +30,12 @@ jobs:
           fetch-depth: 1
 
       - name: Select recent Xcode
-        # macos-15 ships several Xcodes (16.x by default, 26.x alongside).
+        # macos-15 ships several Xcodes (16.x by default, 26.x alongside) and
+        # the default moves with image updates. Pin the newest Xcode 26 so the
+        # build matches the SDK the stack is validated against, and always pick
+        # explicitly rather than depending on whatever xcode-select points at.
         run: |
           set -eu
-          # The sources need the iOS 26 SDK: ntdll's server_ios.c reads
-          # rusage_info_v6.ri_page_wait_time_mach, which earlier SDKs do not
-          # declare. They also need Apple clang 16+ for std::atomic_ref. Take the
-          # highest Xcode 26 on the image rather than the 16.4 default.
           XC=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -1)
           if [ -z "$XC" ]; then
             echo "no Xcode 26 on this image; available:"; ls -d /Applications/Xcode*.app

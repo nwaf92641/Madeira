@@ -1,0 +1,90 @@
+name: Build unsigned IPA
+
+# Produces an unsigned Madeira.ipa artifact. Sideloaders (SideStore, StikDebug,
+# AltStore, ...) re-sign it, so no Apple certificate is needed here.
+#
+# WARNING: this is a best-effort rebuild of a chain that is not reproducible
+# from the repository alone. See docs/BUILDING.md: the app target does not
+# build from a clean clone, the Wine macOS configure recipe is not recorded,
+# and the LLVM-for-iOS build is reconstructed. The first runs are expected to
+# need iteration; every stage is cached so a retry does not redo them.
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - 'ci/**'
+      - 'add-ipa-ci'
+    paths:
+      - '.github/workflows/build-ipa.yml'
+      - 'ci/**'
+
+permissions:
+  contents: read
+
+jobs:
+  ipa:
+    runs-on: macos-14
+    timeout-minutes: 350
+    env:
+      JOBS: 3
+    steps:
+      - name: Checkout (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Show toolchain
+        run: |
+          sw_vers
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-path
+
+      - name: Install build tools
+        run: brew install cmake ninja meson bison flex pkgconf autoconf automake libtool
+
+      - name: Cache heavy build outputs
+        uses: actions/cache@v4
+        with:
+          path: |
+            toolchains/llvm-mingw-20260421-ucrt-macos-universal
+            toolchains/gnutls-ios
+            toolchains/ffmpeg-ios
+            toolchains/llvm-project
+            toolchains/llvm-ios-build
+            toolchains/llvm-host-build
+            FEX/build-ios
+            wine/build-macos
+            build/ffmpeg/obj
+            build/gnutls-ios/obj
+            build/freetype-ios/build
+          key: madeira-ci-${{ runner.os }}-${{ hashFiles('ci/build-ipa.sh', '.gitmodules') }}
+
+      - name: Download Metal Toolchain
+        # DXMT compiles a Metal library with `xcrun metal`; the component is a
+        # separate download on recent Xcode.
+        run: xcodebuild -downloadComponent MetalToolchain || true
+
+      - name: Build
+        run: bash ci/build-ipa.sh 2>&1 | tee build/ci-build.log
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-build-log
+          path: build/ci-build.log
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Upload unsigned IPA
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Madeira-unsigned-ipa
+          path: |
+            build/ipa-output/Madeira-unsigned.ipa
+            build/ipa-output/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 14

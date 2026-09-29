@@ -44,30 +44,49 @@ jobs:
       - name: Install build tools
         run: brew install cmake ninja meson bison flex pkgconf autoconf automake libtool
 
-      - name: Cache heavy build outputs
+      # Caches use stable keys on purpose: editing ci/build-ipa.sh must not
+      # throw away an already-built toolchain. Bump the version suffix when a
+      # cached component really has to be rebuilt.
+      - name: Cache toolchains (mingw, gnutls, ffmpeg, freetype)
         uses: actions/cache@v4
         with:
           path: |
             toolchains/llvm-mingw-20260421-ucrt-macos-universal
             toolchains/gnutls-ios
             toolchains/ffmpeg-ios
+            build/gnutls-ios/obj
+            build/ffmpeg/obj
+            build/freetype-ios/build
+          key: madeira-v1-toolchains-${{ runner.os }}
+
+      - name: Cache LLVM (ios + host)
+        uses: actions/cache@v4
+        with:
+          path: |
             toolchains/llvm-project
             toolchains/llvm-ios-build
             toolchains/llvm-host-build
+          key: madeira-v1-llvm-8dfdcc7b7-${{ runner.os }}
+
+      - name: Cache FEX and Wine trees
+        uses: actions/cache@v4
+        with:
+          path: |
             FEX/build-ios
             wine/build-macos
-            build/ffmpeg/obj
-            build/gnutls-ios/obj
-            build/freetype-ios/build
-          key: madeira-ci-${{ runner.os }}-${{ hashFiles('ci/build-ipa.sh', '.gitmodules') }}
+          key: madeira-v1-fex-wine-${{ runner.os }}
 
       - name: Download Metal Toolchain
         # DXMT compiles a Metal library with `xcrun metal`; the component is a
-        # separate download on recent Xcode.
+        # separate download on recent Xcode (the flag is absent on some).
         run: xcodebuild -downloadComponent MetalToolchain || true
 
       - name: Build
-        run: bash ci/build-ipa.sh 2>&1 | tee build/ci-build.log
+        shell: bash
+        # pipefail so a failing ci/build-ipa.sh is not masked by tee.
+        run: |
+          set -o pipefail
+          bash ci/build-ipa.sh 2>&1 | tee build/ci-build.log
 
       - name: Upload build log
         if: always()

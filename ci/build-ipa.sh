@@ -79,11 +79,12 @@ if [ ! -d "$LLVM_SRC/.git" ]; then
 fi
 git -C "$LLVM_SRC" fetch --depth 1 origin "$LLVM_COMMIT" 2>/dev/null || true
 git -C "$LLVM_SRC" checkout "$LLVM_COMMIT"
-# AddLLVM only selects Apple ld's -dead_strip for a Darwin system name.
+# AddLLVM picks Apple ld's -dead_strip only when CMAKE_SYSTEM_NAME matches
+# Darwin; for iOS it falls through to -Wl,--gc-sections, which Apple ld
+# rejects. Several places test this, so replace every occurrence (the
+# substitution is idempotent: the result no longer matches the pattern).
 ADDLLVM="$LLVM_SRC/llvm/cmake/modules/AddLLVM.cmake"
-if ! grep -q 'MATCHES "Darwin|iOS"' "$ADDLLVM"; then
-    perl -0pi -e 's/MATCHES "Darwin"/MATCHES "Darwin|iOS"/' "$ADDLLVM"
-fi
+perl -0pi -e 's/MATCHES "Darwin"/MATCHES "Darwin|iOS"/g' "$ADDLLVM"
 if [ ! -x "$LLVM_HOST/bin/llvm-tblgen" ]; then
     cmake -S "$LLVM_SRC/llvm" -B "$LLVM_HOST" -G Ninja \
         -DCMAKE_BUILD_TYPE=Release -DLLVM_BUILD_TOOLS=OFF -DLLVM_INCLUDE_TESTS=OFF \
@@ -93,18 +94,19 @@ fi
 if [ ! -f "$LLVM_BUILD/lib/libLLVMCore.a" ]; then
     # LLVM_BUILD_UTILS adds an install() rule for llvm-tblgen that is invalid on
     # iOS (no BUNDLE DESTINATION); LLVM_INCLUDE_TOOLS pulls in tools/lto, whose
-    # dylib fails to link for iOS (-Wl,-z,defs is not an Apple ld option). Only
-    # the static libraries are needed.
+    # dylib fails to link for iOS (-Wl,-z,defs is not an Apple ld option);
+    # LLVM_INCLUDE_UTILS would build utils/TableGen, whose tblgen is linked with
+    # -Wl,--gc-sections anyway. Only the static libraries are needed, and the
+    # cross build gets its tablegen from the host binary.
     cmake -S "$LLVM_SRC/llvm" -B "$LLVM_BUILD" -G Ninja \
         -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_SYSROOT=iphoneos \
         -DCMAKE_BUILD_TYPE=Release -DLLVM_HOST_TRIPLE=arm64-apple-ios17.0 \
         -DLLVM_DEFAULT_TARGET_TRIPLE=arm64-apple-ios17.0 -DLLVM_TARGET_ARCH=host \
         -DLLVM_TARGETS_TO_BUILD= -DLLVM_ENABLE_PROJECTS= -DLLVM_BUILD_TOOLS=OFF \
-        -DLLVM_BUILD_UTILS=OFF -DLLVM_INSTALL_TOOLCHAIN_ONLY=ON \
+        -DLLVM_BUILD_UTILS=OFF -DLLVM_INCLUDE_UTILS=OFF -DLLVM_INSTALL_TOOLCHAIN_ONLY=ON \
         -DLLVM_INCLUDE_TOOLS=OFF -DLLVM_INCLUDE_EXAMPLES=OFF -DLLVM_INCLUDE_DOCS=OFF \
         -DLLVM_INCLUDE_TESTS=OFF -DLLVM_INCLUDE_BENCHMARKS=OFF -DLLVM_ENABLE_ZLIB=OFF \
         -DLLVM_ENABLE_TERMINFO=OFF -DLLVM_ENABLE_LIBXML2=OFF -DLLVM_ENABLE_ZSTD=OFF \
-        -DLLVM_NATIVE_TOOL_DIR="$LLVM_HOST/bin" \
         -DLLVM_TABLEGEN="$LLVM_HOST/bin/llvm-tblgen" -DCMAKE_CROSSCOMPILING=ON
     cmake --build "$LLVM_BUILD" -j "$JOBS"
 fi

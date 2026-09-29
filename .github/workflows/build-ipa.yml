@@ -45,37 +45,27 @@ jobs:
       - name: Install build tools
         run: brew install cmake ninja meson bison flex pkgconf autoconf automake libtool ccache
 
-      # Caches use stable keys on purpose: editing ci/build-ipa.sh must not
-      # throw away an already-built toolchain. Bump the version suffix when a
-      # cached component really has to be rebuilt.
-      - name: Cache toolchains (mingw, gnutls, ffmpeg, freetype)
-        uses: actions/cache@v4
+      # Restore/save are split so a *failed* run still saves its partial
+      # progress (the plain cache action skips saving when the job fails).
+      # Each run saves under its own key and restores the most recent one.
+      - name: Restore build cache
+        uses: actions/cache/restore@v4
         with:
           path: |
             toolchains/llvm-mingw-20260421-ucrt-macos-universal
             toolchains/gnutls-ios
             toolchains/ffmpeg-ios
-            build/gnutls-ios/obj
-            build/ffmpeg/obj
-            build/freetype-ios/build
-          key: madeira-v1-toolchains-${{ runner.os }}
-
-      - name: Cache LLVM (ios + host)
-        uses: actions/cache@v4
-        with:
-          path: |
             toolchains/llvm-project
             toolchains/llvm-ios-build
             toolchains/llvm-host-build
-          key: madeira-v1-llvm-8dfdcc7b7-${{ runner.os }}
-
-      - name: Cache FEX and Wine trees
-        uses: actions/cache@v4
-        with:
-          path: |
             FEX/build-ios
             wine/build-macos
-          key: madeira-v1-fex-wine-${{ runner.os }}
+            build/gnutls-ios/obj
+            build/ffmpeg/obj
+            build/freetype-ios/build
+          key: madeira-v1-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: |
+            madeira-v1-${{ runner.os }}-
 
       - name: Download Metal Toolchain
         # DXMT compiles a Metal library with `xcrun metal`; the component is a
@@ -88,6 +78,24 @@ jobs:
         run: |
           set -o pipefail
           bash ci/build-ipa.sh 2>&1 | tee build/ci-build.log
+
+      - name: Save build cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            toolchains/llvm-mingw-20260421-ucrt-macos-universal
+            toolchains/gnutls-ios
+            toolchains/ffmpeg-ios
+            toolchains/llvm-project
+            toolchains/llvm-ios-build
+            toolchains/llvm-host-build
+            FEX/build-ios
+            wine/build-macos
+            build/gnutls-ios/obj
+            build/ffmpeg/obj
+            build/freetype-ios/build
+          key: madeira-v1-${{ runner.os }}-${{ github.run_id }}
 
       - name: Upload build log
         if: always()

@@ -100,7 +100,17 @@ fi
 # ---------------------------------------------------------------- FEX (iOS)
 log "FEX iOS static libraries"
 if [ ! -f FEX/build-ios/FEXCore/Source/libFEXCore.a ]; then
-    bash build/fex-ios/build.sh
+    # Same options as build/fex-ios/build.sh, plus CMAKE_SYSTEM_PROCESSOR:
+    # cross-compiling for iOS leaves it empty, and FEX's top-level CMakeLists
+    # rejects an empty processor ("Unsupported processor type .").
+    cmake -S FEX -B FEX/build-ios -G Ninja \
+        -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_ARCHITECTURES=arm64 \
+        -DCMAKE_OSX_SYSROOT=iphoneos -DCMAKE_OSX_DEPLOYMENT_TARGET=17.0 \
+        -DCMAKE_SYSTEM_PROCESSOR=arm64 -DCMAKE_BUILD_TYPE=Release \
+        -DBUILD_TESTING=OFF -DBUILD_THUNKS=OFF -DBUILD_FEXCONFIG=OFF \
+        -DBUILD_FEX_LINUX_TESTS=OFF -DENABLE_FEX_ALLOCATOR=OFF \
+        -DENABLE_ASSERTIONS=OFF -DENABLE_CLANG_THUNKS=ON -DENABLE_CCACHE=ON
+    cmake --build FEX/build-ios --target FEXCore FEXCore_Base -j "$JOBS"
     # The app target also links libJemallocLibs.a; build it if the default
     # target set did not (the option state is UNVERIFIED from clean).
     cmake --build FEX/build-ios --target JemallocLibs -j "$JOBS" 2>/dev/null || true

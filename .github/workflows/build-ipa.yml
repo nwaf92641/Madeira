@@ -21,6 +21,7 @@ on:
 
 permissions:
   contents: read
+  actions: write   # required to save the build caches
 
 jobs:
   ipa:
@@ -42,7 +43,7 @@ jobs:
           xcrun --sdk iphoneos --show-sdk-path
 
       - name: Install build tools
-        run: brew install cmake ninja meson bison flex pkgconf autoconf automake libtool
+        run: brew install cmake ninja meson bison flex pkgconf autoconf automake libtool ccache
 
       # Caches use stable keys on purpose: editing ci/build-ipa.sh must not
       # throw away an already-built toolchain. Bump the version suffix when a

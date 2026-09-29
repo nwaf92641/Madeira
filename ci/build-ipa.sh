@@ -127,15 +127,18 @@ if sys.argv[1] != "1":
 
 
 def wrap(path, sentinel, start, end, else_body=""):
-    """Enclose [start, end) in #ifdef FEX_IOS_HOST. Idempotent."""
+    """Enclose [start, end) in #ifdef FEX_IOS_HOST, with an optional #else."""
     s = open(path).read()
     if sentinel in s:
         print("%s: already patched" % path)
         return
     assert start in s, "%s: start anchor not found" % path
     assert end in s, "%s: end anchor not found" % path
+    tail = "#endif\n"
+    if else_body:
+        tail = "#else\n" + else_body + tail
     s = s.replace(start, "#ifdef FEX_IOS_HOST\n" + start, 1)
-    s = s.replace(end, else_body + "#endif\n" + end, 1)
+    s = s.replace(end, tail + end, 1)
     open(path, "w").write(s)
     print("%s: patched" % path)
 

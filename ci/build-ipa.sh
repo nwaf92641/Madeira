@@ -79,14 +79,16 @@ if [ ! -x "$LLVM_HOST/bin/llvm-tblgen" ]; then
     cmake --build "$LLVM_HOST" --target llvm-tblgen -j "$JOBS"
 fi
 if [ ! -f "$LLVM_BUILD/lib/libLLVMCore.a" ]; then
-    # LLVM_NATIVE_TOOL_DIR lets the cross build reuse the host tblgen instead
-    # of trying to build/install an iOS-bundled llvm-tblgen (which fails with
-    # "install TARGETS given no BUNDLE DESTINATION for MACOSX_BUNDLE").
+    # LLVM_BUILD_UTILS defaults to ON, which adds an install() rule for
+    # llvm-tblgen that fails on iOS with "install TARGETS given no BUNDLE
+    # DESTINATION for MACOSX_BUNDLE". The iOS stage only needs the libraries,
+    # and the host tblgen is supplied separately.
     cmake -S "$LLVM_SRC/llvm" -B "$LLVM_BUILD" -G Ninja \
         -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_SYSROOT=iphoneos \
         -DCMAKE_BUILD_TYPE=Release -DLLVM_HOST_TRIPLE=arm64-apple-ios17.0 \
         -DLLVM_DEFAULT_TARGET_TRIPLE=arm64-apple-ios17.0 -DLLVM_TARGET_ARCH=host \
         -DLLVM_TARGETS_TO_BUILD= -DLLVM_ENABLE_PROJECTS= -DLLVM_BUILD_TOOLS=OFF \
+        -DLLVM_BUILD_UTILS=OFF -DLLVM_INSTALL_TOOLCHAIN_ONLY=ON \
         -DLLVM_INCLUDE_TESTS=OFF -DLLVM_INCLUDE_BENCHMARKS=OFF -DLLVM_ENABLE_ZLIB=OFF \
         -DLLVM_ENABLE_TERMINFO=OFF -DLLVM_ENABLE_LIBXML2=OFF -DLLVM_ENABLE_ZSTD=OFF \
         -DLLVM_NATIVE_TOOL_DIR="$LLVM_HOST/bin" \

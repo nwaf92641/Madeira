@@ -5,6 +5,8 @@ on:
     branches: [main, 'add-ipa-ci']
     paths:
       - 'ci/**'
+      - 'build/**'
+      - 'app/**'
       - '.github/workflows/build-ipa.yml'
   workflow_dispatch:
 

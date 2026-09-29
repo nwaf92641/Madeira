@@ -202,8 +202,36 @@ fi
 # libFEXCore.a, and skipping the whole block left the app link failing with
 # "ld: library 'JemallocLibs' not found".
 cmake --build FEX/build-ios --target FEXCore FEXCore_Base JemallocLibs -j "$JOBS"
-[ -f FEX/build-ios/FEXCore/Source/libJemallocLibs.a ] || {
+FEX_JEMALLOC=FEX/build-ios/FEXCore/Source/libJemallocLibs.a
+[ -f "$FEX_JEMALLOC" ] || {
     echo "ERROR: libJemallocLibs.a was not produced"; exit 1; }
+
+# FEXCore calls rpm_cas_snapshot_take (Core.cpp's ml622 CAS sampler) with no
+# guard around it, and FEX's CMake cannot supply it here: on APPLE it sets
+# ENABLE_FEX_ALLOCATOR=FALSE, which skips add_subdirectory(External/rpmalloc).
+# The function lives in the fork's rpmalloc.c. Compile that one translation unit
+# and fold it into the archive the Xcode project already links (-lJemallocLibs),
+# so nothing else has to change.
+RPMALLOC="$R/FEX/External/rpmalloc"
+RPMALLOC_OBJ="$R/build/rpmalloc-ios/rpmalloc.o"
+if [ ! -f "$RPMALLOC_OBJ" ]; then
+    mkdir -p "$(dirname "$RPMALLOC_OBJ")"
+    # Flags as the fork's CMakeLists.txt: rpmalloc/rpmalloc.c with the overrides
+    # off (the unix side owns malloc/free on this target).
+    xcrun -sdk iphoneos clang -arch arm64 -isysroot "$(xcrun --sdk iphoneos --show-sdk-path)" \
+        -miphoneos-version-min=17.0 -O2 \
+        -DENABLE_OVERRIDE=0 -DENABLE_DYNAMIC_LINK=0 -DENABLE_STATISTICS=0 \
+        -DENABLE_DECOMMIT=1 -DENABLE_ASSERTS=0 \
+        -I "$RPMALLOC" -I "$RPMALLOC/rpmalloc" \
+        -c "$RPMALLOC/rpmalloc/rpmalloc.c" -o "$RPMALLOC_OBJ"
+fi
+if ! xcrun nm -g "$FEX_JEMALLOC" 2>/dev/null | grep -q _rpm_cas_snapshot_take; then
+    xcrun libtool -static -o "$FEX_JEMALLOC.merged" "$FEX_JEMALLOC" "$RPMALLOC_OBJ"
+    mv "$FEX_JEMALLOC.merged" "$FEX_JEMALLOC"
+    echo "libJemallocLibs.a: rpmalloc object merged in"
+fi
+xcrun nm -g "$FEX_JEMALLOC" | grep -q _rpm_cas_snapshot_take || {
+    echo "ERROR: rpm_cas_snapshot_take is not in $FEX_JEMALLOC"; exit 1; }
 
 # ------------------------------------------------------- Wine (macOS host tree)
 # Every unix-side script (ntdll-unix, win32u-unix, wineserver) includes

@@ -157,7 +157,8 @@ def slot(entry: dict, key: str, value, after: str | None = None) -> None:
 def category_for(name: str, dep: dict) -> str:
     """The failure class a component belongs to (see CompatDiagnosis.swift)."""
     n = name.lower()
-    if re.search(r'denuvo|securom|safedisc|starforce|drm|solidshield|protect', n):
+    # "drm" as a word: "d3drm" is Direct3D Retained Mode, not copy protection.
+    if re.search(r'denuvo|securom|safedisc|starforce|\bdrm\b|solidshield|protect', n):
         return 'drm'
     if dep.get('kind') == 'anticheat':
         return 'anticheat'
@@ -165,7 +166,7 @@ def category_for(name: str, dep: dict) -> str:
         return 'dx12'
     if re.search(r'd3d11|d3dx11|dxgi', n):
         return 'dx11'
-    if re.search(r'd3d9|d3d8|ddraw|d3dx9|directx9|d3dcompiler|d3dxof|cnc|dgvoodoo|directplay|quartz|devenum|media', n):
+    if re.search(r'd3d9|d3d8|d3drm|ddraw|d3dx9|directx9|d3dcompiler|d3dxof|cnc|dgvoodoo|directplay|quartz|devenum|media', n):
         return 'dx9'
     if re.search(r'xinput|dinput|rawinput', n):
         return 'input'
@@ -1022,6 +1023,119 @@ def check_file_actions(actions, owner: str) -> None:
             fail(f'{owner}: bad file location {action.get("in")!r}')
 
 
+RULE_CONDITIONS = {'imports', 'files', 'executable_contains', 'path_contains', 'bits'}
+
+
+def check_registry(values, owner: str) -> None:
+    for value in values or []:
+        if value.get('type') not in {'REG_SZ', 'REG_DWORD', 'REG_MULTI_SZ', 'REG_BINARY'}:
+            fail(f'{owner}: bad registry type {value.get("type")!r}')
+
+
+def check_fix_body(entry: dict, owner: str, dependencies: dict, recipes: dict) -> None:
+    """The fields a recipe, a fallback, a rule, a remedy or the baseline share."""
+    for dep_id in entry.get('dependencies', []):
+        if dep_id not in dependencies:
+            fail(f'{owner}: unknown dependency {dep_id!r}')
+    for recipe in entry.get('recipes', []):
+        if recipe not in recipes:
+            fail(f'{owner}: unknown recipe {recipe!r}')
+    for token in (entry.get('dll_overrides') or {}).values():
+        if token not in VALID_OVERRIDE:
+            fail(f'{owner}: bad override token {token!r}')
+    version = entry.get('windows_version')
+    if version and version not in WINDOWS_VERSIONS:
+        fail(f'{owner}: bad windows_version {version!r}')
+    check_registry(entry.get('registry'), owner)
+    check_file_actions(entry.get('files'), owner)
+    for token in entry.get('remove_arguments') or []:
+        if not isinstance(token, str) or not token:
+            fail(f'{owner}: bad remove_arguments entry {token!r}')
+    for key, value in (entry.get('env') or {}).items():
+        if not key or not isinstance(value, str):
+            fail(f'{owner}: bad env entry {key!r}')
+
+
+def validate_universal(database: dict) -> None:
+    """The baseline, the general rules, the remedies and the module list.
+
+    These are what make an unprofiled program work, so a mistake in them is a
+    mistake in every launch: an unknown dependency id, a rule that would match
+    everything, a remedy for a category nothing produces.
+    """
+    dependencies = database.get('dependencies', {})
+    recipes = database.get('recipes', {})
+
+    baseline = database.get('baseline') or {}
+    if not baseline.get('title'):
+        fail('baseline: no title')
+    check_fix_body(baseline, 'baseline', dependencies, recipes)
+
+    seen_rules: set[str] = set()
+    for rule in database.get('rules', []):
+        rule_id = rule.get('id')
+        if not rule_id:
+            fail('rule without an id'); continue
+        if rule_id in seen_rules:
+            fail(f'duplicate rule id {rule_id!r}')
+        seen_rules.add(rule_id)
+        when = rule.get('when') or {}
+        if not when:
+            fail(f'rule {rule_id}: no conditions, so it would match every program')
+        for key in when:
+            if key not in RULE_CONDITIONS:
+                fail(f'rule {rule_id}: unknown condition {key!r}')
+        if when.get('bits') not in (None, 32, 64):
+            fail(f'rule {rule_id}: bits must be 32 or 64, not {when.get("bits")!r}')
+        for name in (when.get('imports') or []) + (when.get('files') or []):
+            if name != name.lower() or name.endswith('.dll'):
+                fail(f'rule {rule_id}: {name!r} is not a normalised DLL name')
+        for name in (when.get('executable_contains') or []) + (when.get('path_contains') or []):
+            if name != name.lower():
+                fail(f'rule {rule_id}: condition {name!r} must be lowercase')
+        if not any(rule.get(field) for field in
+                   ('dependencies', 'recipes', 'dll_overrides', 'registry', 'env',
+                    'windows_version', 'launch_arguments', 'note')):
+            fail(f'rule {rule_id}: nothing to apply and nothing to say')
+        check_fix_body(rule, f'rule {rule_id}', dependencies, recipes)
+
+    for category, remedy in (database.get('remedies') or {}).items():
+        if category not in VALID_CATEGORY:
+            fail(f'remedy {category!r}: not a diagnosis category')
+        if not remedy.get('name'):
+            fail(f'remedy {category}: no name')
+        if not any(remedy.get(field) for field in
+                   ('dependencies', 'recipes', 'dll_overrides', 'registry', 'env',
+                    'windows_version', 'launch_arguments', 'remove_arguments', 'files')):
+            fail(f'remedy {category}: nothing to try')
+        check_fix_body(remedy, f'remedy {category}', dependencies, recipes)
+
+    modules = database.get('wine_modules') or []
+    if len(modules) < 400:
+        fail(f'wine_modules: {len(modules)} names is not a Wine module list')
+    for name in modules:
+        if not name or name != name.lower():
+            fail(f'wine_modules: {name!r} must be a lowercase module name')
+    not_shipped = database.get('wine_not_shipped') or []
+    for name in not_shipped:
+        if name in modules:
+            fail(f'wine_not_shipped: {name!r} is also listed as provided')
+    api_sets = database.get('api_set_prefixes') or []
+    if not api_sets:
+        fail('api_set_prefixes: a Wine module list without the API set prefixes '
+             'would report every api-ms-win-* import as unaccounted')
+    for prefix in api_sets:
+        if not prefix.endswith('-') or prefix != prefix.lower():
+            fail(f'api_set_prefixes: {prefix!r} must be a lowercase prefix ending in "-"')
+
+    # The engine stops the retry ladder when an anti-cheat or DRM component is
+    # unsatisfied; that only works while those components are marked unsupported.
+    for dep_id, dep in dependencies.items():
+        if dep.get('category') in {'anticheat', 'drm'} and dep.get('support') != 'unsupported':
+            fail(f'dependency {dep_id}: category {dep["category"]} must be unsupported '
+                 '(the ladder stops on it)')
+
+
 def validate(database: dict) -> None:
     dependencies = database.get('dependencies', {})
     recipes = database.get('recipes', {})
@@ -1101,6 +1215,8 @@ def validate(database: dict) -> None:
         if game.get('rating') and game['rating'] not in {'perfect', 'playable', 'runnable', 'broken', 'unknown'}:
             fail(f'game {game.get("title")}: bad rating {game["rating"]!r}')
 
+    validate_universal(database)
+
 
 def build(protonfixes: Path | None, winetricks: Path | None, bottles: Path | None,
           winlator: Path | None = None) -> dict:
@@ -1143,6 +1259,12 @@ def build(protonfixes: Path | None, winetricks: Path | None, bottles: Path | Non
         'dependencies': dependencies,
         'recipes': load(COMPAT / 'recipes.json').get('recipes', {}),
         'games': list(load(COMPAT / 'games.json').get('games', [])),
+        'baseline': load(COMPAT / 'baseline.json').get('baseline', {}),
+        'rules': load(COMPAT / 'rules.json').get('rules', []),
+        'remedies': load(COMPAT / 'rules.json').get('remedies', {}),
+        'wine_modules': load(COMPAT / 'wine-modules.json').get('modules', []),
+        'wine_not_shipped': load(COMPAT / 'wine-modules.json').get('not_shipped', []),
+        'api_set_prefixes': load(COMPAT / 'wine-modules.json').get('api_set_prefixes', []),
     }
     recipes = database['recipes']
     for dep in database['dependencies'].values():

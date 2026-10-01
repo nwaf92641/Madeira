@@ -788,8 +788,13 @@
    "summary": "PhysXLoader.dll / PhysXCore.dll / NxCharacter.dll, the pre-2.8 PhysX runtime many 2005-2010 games link.",
    "imports": [
     "physxloader",
+    "physxloader64",
     "physxcoredll",
-    "nxcharacter"
+    "physxcore",
+    "nxcharacter",
+    "nxcharacter64",
+    "physxdevice",
+    "physxdevice64"
    ],
    "dlls": [
     "PhysXLoader.dll",
@@ -1064,17 +1069,18 @@
    "source": "winetricks:icodecs"
   },
   "l3codecx": {
-   "title": "MPEG Layer-3 codec",
+   "title": "MPEG Layer-3 DirectShow decoder",
    "kind": "media",
    "category": "media",
    "support": "builtin",
-   "summary": "Wine's builtin MP3 codec, used by the winegstreamer decoder.",
+   "summary": "Wine's builtin l3codecx.ax, the DirectShow filter a title asks for by name. It decodes MPEG Layer-3 audio without Microsoft's legacy DirectX redistributable.",
    "imports": [
-    "l3codecx"
+    "l3codecx.ax"
    ],
    "dll_overrides": {
-    "l3codecx": "b"
+    "l3codecx.ax": "b"
    },
+   "notes": "Winetricks installs Microsoft's native l3codecx.ax out of the DirectX redistributable; Wine builds the same filter, so the builtin one is pinned rather than an installer the prefix would have to accept.",
    "source": "winetricks:l3codecx"
   },
   "mediafoundation": {
@@ -1086,9 +1092,10 @@
    "imports": [
     "mfplat",
     "mfreadwrite",
-    "mf"
+    "mf",
+    "mfcore"
    ],
-   "notes": "64-bit processes only get the real Media Foundation unix side with MADEIRA_WG_64BIT=1; 32-bit (WoW64) processes get it by default.",
+   "notes": "64-bit processes only get the real Media Foundation unix side with MADEIRA_WG_64BIT=1; 32-bit (WoW64) processes get it by default (compat/rules.json sets it for 64-bit images that import these). mfcore is the Windows 10 split of the same pipeline; Wine has no separate mfcore module, so a title that imports it by name resolves against Wine's mf.",
    "source": "winetricks:mediafoundation",
    "recipes": [
     "video-media-foundation"
@@ -1443,6 +1450,13 @@
    "category": "anticheat",
    "support": "unsupported",
    "summary": "Easy Anti-Cheat kernel/user-mode service.",
+   "imports": [
+    "easyanticheat",
+    "easyanticheat_x64",
+    "easyanticheat_x86",
+    "easyanticheat_eos",
+    "easyanticheat_eos_x64"
+   ],
    "notes": "Anti-cheat needs a kernel driver and deep process integrity that iOS does not permit. Online anti-cheat titles cannot be supported; single-player games that merely bundle EAC often run without it.",
    "source": "protonfixes:install_eac_runtime"
   },
@@ -1452,8 +1466,36 @@
    "category": "anticheat",
    "support": "unsupported",
    "summary": "BattlEye anti-cheat runtime.",
+   "imports": [
+    "beclient",
+    "beclient_x64",
+    "beclient_x86",
+    "bec",
+    "beservice"
+   ],
    "notes": "Same constraint as Easy Anti-Cheat; single-player/offline content is unaffected.",
    "source": "protonfixes:install_battleye_runtime"
+  },
+  "anticheat-generic": {
+   "title": "Kernel anti-cheat (other)",
+   "kind": "anticheat",
+   "category": "anticheat",
+   "support": "unsupported",
+   "summary": "The other anti-cheat runtimes a Windows build can carry: Riot Vanguard, EQU8, XIGNCODE3, nProtect GameGuard, HackShield, Arxan and similar.",
+   "imports": [
+    "vgk",
+    "vanguard",
+    "vkguard",
+    "equ8",
+    "xigncode",
+    "nprotect",
+    "gameguard",
+    "hackshield",
+    "arxan",
+    "acid"
+   ],
+   "notes": "Every one of these installs a kernel driver or a protected service and checks the process from outside; iOS does not permit that, so an online protected title cannot run. An offline title that merely links the client library often starts anyway, which is why this is reported as a compatibility case rather than refused at launch.",
+   "source": "madeira"
   },
   "denuvo": {
    "title": "Denuvo DRM",
@@ -1461,7 +1503,30 @@
    "category": "drm",
    "support": "unsupported",
    "summary": "Denuvo anti-tamper DRM.",
+   "imports": [
+    "denuvo",
+    "denuvo64",
+    "denuvo_x64",
+    "denuvo32"
+   ],
    "notes": "DRM layers that rely on tight Windows/hypervisor integration cannot be supported. Prefer DRM-free (GOG) builds of the same game.",
+   "source": "madeira"
+  },
+  "drm-generic": {
+   "title": "Copy protection (other)",
+   "kind": "anticheat",
+   "category": "drm",
+   "support": "unsupported",
+   "summary": "The other copy-protection runtimes: VMProtect, Themida, SafeDisc, SecuROM, StarForce and the disc checks they perform.",
+   "imports": [
+    "vmprotect",
+    "themida",
+    "securom",
+    "safedisc",
+    "starforce",
+    "cdialog"
+   ],
+   "notes": "These read the original disc, virtualise the code or check the kernel; none of that is possible on iOS. A DRM-free build of the same title is the way to play it.",
    "source": "madeira"
   },
   "winhttp": {
@@ -2181,6 +2246,7 @@
     "dxgi1_3",
     "dxgi1_4"
    ],
+   "notes": "There is one file per family here, as in Wine: dxgi.dll, d3d11.dll and d3d10*.dll. A title that links one of the versioned names (d3d11_1.dll, dxgi1_2.dll and up) is asking for a file no Wine build ships, and the interfaces it wants are in dxgi.dll and d3d11.dll already.",
    "source": "madeira:dxmt"
   },
   "d3d12-madeira": {
@@ -2188,13 +2254,14 @@
    "kind": "directx",
    "category": "dx12",
    "support": "builtin",
-   "summary": "Madeira's own D3D12 path (madeira-d3d12) provides d3d12 and its shader compiler (dxil, dxcompiler). It is a newer path than D3D11, so a title that offers both may be steadier on D3D11.",
+   "summary": "Direct3D 12 (d3d12.dll / d3d12core.dll), which Wine builds and Madeira's own D3D12 path implements on top of. It is a newer path than D3D11, so a title that offers both may be steadier on D3D11.",
    "imports": [
     "d3d12",
     "d3d12core",
     "dxil",
     "dxcompiler"
    ],
+   "notes": "dxil.dll and dxcompiler.dll are the DirectX Shader Compiler redistributables rather than system files: a title that links them ships them beside itself. Neither Wine nor DXMT builds them and there is nothing to install, so one that is genuinely missing from a game folder is a fact about that install.",
    "source": "madeira:madeira-d3d12"
   },
   "vulkan": {
@@ -2256,11 +2323,14 @@
    "summary": "The 2.8-era and 3.x PhysX runtimes (PhysXCooking, PhysX3Common, APEX) that ship inside the game folder. They are Windows DLLs and run through FEX, which is also why they are slow; the game's own physics setting is the lever.",
    "imports": [
     "physxcooking",
+    "nxcooking",
+    "nxcooking64",
     "physx3common",
     "physx3common_x64",
     "physx3",
     "physx3_x64",
     "apexframework",
+    "apexframework64",
     "apex_clothing_x64",
     "apex_destructible_x64"
    ],
@@ -2360,6 +2430,109 @@
     "d3dcsx_43.dll"
    ],
    "source": "winlator:direct3d"
+  },
+  "opengl": {
+   "title": "OpenGL",
+   "kind": "directx",
+   "category": "dx9",
+   "support": "partial",
+   "summary": "Wine's opengl32.dll drives a host OpenGL context. Madeira presents through DXMT and Metal and has no GL driver, so a title whose only renderer is OpenGL cannot start; most titles that import opengl32.dll also offer Direct3D, and choosing it in the game's own settings or launch arguments is the fix.",
+   "imports": [
+    "opengl32",
+    "glu32",
+    "opengl"
+   ],
+   "notes": "The module is in the Wine tree, so it is not a missing file; it is a path with no backend here. Engines that probe GL first (id Tech 3/4, older SDL builds, some launchers) can be pointed at Direct3D without a Wine change.",
+   "source": "madeira:metal-only"
+  },
+  "epic-online-services": {
+   "title": "Epic Online Services",
+   "kind": "utility",
+   "category": "dependency",
+   "support": "partial",
+   "summary": "EOSSDK-Win64-Shipping.dll, the Epic Online Services SDK a game ships beside its own executable for sign-in, achievements, friends and matchmaking.",
+   "imports": [
+    "eossdk",
+    "eossdk-win64-shipping",
+    "eossdk-win32-shipping",
+    "eossdk_wi",
+    "eossdk-woas",
+    "eosoverlayrenderer64"
+   ],
+   "notes": "The SDK is inside the game folder and runs through FEX. A single-player title starts without the Epic client; sign-in, achievements and multiplayer need it, which Madeira does not run.",
+   "source": "madeira:import-coverage"
+  },
+  "ubisoft-connect": {
+   "title": "Ubisoft Connect",
+   "kind": "utility",
+   "category": "dependency",
+   "support": "partial",
+   "summary": "uplay_r1_loader / uplay_r2_loader / upc_r2_loader, the Ubisoft client integration layer a Ubisoft title loads at startup.",
+   "imports": [
+    "upc_r2_loader64",
+    "upc_r2_loader",
+    "uplay_r1_loader64",
+    "uplay_r1_loader",
+    "uplay_r2_loader64",
+    "uplay_r2_loader",
+    "ubisoftconnect"
+   ],
+   "notes": "The loader is game-side and runs under Wine. Titles where it only carries achievements start without the client; titles that use it as their DRM need Ubisoft Connect running, which Madeira does not install.",
+   "source": "madeira:import-coverage"
+  },
+  "ea-app": {
+   "title": "EA app / Origin",
+   "kind": "utility",
+   "category": "dependency",
+   "support": "partial",
+   "summary": "The Origin/EA app integration a modern EA title loads at startup (origin, eaapp, igoproxy64).",
+   "imports": [
+    "origin",
+    "eaapp",
+    "eadesktop",
+    "igoproxy64",
+    "origin_loader"
+   ],
+   "notes": "Same split as the other store clients: the integration library runs, the client it talks to is not installed, so a title that needs a signed-in client does not start.",
+   "source": "madeira:import-coverage"
+  },
+  "discord-sdk": {
+   "title": "Discord Game SDK",
+   "kind": "utility",
+   "category": "dependency",
+   "support": "override",
+   "summary": "discord_game_sdk.dll, shipped by many titles for Discord Rich Presence and voice.",
+   "imports": [
+    "discord_game_sdk"
+   ],
+   "notes": "Nothing to configure: the shipped DLL initialises without the Discord client and the game runs. Presence and voice simply do not appear.",
+   "source": "madeira:import-coverage"
+  },
+  "gfwl": {
+   "title": "Games for Windows LIVE",
+   "kind": "utility",
+   "category": "dependency",
+   "support": "unsupported",
+   "summary": "xlive.dll, the Games for Windows LIVE client and sign-in layer a 2007-2013 era title loads at startup.",
+   "imports": [
+    "xlive",
+    "xliveless"
+   ],
+   "notes": "Neither Wine nor Madeira ships xlive.dll, the client is not installable here, and the LIVE service was shut down in 2014, so a title that needs sign-in, achievements or multiplayer stops at its login dialog. Titles that only link xlive.dll and run offline are marked runnable in the library; nothing installable changes that.",
+   "source": "madeira:import-coverage"
+  },
+  "dstorage": {
+   "title": "DirectStorage",
+   "kind": "directx",
+   "category": "dx12",
+   "support": "partial",
+   "summary": "DirectStorage (dstorage.dll / dstoragecore.dll) streams game assets through the GPU and an NVMe queue instead of through file reads.",
+   "imports": [
+    "dstorage",
+    "dstoragecore"
+   ],
+   "notes": "Wine has no DirectStorage implementation (it is not one of its modules) and there is no NVMe queue to hand it, so a title that requires it for asset streaming cannot load its data. Most titles that import it keep a plain file path behind a launch option or a configuration setting.",
+   "source": "madeira"
   }
  }
 }

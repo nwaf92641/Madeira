@@ -1,0 +1,9 @@
+{
+ "schema": 1,
+ "updated": "2026-10-01",
+ "_comment": "The universal configuration, applied to every launch before any profile. It exists so a program nobody has written a profile for still starts from a known state: Windows 10, which is the version Wine's own wine.inf reports (10.0.19045), written as the per-application AppDefaults value so a profile, a rule or a retry can report a different version for one program without changing the prefix. Nothing here is a workaround for a title; a workaround belongs in compat/rules.json, compat/recipes.json or a game profile.",
+ "baseline": {
+  "title": "Any Windows program",
+  "windows_version": "win10"
+ }
+}

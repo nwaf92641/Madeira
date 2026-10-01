@@ -757,10 +757,14 @@ def check_database() -> None:
     require(len(modules) >= 400, f'the runtime module list is present ({len(modules)})')
     require('ir50_32' in not_shipped and 'ir50_32' not in modules,
             'the modules the iOS build leaves out are listed apart from the ones it provides')
-    require(len(modules_64) >= 80 and len(set(modules) - set(modules_64)) >= 300,
-            f'the 64-bit farm is its own, smaller set ({len(modules_64)} names to the 32-bit build\'s {len(modules)})')
-    require({'quartz', 'winegstreamer', 'wmvcore', 'dinput8'} & set(modules_64) == {'dinput8'},
-            'the media and DirectShow modules are 32-bit only in this build, and the report says so per launch')
+    # The 64-bit list is not a hand-written table: it is the farm directories
+    # (gen-game-compat.py's farm_modules()), so a DLL copied into a farm reaches
+    # the engine without a Wine checkout. check-pe-imports.py checks the same
+    # list against the shipped files and their imports.
+    require(sorted(generator.farm_modules()) == sorted(modules_64),
+            f'the 64-bit module list is the farms the app ships ({len(modules_64)} names)')
+    require({'winemetal', 'wineios.drv', 'xtajit64'} <= set(modules_64),
+            "the farms' own modules are in it (DXMT winemetal, Madeira wineios.drv, FEX xtajit64)")
     built_never = {(entry or {}).get('name', '').lower() for entry in not_built}
     require({'mfcore', 'd3dcompiler_44', 'd3dcompiler_45'} <= built_never,
             'the names Wine has never built in any architecture are listed, with their reasons')

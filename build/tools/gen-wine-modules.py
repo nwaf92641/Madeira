@@ -30,6 +30,12 @@ API set names are the third case. A modern Windows program imports a dozen
 to the module that implements the contract (ucrtbase for the C runtime sets,
 kernelbase for the core ones). They are recorded as prefixes, because there are
 hundreds of them and a program may invent its own from the same schema.
+
+What this tool does not write is the 64-bit module set: that is whatever the
+app's farm directories hold, and `build/tools/gen-game-compat.py` reads them
+directly (`farm_modules()`), so a DLL added to a farm reaches the engine
+without a Wine checkout. `build/host-tests/check-pe-imports.py` checks the two
+against each other.
 """
 from __future__ import annotations
 
@@ -55,17 +61,6 @@ DXMT_OWNED = {'d3d9', 'd3d10core', 'd3d11', 'dxgi', 'winemetal'}
 # hundreds of them.
 API_SET_PREFIXES = ['api-ms-win-', 'ext-ms-win-']
 MODULE_DIR = re.compile(r'dlls/([A-Za-z0-9_.+-]+)(?:/[A-Za-z0-9_.+-]+)*')
-
-# The 64-bit half of the runtime, as the app ships it: one directory per guest
-# architecture (ARM64EC for the x86-64 emulation path, aarch64 for a native
-# ARM64 guest). It is not the same set as the 32-bit one — the 64-bit farms
-# carry no quartz, wmvcore or winegstreamer — and a name the 32-bit list has is
-# not a name the 64-bit runtime can load. Reading the directories keeps this
-# document from agreeing with a build that no longer exists.
-FARM_64 = ('arm64ec-windows', 'aarch64-windows')
-# Module file extensions the farms hold. A DLL loses the extension (the list's
-# spelling); anything else keeps it, as the Wine module list does.
-MODULE_SUFFIXES = ('.dll', '.drv', '.cpl', '.ax', '.acm', '.ocx')
 
 # Windows components this runtime does not build at all, with the reason. They
 # differ from `not_shipped` above: those are Wine modules the iOS build drops,
@@ -150,26 +145,6 @@ def not_shipped_from_build(path: Path) -> list[str]:
     return sorted(set(names))
 
 
-def modules_from_farm(root: Path) -> list[str]:
-    """The modules the app ships for a 64-bit guest, from the farm directories.
-
-    A file in the farm is a module the 64-bit side can load, whatever its
-    provenance (Wine, DXMT, Madeira's own D3D12); one that is not there is not
-    available to a 64-bit process even when the 32-bit list has the name.
-    """
-    names: set[str] = set()
-    for directory in FARM_64:
-        path = root / 'app' / 'Madeira' / directory
-        if not path.is_dir():
-            continue
-        for entry in path.iterdir():
-            name = entry.name.lower()
-            if not name.endswith(MODULE_SUFFIXES):
-                continue
-            names.add(name[:-4] if name.endswith('.dll') else name)
-    return sorted(names)
-
-
 def modules_from_configure(path: Path) -> tuple[list[str], str]:
     text = path.read_text(encoding='utf-8', errors='replace')
     version = ''
@@ -209,7 +184,6 @@ def main() -> int:
     for name in NOT_BUILT:
         if name in modules:
             raise SystemExit(f'not_built lists {name!r}, which this Wine build provides')
-    modules_64 = modules_from_farm(ROOT)
     if len(modules) < 400:
         raise SystemExit(f'{configure} lists only {len(modules)} modules; is it a Wine configure?')
     document = {
@@ -220,12 +194,6 @@ def main() -> int:
                 'here and is reported.',
         'modules': modules,
         'not_shipped': not_shipped,
-        'modules_64_note':
-            'The modules the app ships for a 64-bit guest (the ARM64EC and native '
-            'ARM64 farms, app/Madeira/*-windows). The 64-bit set is smaller than '
-            'the 32-bit one: it has no quartz, wmvcore or winegstreamer, so a name '
-            'the Wine list carries can still be unavailable to a 64-bit program.',
-        'modules_64': modules_64,
         'not_built_note':
             'Windows components this runtime does not build at all, with the '
             'reason. Unlike not_shipped, which is the iOS build dropping a module '

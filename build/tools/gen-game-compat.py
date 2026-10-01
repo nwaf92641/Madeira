@@ -36,6 +36,35 @@ ROOT = Path(__file__).resolve().parents[2]
 COMPAT = ROOT / 'compat'
 OUT = ROOT / 'app/Madeira/compat.json'
 
+# The 64-bit half of the runtime, as the app ships it: one directory per guest
+# architecture (ARM64EC for the x86-64 emulation path, aarch64 for a native
+# ARM64 guest), each holding the PE modules the loader searches first
+# (WineProcessBridge.m sets WINEDLLPATH to the bundle root).
+#
+# Read from the directories, not from compat/wine-modules.json: that file needs
+# a Wine checkout to regenerate, and a DLL added to a farm has to reach the
+# engine without one. build/host-tests/check-pe-imports.py requires the two to
+# agree, so this cannot drift from what is shipped.
+FARMS_64 = ('arm64ec-windows', 'aarch64-windows')
+# Module file extensions the farms hold. A DLL loses the extension (the Wine
+# module list's spelling); anything else keeps it. Programs (.exe) are not
+# import targets -- the launch path probes those -- so they are not modules.
+MODULE_SUFFIXES = ('.dll', '.drv', '.cpl', '.ax', '.acm', '.ocx')
+
+
+def farm_modules() -> list[str]:
+    """The modules the app ships for a 64-bit guest, from the farm directories."""
+    names: set[str] = set()
+    for directory in FARMS_64:
+        path = ROOT / 'app' / 'Madeira' / directory
+        if not path.is_dir():
+            continue
+        for entry in path.iterdir():
+            name = entry.name.lower()
+            if name.endswith(MODULE_SUFFIXES):
+                names.add(name[:-4] if name.endswith('.dll') else name)
+    return sorted(names)
+
 # Wine DLL override orders (Protonfixes OverrideOrder -> Wine's one-letter form).
 OVERRIDE_ORDERS = {
     'DISABLED': '',
@@ -1120,6 +1149,13 @@ def validate_universal(database: dict) -> None:
     for name in not_shipped:
         if name in modules:
             fail(f'wine_not_shipped: {name!r} is also listed as provided')
+    modules_64 = database.get('wine_modules_64') or []
+    if len(modules_64) < 80:
+        fail(f'wine_modules_64: {len(modules_64)} names; the 64-bit farms are '
+             'missing or empty (app/Madeira/*-windows)')
+    for name in modules_64:
+        if not name or name != name.lower():
+            fail(f'wine_modules_64: {name!r} must be a lowercase module name')
     api_sets = database.get('api_set_prefixes') or []
     if not api_sets:
         fail('api_set_prefixes: a Wine module list without the API set prefixes '
@@ -1410,7 +1446,7 @@ def build(protonfixes: Path | None, winetricks: Path | None, bottles: Path | Non
         'rules': load(COMPAT / 'rules.json').get('rules', []),
         'remedies': load(COMPAT / 'rules.json').get('remedies', {}),
         'wine_modules': load(COMPAT / 'wine-modules.json').get('modules', []),
-        'wine_modules_64': load(COMPAT / 'wine-modules.json').get('modules_64', []),
+        'wine_modules_64': farm_modules(),
         'wine_not_shipped': load(COMPAT / 'wine-modules.json').get('not_shipped', []),
         'not_built': load(COMPAT / 'wine-modules.json').get('not_built', []),
         'api_set_prefixes': load(COMPAT / 'wine-modules.json').get('api_set_prefixes', []),

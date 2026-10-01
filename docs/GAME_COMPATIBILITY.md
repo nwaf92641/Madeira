@@ -257,20 +257,28 @@ reason).
 The two farms are not the same set, so "does not ship it" is answered per
 launch rather than once: `quartz`, `winegstreamer`, `wmvcore`, `devenum`,
 `xaudio2_7`, `xactengine3_7` and the rest of the media and DirectShow family
-are 32-bit only in this build, and a 64-bit title that imports one is told that
-— the 64-bit runtime is short, not the runtime. The same is true of the whole
-`d3dx9_24`–`d3dx9_42` and `d3dx10_*` range, `d2d1`, `msi`, `msxml3/4/6`,
-`gdiplus`, `riched20`, `glu32`, `d3d8` and `ddraw`: a 64-bit title that links
-one is reported with the name and told to bring its own copy, which is a real
-answer for the native payloads among them and the honest one for the rest. What
-the 64-bit farm does carry is the core a game needs first — the Direct3D 9/10/
-11/12 path (DXMT's `d3d9`, `d3d10core`, `d3d11`, `dxgi`, `d3dx9_43`,
+are 32-bit only in the farm the app ships today, and a 64-bit title that
+imports one is told that — the 64-bit farm is short, not the runtime. The same
+is true of the whole `d3dx9_24`–`d3dx9_42` and `d3dx10_*` range, `d2d1`, `msi`,
+`msxml3/4/6`, `gdiplus`, `riched20`, `glu32`, `d3d8` and `ddraw`. What the
+64-bit farm does carry is the core a game needs first — the Direct3D 9/10/11/12
+path (DXMT's `d3d9`, `d3d10core`, `d3d11`, `dxgi`, `d3dx9_43`,
 `d3dcompiler_43`/`_47`), `opengl32`, `winmm`, `dsound`,
-`dinput8`, the `xinput` family and the Media Foundation PE side. An import
-that nothing in the catalogue, no rule and no module accounts for, and that the
-runtime does not ship either, is listed on the game details screen with that
-answer; a name Wine never built is listed with the reason, so "bring your own
-copy" is the advice instead of silence. That is the honest answer for a
+`dinput8`, the `xinput` family and the Media Foundation PE side.
+
+That shortfall is a build step, not a property of the port, and it has been
+measured: `build/wine-arm64ec/build.sh` is the 64-bit counterpart of
+`build/wine-i386/build.sh`, installing every module the configured tree has a
+rule for minus a policy list, each entry with its reason. The audit behind that
+list — which module can be installed as it is, which loads with one failing
+feature, and which cannot load at all — is in "The 64-bit farm's missing
+modules" below, with the evidence for each decision; the farm itself is
+installed by running the script on the build machine (docs/BUILDING.md).
+
+An import that nothing in the catalogue, no rule and no module accounts for,
+and that the runtime does not ship either, is listed on the game details screen
+with that answer; a name Wine never built is listed with the reason, so "bring
+your own copy" is the advice instead of silence. That is the honest answer for a
 component nobody has described yet, and it is how the gaps get found.
 
 What a component may claim follows from the same list, and the generator
@@ -311,7 +319,89 @@ Two families are deliberately not reported:
 
 `build/tools/gen-wine-modules.py --configure <wine>/configure` rewrites
 `compat/wine-modules.json` (and `--check` fails when it is out of date), which is
-what keeps the list honest when the runtime's Wine moves.
+what keeps the 32-bit list honest when the runtime's Wine moves;
+`build/tools/gen-game-compat.py` reads the 64-bit half from the farm
+directories themselves, so the database describes what is shipped rather than
+what a previous build script intended to ship.
+
+## The 64-bit farm's missing modules, and how each class is closed
+
+A 64-bit program imports its DLLs from `app/Madeira/arm64ec-windows` (or, for a
+native ARM64 guest, `app/Madeira/aarch64-windows`); a name that is not in that
+directory cannot be loaded, whatever the 32-bit farm carries. The farm had been
+assembled by hand, module by module, so the first question of the universal
+stage was what it is missing and what closing each gap takes.
+
+The audit read every module Wine 11.4 builds — `dlls/*/Makefile.in`'s `MODULE`,
+`IMPORTLIB`, `IMPORTS`, `DELAYIMPORTS` and `UNIXLIB` — resolved each import the
+way Wine's build does (`d3dcompiler` is an `IMPORTLIB` alias for
+`d3dcompiler_47.dll`, `$(X_LIBS)` comes from `configure.ac`'s
+`WINE_EXTLIB_FLAGS`), and compared the result against the farms' real PE import
+tables (`build/tools/pe-imports.py`, which is also what the host test and the
+build's own gate use). The loader's behaviour came from this port, not from a
+guess: `build/ntdll-unix/virtual_ios.c` replaces a unix lib it does not have
+with a stub table whose every entry returns `STATUS_NOT_SUPPORTED`, so a module
+loads exactly when its `DllMain` does not fail on that status.
+
+725 modules in the tree, 648 in the 32-bit list, 278 files in the two 64-bit
+farms (137 module names plus 37 programs): **513 tree modules the 64-bit farm
+does not carry**, and they fall into three classes.
+
+| Class | Count | What it takes |
+| --- | --- | --- |
+| Installable as they are: `quartz`, `devenum`, `d3dx9_24`–`d3dx9_42`, `d3dx10_*`, `d3dx11_*`, `d2d1`, `dwrite`, the `xaudio2_*`/`xapofx`/`x3daudio`/`xactengine*` series, `msi`/`msiexec`/`mspatcha`/`sxs`, `msxml3/4/6`, `gdiplus`, `riched20`, `glu32`, `ddraw`, `d3d8`, `dinput`, `hid`, `wintrust`, the `mf*` Media Foundation set, `evr`, `windowscodecs`, `wm*`, `ir50_32` | 494 | build the PE and install it: every load-time import is satisfied by the farm plus what the same build installs |
+| Load, with one failing feature: `qcap`, `avicap32`, `winedmo`, `odbc32`, `winscard`, `kerberos`, `wpcap` | 7 | install the PE: the capture device, DMO decoder, database client, pcsc, gssapi or libpcap behind its unix side does not exist here, the call fails, and the loader says so in one line |
+| Cannot load at all: `localspl`, `wineps.drv`, `msv1_0`, `capi2032`, `ctapi32`, `sane.ds`, `opencl`, `winevulkan` | 8 | a unix side, ported the way `winegstreamer`'s was; until then they are named skips in the build policy, with the reason. The host display and audio drivers (`winemac`, `winex11`, `winewayland`, `wineandroid`, `winealsa`, `winepulse`, `wineoss`, `winecoreaudio`) are the same class by construction |
+
+(`winegstreamer` itself belongs to the second class with its unix side already
+ported — the FFmpeg-backed subset `build/ntdll-unix/winegstreamer_unixlib_ios.c`
+— so its PE is installable and fully served; it is the one module there whose
+feature does not fail.)
+
+Two rules produce the classification, and both are properties of the tree:
+
+- **The import closure.** A module can only be installed if every one of its
+  load-time imports is installed too, and `IMPORTS` is load-time while
+  `DELAYIMPORTS` is not. That is what makes `devenum` (imports `avicap32`),
+  `mfsrcsnk`/`mfmp4srcsnk`/`mfasfsrcsnk` (import `winedmo`) and `msi` (imports
+  `odbccp32`) installable once those three are, and it is why a policy that
+  skips one of them has to skip whatever imports it.
+- **Whether `DllMain` survives without its unix side.** `localspl`
+  (`dlls/localspl/localmon.c:100`), `wineps.drv` (`dlls/wineps.drv/init.c:301`),
+  `msv1_0` (`dlls/msv1_0/main.c:1623`), `capi2032`
+  (`dlls/capi2032/cap20wxx.c:41`), `ctapi32` (`dlls/ctapi32/ctapi32.c:105`),
+  `sane.ds` (`dlls/sane.ds/sane_main.c:43`) and `opencl`
+  (`dlls/opencl/pe_wrappers.c:285`) return FALSE and become modules that will
+  not load; `qcap` (lazy: `dlls/qcap/vfwcapture.c:904`), `winedmo`
+  (`dlls/winedmo/main.c:112`), `winscard` (`dlls/winscard/winscard.c:975`),
+  `odbc32` (`dlls/odbc32/proxyodbc.c:8231`) and `wpcap`
+  (`dlls/wpcap/wpcap.c:1478`) ignore or defer it, so they load and only the
+  feature that needs the host fails.
+
+Nothing here is a per-game fix. The modules are the ones Wine's source says a
+program may import, so installing them is what lets an unprofiled title run,
+and the same classification is what tells a title honestly when a name exists
+but its feature does not.
+
+Three things keep it true rather than remembered:
+
+- `build/wine-arm64ec/build.sh` installs the farm and then runs the closure
+  check over what it installed, with the tool above: a module whose load-time
+  imports are not all present fails the build instead of shipping. That gap is
+  real — `app/Madeira/arm64ec-windows/bthprops.cpl` has been in the farm
+  importing `bluetoothapis.dll`, which no farm carried, while the database
+  listed the module as provided: a guest opening the Bluetooth applet got a
+  load failure and the app had no name for it.
+- `build/host-tests/check-pe-imports.py` checks the committed farms the same
+  way: each module's PE machine is checked against the directory it sits in
+  (ARM64EC images report `x86-64`), no load-time import may be unresolved (the
+  one known gap is named in the test with the rebuild that closes it), the
+  delay-load gaps must stay within the recorded set, and `compat.json`'s
+  `wine_modules_64` must be exactly what the farm directories hold — so the
+  database cannot drift from the bundle.
+- The build script's policy is the classification's third column: every entry
+  carries its reason, and the test fails if a module classed as installable is
+  silently skipped instead.
 
 ## Isolation between games
 

@@ -1454,6 +1454,20 @@ def build(protonfixes: Path | None, winetricks: Path | None, bottles: Path | Non
     return database
 
 
+def winlator_assets(path: Path) -> Path | None:
+    """The Winlator assets directory in a path that may be either repository.
+
+    The two repositories do not carry the same assets: the box64 per-executable
+    profiles and the Windows component definitions live in the app repository.
+    A path with neither file is not a source, and saying so beats importing the
+    smaller set without saying anything.
+    """
+    for candidate in (path / 'app/src/main/assets', path / 'assets', path):
+        if (candidate / 'box64/default.box64rc').exists() or (candidate / 'wincomponents/wincomponents.json').exists():
+            return candidate
+    return None
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--protonfixes', type=Path, help='Protonfixes checkout to import game fixes from')
@@ -1469,12 +1483,11 @@ def main() -> int:
         winetricks = winetricks / 'src/winetricks'
     winlator = args.winlator
     if winlator:
-        # Accept the repository root, the app repository root, or the assets
-        # directory itself.
-        for candidate in (winlator / 'app/src/main/assets', winlator / 'assets', winlator):
-            if (candidate / 'box64/default.box64rc').exists() or (candidate / 'wincomponents/wincomponents.json').exists():
-                winlator = candidate
-                break
+        winlator = winlator_assets(args.winlator)
+        if winlator is None:
+            raise SystemExit(f'{args.winlator} does not look like the Winlator assets directory '
+                             '(no box64/default.box64rc and no wincomponents/wincomponents.json)')
+        print(f'winlator: reading {winlator}')
     database = build(args.protonfixes, winetricks, args.bottles, winlator)
     text = json.dumps(database, indent=1, sort_keys=False, ensure_ascii=False) + '\n'
     if args.check:

@@ -704,6 +704,20 @@ def check_database() -> None:
     guarded = sum(1 for game in games if game.get('conditional'))
     require(guarded >= 20, f'game fixes that depend on a runtime condition are flagged ({guarded})')
 
+    # The two Winlator repositories do not carry the same assets, and passing
+    # the one without them used to import a smaller database in silence.
+    winlator_root = ROOT / 'compat'
+    require(generator.winlator_assets(winlator_root) is None,
+            'a path that is not a Winlator assets directory is refused, not imported as an empty set')
+    with tempfile.TemporaryDirectory() as tmp:
+        assets = Path(tmp) / 'assets' / 'wincomponents'
+        assets.mkdir(parents=True)
+        (assets / 'wincomponents.json').write_text('{}', encoding='utf-8')
+        require(generator.winlator_assets(Path(tmp)) == Path(tmp) / 'assets',
+                'the app repository root is found')
+        require(generator.winlator_assets(Path(tmp) / 'assets') == Path(tmp) / 'assets',
+                'and so is the assets directory itself')
+
     # Editing compat/games.json without regenerating compat.json is the easy
     # mistake, so the committed database must carry every curated profile.
     stale: list[str] = []

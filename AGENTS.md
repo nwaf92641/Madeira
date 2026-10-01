@@ -46,7 +46,10 @@ replace it when adding a feature.
   builds `app/Madeira/compat.json` (run it with `--protonfixes DIR
   --winetricks DIR --bottles DIR --winlator DIR` to import upstream fixes,
   `--check` to compare without writing). Never hand-edit
-  `app/Madeira/compat.json`.
+  `app/Madeira/compat.json`. `--winlator` wants the app repository's assets
+  (`winlator-app/app/src/main/assets`): the box64 per-executable profiles and
+  the component definitions are only there, and a path carrying neither is
+  refused rather than imported as an empty set.
 - `compat/wine-modules.json` is generated too, by
   `build/tools/gen-wine-modules.py --configure <wine>/configure` (or `--wine
   <checkout>`): the modules the runtime provides in each architecture, the

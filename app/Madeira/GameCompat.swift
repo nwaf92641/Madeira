@@ -45,12 +45,68 @@ struct CompatRegistryValue: Codable, Equatable {
     var valueText: String { value ?? "" }
 }
 
+/// A reusable fix: a named bundle of environment, overrides, registry,
+/// arguments and dependencies that many games or components share. A recipe is
+/// applied wherever it is referenced, so the same fix is written once; the
+/// fixes in the catalogue come from Protonfixes, Winetricks and Bottles, where
+/// the same handful of remedies recur across hundreds of titles.
+struct CompatRecipe: Codable, Equatable {
+    var title: String?
+    /// dependency | dll | registry | dx11 | dx12 | dx9 | media | audio |
+    /// wine_fex | drm | anticheat | save_path | input | launch | other.
+    var category: String?
+    var summary: String?
+    var dependencies: [String]?
+    /// Other recipes this one needs first.
+    var requires: [String]?
+    var dllOverrides: [String: String]?
+    var registry: [CompatRegistryValue]?
+    var env: [String: String]?
+    var launchArguments: String?
+    var windowsVersion: String?
+    var notes: String?
+    var source: String?
+    var id: String = ""
+
+    enum CodingKeys: String, CodingKey {
+        case title, category, summary, dependencies, requires, registry, env, notes, source
+        case dllOverrides = "dll_overrides"
+        case launchArguments = "launch_arguments"
+        case windowsVersion = "windows_version"
+    }
+}
+
+/// One fallback: a delta applied on top of a profile when an earlier attempt
+/// failed. Madeira tries alternatives in order across launches, so a game with
+/// more than one workable configuration is retried automatically.
+struct CompatFallback: Codable, Equatable {
+    var name: String?
+    var note: String?
+    var dependencies: [String]?
+    var recipes: [String]?
+    var dllOverrides: [String: String]?
+    var env: [String: String]?
+    var launchArguments: String?
+    var windowsVersion: String?
+    /// Recipes or dependency ids this attempt must not apply.
+    var disable: [String]?
+
+    enum CodingKeys: String, CodingKey {
+        case name, note, dependencies, recipes, env, disable
+        case dllOverrides = "dll_overrides"
+        case launchArguments = "launch_arguments"
+        case windowsVersion = "windows_version"
+    }
+}
+
 /// A Windows component and how Madeira satisfies it.
 struct CompatDependency: Codable, Equatable {
     var title: String?
     var kind: String?
     /// builtin | override | payload | manual | unsupported | partial.
     var support: String?
+    /// Failure class this component belongs to (see CompatDiagnosis).
+    var category: String?
     var summary: String?
     /// Imported DLL names (without ".dll", lowercased) that select this
     /// dependency from a game executable's import table.
@@ -62,13 +118,15 @@ struct CompatDependency: Codable, Equatable {
     var env: [String: String]?
     var windowsVersion: String?
     var requires: [String]?
+    /// Reusable fixes applied with this component.
+    var recipes: [String]?
     var notes: String?
     var source: String?
     /// Filled from the catalogue key, not from JSON.
     var id: String = ""
 
     enum CodingKeys: String, CodingKey {
-        case title, kind, support, summary, imports, dlls, registry, env, requires, notes, source
+        case title, kind, support, category, summary, imports, dlls, registry, env, requires, recipes, notes, source
         case dllOverrides = "dll_overrides"
         case windowsVersion = "windows_version"
     }
@@ -95,14 +153,23 @@ struct CompatGame: Codable, Equatable {
     var launchArguments: String?
     var windowsVersion: String?
     var fixes: [String]?
+    /// Fixes a Protonfixes script applies that have no equivalent on Madeira's
+    /// stack (Vulkan, esync/fsync, NVIDIA, Linux paths), kept so the report is
+    /// honest about them rather than silently dropping them.
+    var unavailableFixes: [String]?
     var issues: [String]?
     var notes: String?
     var conditional: Bool?
+    /// Reusable fixes this title needs.
+    var recipes: [String]?
+    /// Ordered alternatives tried when an earlier attempt fails.
+    var fallbacks: [CompatFallback]?
     var source: String?
 
     enum CodingKeys: String, CodingKey {
         case title, appid, executables, engine, rating, dependencies, registry, env
-        case fixes, issues, notes, conditional, source
+        case fixes, issues, notes, conditional, recipes, fallbacks, source
+        case unavailableFixes = "unavailable_fixes"
         case gogSlug = "gog_slug"
         case pathContains = "path_contains"
         case dllOverrides = "dll_overrides"
@@ -140,6 +207,7 @@ struct CompatDatabase: Codable {
     var schema: Int?
     var updated: String?
     var dependencies: [String: CompatDependency]?
+    var recipes: [String: CompatRecipe]?
     var games: [CompatGame]?
 
     var dependencyTable: [String: CompatDependency] {
@@ -147,7 +215,20 @@ struct CompatDatabase: Codable {
         for (key, var value) in table { value.id = key; table[key] = value }
         return table
     }
+    var recipeTable: [String: CompatRecipe] {
+        var table = recipes ?? [:]
+        for (key, var value) in table { value.id = key; table[key] = value }
+        return table
+    }
     var gameList: [CompatGame] { games ?? [] }
+}
+
+/// Which attempt a launch is on, and what it consists of. The first plan is
+/// alternative 0; each fallback adds one, tried in order.
+struct CompatAlternative: Equatable {
+    var index: Int
+    var name: String
+    var note: String?
 }
 
 // MARK: - Per-launch input and user overrides
@@ -230,6 +311,12 @@ struct CompatPlan {
     var windowsVersion: String?
     var registry: [CompatRegistryValue] = []
     var unsatisfied: [CompatUnsatisfied] = []
+    /// Recipes applied to this launch, by id, and their titles for display.
+    var recipes: [String] = []
+    var recipeTitles: [String] = []
+    /// Every attempt this title offers; `alternativeIndex` is the one in use.
+    var alternatives: [CompatAlternative] = []
+    var alternativeIndex: Int = 0
     var notes: [String] = []
 
     var isEmpty: Bool {
@@ -263,6 +350,8 @@ enum GameCompatibility {
     static func merge(base: CompatDatabase, overlay: CompatDatabase) -> CompatDatabase {
         var dependencies = base.dependencies ?? [:]
         for (key, value) in overlay.dependencies ?? [:] { dependencies[key] = value }
+        var recipes = base.recipes ?? [:]
+        for (key, value) in overlay.recipes ?? [:] { recipes[key] = value }
         var games: [CompatGame] = []
         var index: [String: Int] = [:]
         for game in base.games ?? [] { index[gameKey(game)] = games.count; games.append(game) }
@@ -274,6 +363,7 @@ enum GameCompatibility {
         merged.schema = overlay.schema ?? base.schema
         merged.updated = overlay.updated ?? base.updated
         merged.dependencies = dependencies
+        merged.recipes = recipes
         merged.games = games
         return merged
     }
@@ -297,7 +387,9 @@ enum GameCompatibility {
     }
 
     static func emptyDatabase() -> CompatDatabase {
-        var database = CompatDatabase(); database.games = []; database.dependencies = [:]; return database
+        var database = CompatDatabase()
+        database.games = []; database.dependencies = [:]; database.recipes = [:]
+        return database
     }
 
     // MARK: Matching
@@ -329,34 +421,72 @@ enum GameCompatibility {
 
     // MARK: Plan
 
-    /// Resolve a launch into a plan. Never mutates anything.
-    static func plan(_ launch: CompatLaunch, database: CompatDatabase) -> CompatPlan {
+    /// Resolve a launch into a plan. `alternative` picks a fallback: 0 is the
+    /// profile as written, 1..n are its fallbacks in order. Never mutates.
+    static func plan(_ launch: CompatLaunch, database: CompatDatabase, alternative: Int = 0) -> CompatPlan {
         var plan = CompatPlan()
         let overrides = launch.overrides
         guard overrides?.enabled != false else { return plan }   // explicitly disabled
 
         plan.matched = matchingGames(database, launch)
         let catalogue = database.dependencyTable
+        let recipes = database.recipeTable
 
-        // Dependencies: matched profiles (most specific last, so a less
-        // specific profile cannot silently drop a more specific one) plus the
-        // user's extras, minus the user's exclusions.
+        // The selected fallback, if any. Its `disable` list removes components
+        // and recipes before anything merges.
+        var fallback: CompatFallback?
+        if alternative > 0 {
+            for game in plan.matched where (game.fallbacks?.count ?? 0) >= alternative {
+                fallback = game.fallbacks?[alternative - 1]; break
+            }
+        }
+        let disabled = Set((overrides?.disabledDependencies ?? []) + (fallback?.disable ?? []))
+
+        // What is wanted: matched profiles (most specific last, so a less
+        // specific profile cannot silently drop a more specific one), the
+        // selected fallback, the user's extras, the executable's imports, and
+        // everything those pull in through `requires` and recipes. One closure
+        // resolves the whole graph; a component's recipe can add components and
+        // vice versa.
         var requested: [String] = []
-        func request(_ id: String) { if !requested.contains(id) { requested.append(id) } }
-        for game in plan.matched { (game.dependencies ?? []).forEach(request) }
-        // Automatic detection: the DLLs the executable imports select
-        // dependencies even when no profile matches, so a title nobody has
-        // written a profile for still gets its runtimes and overrides.
+        var requestedRecipes: [String] = []
+        var seenDependencies = Set<String>()
+        var seenRecipes = Set<String>()
+        var pendingDependencies: [String] = []
+        var pendingRecipes: [String] = []
+        func addDependency(_ id: String) {
+            guard !disabled.contains(id), seenDependencies.insert(id).inserted else { return }
+            requested.append(id); pendingDependencies.append(id)
+        }
+        func addRecipe(_ id: String) {
+            guard !disabled.contains(id), recipes[id] != nil, seenRecipes.insert(id).inserted else { return }
+            requestedRecipes.append(id); pendingRecipes.append(id)
+        }
+        for game in plan.matched { (game.dependencies ?? []).forEach(addDependency); (game.recipes ?? []).forEach(addRecipe) }
+        (fallback?.dependencies ?? []).forEach(addDependency)
+        (fallback?.recipes ?? []).forEach(addRecipe)
+        (overrides?.extraDependencies ?? []).forEach(addDependency)
         let imported = Set(launch.importedDLLs.map { importName($0) })
         if !imported.isEmpty {
             for key in catalogue.keys.sorted() {
                 guard let names = catalogue[key]?.imports, !names.isEmpty else { continue }
-                if names.contains(where: { imported.contains(importName($0)) }) { request(key) }
+                if names.contains(where: { imported.contains(importName($0)) }) { addDependency(key) }
             }
         }
-        (overrides?.extraDependencies ?? []).forEach(request)
-        let disabled = Set(overrides?.disabledDependencies ?? [])
-        requested.removeAll { disabled.contains($0) }
+        while !pendingDependencies.isEmpty || !pendingRecipes.isEmpty {
+            while !pendingDependencies.isEmpty {
+                let id = pendingDependencies.removeFirst()
+                guard let dependency = catalogue[id] else { continue }
+                (dependency.requires ?? []).forEach(addDependency)
+                (dependency.recipes ?? []).forEach(addRecipe)
+            }
+            while !pendingRecipes.isEmpty {
+                let id = pendingRecipes.removeFirst()
+                guard let recipe = recipes[id] else { continue }
+                (recipe.requires ?? []).forEach(addRecipe)
+                (recipe.dependencies ?? []).forEach(addDependency)
+            }
+        }
 
         // Expand `requires` depth-first, keeping dependencies before the things
         // that need them.
@@ -399,9 +529,20 @@ enum GameCompatibility {
             default:   // builtin, override, partial
                 merge(dependency, into: &plan)
                 if dependency.supportName == "partial" {
-                    plan.notes.append("\(dependency.title ?? dependency.id): partially supported on Madeira")
+                    // The component's own note explains the specific caveat;
+                    // the generic sentence is the fallback.
+                    plan.notes.append(dependency.notes.map { "\(dependency.title ?? dependency.id): \($0)" }
+                                      ?? "\(dependency.title ?? dependency.id): partially supported on Madeira")
                 }
             }
+        }
+
+        // Reusable fixes, after the components they belong to.
+        for id in requestedRecipes {
+            guard let recipe = recipes[id] else { continue }
+            merge(recipe, into: &plan)
+            plan.recipes.append(id)
+            plan.recipeTitles.append(recipe.title ?? id)
         }
 
         // Matched-profile fields, least specific first so the most specific
@@ -413,7 +554,14 @@ enum GameCompatibility {
             if let version = game.windowsVersion { plan.windowsVersion = version }
             plan.launchArguments.append(contentsOf: game.launchArgumentTokens)
             for fix in game.fixes ?? [] { plan.notes.append("\(game.titleText): \(fix)") }
+            for fix in game.unavailableFixes ?? [] { plan.notes.append("\(game.titleText): \(fix) is not available on Madeira") }
             for issue in game.issues ?? [] { plan.notes.append("\(game.titleText): \(issue)") }
+        }
+
+        // The selected fallback's own settings, over the profile.
+        if let fallback {
+            merge(fallback, into: &plan)
+            plan.notes.append("fallback: \(fallback.name ?? "alternative \(alternative)")")
         }
 
         // The user's overrides win over everything.
@@ -455,7 +603,32 @@ enum GameCompatibility {
                     name: dll, type: "REG_SZ", value: registryOrder(order)))
             }
         }
+
+        // The attempts available for this launch: the profile, then its
+        // fallbacks in order. The launcher advances through them when one
+        // fails, so a title with more than one workable configuration is
+        // retried without the user changing anything.
+        let fallbackCount = plan.matched.compactMap { $0.fallbacks?.count }.max() ?? 0
+        var alternatives = [CompatAlternative(index: 0, name: alternativeName(plan.matched, at: 0), note: nil)]
+        if fallbackCount > 0 {
+            for index in 1...fallbackCount {
+                let entry = plan.matched.compactMap({ $0.fallbacks }).first { $0.count >= index }?[index - 1]
+                alternatives.append(CompatAlternative(index: index, name: entry?.name ?? "Alternative \(index)", note: entry?.note))
+            }
+        }
+        plan.alternatives = alternatives
+        plan.alternativeIndex = min(max(alternative, 0), alternatives.count - 1)
         return plan
+    }
+
+    /// The label of one attempt: the profile's own name, or a fallback's.
+    private static func alternativeName(_ games: [CompatGame], at index: Int) -> String {
+        if index == 0 { return games.contains { !($0.fallbacks ?? []).isEmpty } ? "Default" : "Automatic" }
+        for game in games {
+            guard let fallbacks = game.fallbacks, index <= fallbacks.count else { continue }
+            return fallbacks[index - 1].name ?? "Alternative \(index)"
+        }
+        return "Alternative \(index)"
     }
 
     /// An import or catalogue name normalised for matching: lowercased and
@@ -497,6 +670,24 @@ enum GameCompatibility {
         if let version = dependency.windowsVersion, plan.windowsVersion == nil { plan.windowsVersion = version }
     }
 
+    private static func merge(_ recipe: CompatRecipe, into plan: inout CompatPlan) {
+        for (key, value) in recipe.env ?? [:] { plan.environment[key] = value }
+        for (dll, order) in recipe.dllOverrides ?? [:] { plan.dllOverrides[dll.lowercased()] = order }
+        plan.registry.append(contentsOf: recipe.registry ?? [])
+        if let version = recipe.windowsVersion { plan.windowsVersion = version }
+        plan.launchArguments.append(contentsOf: CompatGame.splitArguments(recipe.launchArguments ?? ""))
+        if let note = recipe.notes, !note.isEmpty {
+            plan.notes.append("\(recipe.title ?? recipe.id): \(note)")
+        }
+    }
+
+    private static func merge(_ fallback: CompatFallback, into plan: inout CompatPlan) {
+        for (key, value) in fallback.env ?? [:] { plan.environment[key] = value }
+        for (dll, order) in fallback.dllOverrides ?? [:] { plan.dllOverrides[dll.lowercased()] = order }
+        if let version = fallback.windowsVersion { plan.windowsVersion = version }
+        plan.launchArguments.append(contentsOf: CompatGame.splitArguments(fallback.launchArguments ?? ""))
+    }
+
     /// Which of a dependency's required files are absent from every payload
     /// directory. Matching is case-insensitive.
     static func missingPayload(_ dependency: CompatDependency, directories: [String]) -> [String] {
@@ -517,7 +708,12 @@ enum GameCompatibility {
         guard !plan.isEmpty else { return [] }
         var lines: [String] = []
         if !plan.titles.isEmpty { lines.append("profile: " + plan.titles.joined(separator: ", ")) }
+        if plan.alternatives.count > 1, plan.alternativeIndex < plan.alternatives.count {
+            let attempt = plan.alternatives[plan.alternativeIndex]
+            lines.append("attempt: \(attempt.index + 1) of \(plan.alternatives.count) — \(attempt.name)")
+        }
         if !plan.dependencies.isEmpty { lines.append("dependencies: " + plan.dependencyTitles.joined(separator: ", ")) }
+        if !plan.recipeTitles.isEmpty { lines.append("fixes: " + plan.recipeTitles.joined(separator: ", ")) }
         if !plan.dllOverrides.isEmpty { lines.append("dll overrides: " + plan.dllOverrideString) }
         if let version = plan.windowsVersion { lines.append("windows version: \(version)") }
         if !plan.environment.isEmpty { lines.append("environment: " + plan.environment.keys.sorted().joined(separator: ", ")) }

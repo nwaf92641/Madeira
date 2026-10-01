@@ -108,6 +108,7 @@
 		A1000401 /* GuestDisplay.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000401 /* GuestDisplay.swift */; };
 		A1000620 /* GameCompat.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000620 /* GameCompat.swift */; };
 		A1000621 /* GameCompatView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000621 /* GameCompatView.swift */; };
+		A1000622 /* CompatDiagnosis.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000622 /* CompatDiagnosis.swift */; };
 		A1000622 /* compat.json in Resources */ = {isa = PBXBuildFile; fileRef = A2000622 /* compat.json */; };
 		A1000243 /* GamepadInput.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000243 /* GamepadInput.swift */; };
 		A1000244 /* Winios/WiniosGamepad.c in Sources */ = {isa = PBXBuildFile; fileRef = A2000244 /* Winios/WiniosGamepad.c */; };
@@ -233,6 +234,7 @@
 		A2000401 /* GuestDisplay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GuestDisplay.swift; sourceTree = "<group>"; };
 		A2000620 /* GameCompat.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameCompat.swift; sourceTree = "<group>"; };
 		A2000621 /* GameCompatView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameCompatView.swift; sourceTree = "<group>"; };
+		A2000622 /* CompatDiagnosis.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompatDiagnosis.swift; sourceTree = "<group>"; };
 		A2000622 /* compat.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = compat.json; sourceTree = "<group>"; };
 		A2000243 /* GamepadInput.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "GamepadInput.swift"; sourceTree = "<group>"; };
 		A2000244 /* Winios/WiniosGamepad.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = "Winios/WiniosGamepad.c"; sourceTree = "<group>"; };
@@ -355,6 +357,7 @@
 				A2000401 /* GuestDisplay.swift */,
 				A2000620 /* GameCompat.swift */,
 				A2000621 /* GameCompatView.swift */,
+				A2000622 /* CompatDiagnosis.swift */,
 				A2000622 /* compat.json */,
 				A2000004 /* JITAllocator.c */,
 				A2000005 /* JITAllocator.h */,
@@ -590,6 +593,7 @@
 				A1000401 /* GuestDisplay.swift in Sources */,
 				A1000620 /* GameCompat.swift in Sources */,
 				A1000621 /* GameCompatView.swift in Sources */,
+				A1000622 /* CompatDiagnosis.swift in Sources */,
 				A1000004 /* JITAllocator.c in Sources */,
 				A1000005 /* EntitlementChecker.swift in Sources */,
 				A1000006 /* FEXBridge.mm in Sources */,

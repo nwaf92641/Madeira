@@ -35,6 +35,7 @@ import tempfile
 root = Path(__file__).resolve().parents[2]
 lib = (root / 'app/Madeira/Library.swift').read_text()
 engine = (root / 'app/Madeira/GameCompat.swift').read_text()
+diagnosis = (root / 'app/Madeira/CompatDiagnosis.swift').read_text()
 display = (root / 'app/Madeira/GuestDisplay.swift').read_text()
 bridge = (root / 'app/Madeira/WineProcessBridge.m').read_text()
 server = (root / 'build/ntdll-unix/server_ios.c').read_text()
@@ -81,7 +82,9 @@ final class PassthroughSubject<Output, Failure: Error> {
 #endif
 enum MadeiraConfig { static func flag(_ name: String, fallback: Bool = true) -> Bool { fallback } }
 enum LogLevel { case error }
-final class LogStore { static let shared = LogStore(); var lines: [String] = []; func log(_ s: String) { lines.append(s) }; func log(_ s: String, level: LogLevel) { lines.append(s) } }
+final class LogStore { static let shared = LogStore(); var lines: [String] = []; func log(_ s: String) { lines.append(s) }; func log(_ s: String, level: LogLevel) { lines.append(s) }; func diagnosticSnapshot(head: Int = 0, tail: Int = 0) -> String { "" } }
+func wine_crash_exit_status(_ status: UnsafeMutablePointer<UInt32>?) -> Int32 { 0 }
+func wine_process_is_running() -> Int32 { 0 }
 enum LibraryModel {
     static var documents: URL { FileManager.default.temporaryDirectory }
     static func compatDatabase() -> CompatDatabase { GameCompatibility.emptyDatabase() }
@@ -102,6 +105,8 @@ swift += block(lib, 'struct LibraryEntry: Codable, Identifiable') + '\n'
 # The compatibility engine (GameCompat.swift): LibraryEntry.applyEnvironment
 # now resolves and applies a plan, so the engine is compiled in too.
 swift += '\n'.join(l for l in engine.splitlines() if not l.startswith('import ')) + '\n'
+# The session diagnosis (CompatDiagnosis.swift): LibraryEntry records it.
+swift += '\n'.join(l for l in diagnosis.splitlines() if not l.startswith('import ')) + '\n'
 swift += '\n'.join(l for l in display.splitlines() if not l.startswith('import ')) + '\n'
 swift += block(lib, 'final class LibraryController: ObservableObject, @unchecked Sendable') + '\n'
 swift += r'''

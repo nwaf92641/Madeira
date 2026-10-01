@@ -200,6 +200,13 @@ struct LibraryEntry: Codable, Identifiable {
     /// nil means fully automatic: the compatibility database decides. Anything
     /// set here wins over the database and applies to this game's launches only.
     var compat: CompatOverrides?
+    /// Which compatibility alternative to try (GameCompat.swift). A title with
+    /// fallbacks advances this automatically when an attempt fails, so the next
+    /// launch tries the next configuration without the user changing anything.
+    var compatAttempt: Int?
+    /// How the last session ended: works, works with problems or did not work,
+    /// with the failure classified (CompatDiagnosis.swift).
+    var compatResult: CompatResult?
     /// A Steam game (SteamGames.swift): Madeira Dock starts it by this App ID
     /// through Valve's client, with Steam's default launch option.
     /// `relativePath` is then its install folder, relative to drive_c.
@@ -288,14 +295,11 @@ struct LibraryEntry: Codable, Identifiable {
         applyCompatibility()
     }
 
-    /// Match this title against the compatibility database, resolve its
-    /// dependencies and apply the environment, DLL overrides, Windows version
-    /// and registry for this launch only (GameCompat.swift). Everything here is
-    /// per-game: DLL overrides go through WINEDLLOVERRIDES and the Windows
-    /// version through AppDefaults\<exe>, so two games in the one shared prefix
-    /// cannot affect each other.
-    func applyCompatibility() {
-        let launch = CompatLaunch(
+    /// Everything the compatibility engine needs to know about this launch.
+    /// Built fresh each time: applying the plan and recording the result must
+    /// see the same input.
+    func compatLaunch() -> CompatLaunch {
+        CompatLaunch(
             executable: (launchRelativePath as NSString).lastPathComponent,
             relativePath: launchRelativePath,
             appid: steamAppID,
@@ -303,7 +307,46 @@ struct LibraryEntry: Codable, Identifiable {
             payloadDirectories: LibraryModel.compatPayloadDirectories(),
             importedDLLs: LibraryModel.importedDLLs(for: launchRelativePath),
             overrides: compat)
-        let plan = GameCompatibility.plan(launch, database: LibraryModel.compatDatabase())
+    }
+
+    /// Classify how the session ended and remember it on the entry, then move
+    /// the title to its next alternative when this attempt failed and one is
+    /// left. A fatal classification (anti-cheat, DRM) stops the ladder: no
+    /// configuration will help.
+    mutating func recordCompatibilityOutcome(presented: Bool, duration: TimeInterval) -> CompatResult? {
+        let attempt = max(compatAttempt ?? 0, 0)
+        let plan = GameCompatibility.plan(compatLaunch(), database: LibraryModel.compatDatabase(), alternative: attempt)
+        var status: UInt32 = 0
+        let exitStatus = wine_crash_exit_status(&status) != 0 ? status : nil
+        let name = plan.alternatives.indices.contains(plan.alternativeIndex)
+            ? plan.alternatives[plan.alternativeIndex].name : nil
+        let result = CompatLogDiagnosis.classify(log: LogStore.shared.diagnosticSnapshot(),
+                                                 exitStatus: exitStatus, presented: presented,
+                                                 duration: duration, attempt: attempt, alternative: name)
+        compatResult = result
+        if result.isFailure, !result.isFatal, attempt + 1 < plan.alternatives.count {
+            compatAttempt = attempt + 1
+        }
+        return result
+    }
+
+    /// What the last recorded result says the next attempt will be, if any.
+    var nextCompatibilityAlternative: String? {
+        guard let attempt = compatAttempt, attempt > 0 else { return nil }
+        let plan = GameCompatibility.plan(compatLaunch(), database: LibraryModel.compatDatabase(), alternative: attempt)
+        guard plan.alternatives.indices.contains(attempt) else { return nil }
+        return plan.alternatives[attempt].name
+    }
+
+    /// Match this title against the compatibility database, resolve its
+    /// dependencies and apply the environment, DLL overrides, Windows version
+    /// and registry for this launch only (GameCompat.swift). Everything here is
+    /// per-game: DLL overrides go through WINEDLLOVERRIDES and the Windows
+    /// version through AppDefaults\<exe>, so two games in the one shared prefix
+    /// cannot affect each other.
+    func applyCompatibility() {
+        let plan = GameCompatibility.plan(compatLaunch(), database: LibraryModel.compatDatabase(),
+                                          alternative: max(compatAttempt ?? 0, 0))
         // Drop any compatibility variable a previous launch in this app run
         // set, so one game's overrides cannot follow another into its session.
         CompatEnvironmentRegistry.shared.reconcile(keeping: Set(plan.environment.keys),
@@ -440,6 +483,9 @@ final class LibraryModel: ObservableObject {
     var blocksGameplayTouch: Bool { current != nil && (menu || launching) }
     private var timer: Timer?
     private var sawProcess = false
+    /// Whether the running session belongs to a library entry (a Madeira Dock
+    /// start does not, and is not given a compatibility result).
+    private var activeRemembered = false
     // Why a session ended by itself (not Quit): the program the app launched
     // exited with a Windows error (wine_crash_exit_status, WineProcessBridge.m).
     // MADEIRA_EXIT_REPORT=0 returns to the library without a message.
@@ -673,6 +719,7 @@ final class LibraryModel: ObservableObject {
     func begin(_ entry: LibraryEntry, remember: Bool = true) {
         wine_exit_status_reset()
         quitRequested = false
+        activeRemembered = remember
         LibraryController.shared.configure(enabled: enabled, ownsInput: false)
         Self.sessionsThisRun += 1
         launchPresent = madeira_get_present_count(); launchStarted = Date(); launchSlow = false; launchLogs = entry.liveLogs
@@ -782,10 +829,30 @@ final class LibraryModel: ObservableObject {
             save(entry)
         }
     }
+    /// Classify how the session ended and keep the result on the entry, which
+    /// is also what advances a title to its next compatibility alternative. A
+    /// session the user quit is not a compatibility result.
+    private func recordCompatibility() {
+        guard !quitRequested, activeRemembered, wine_process_is_running() == 0,
+              let id = current ?? activeEntry?.id,
+              var entry = entries.first(where: { $0.id == id }) else { return }
+        let presented = madeira_get_present_count() > launchPresent
+        let duration = Date().timeIntervalSince(launchStarted)
+        guard let result = entry.recordCompatibilityOutcome(presented: presented, duration: duration) else { return }
+        LogStore.shared.log(CompatLogDiagnosis.report(result))
+        if let first = result.categories.first.flatMap({ CompatDiagnosis(rawValue: $0) }) {
+            LogStore.shared.log("[compat] \(first.title): \(first.explanation)")
+        }
+        if let next = entry.nextCompatibilityAlternative {
+            LogStore.shared.log("[compat] the next launch of this game will try: \(next)")
+        }
+        save(entry)
+    }
     private func finish() {
         if sawProcess, let report = exitReport() { error = report }
         timer?.invalidate(); timer = nil
         saveCurrentProfile()
+        recordCompatibility()
         let controls = TouchControlsModel.shared
         controls.editing = false; controls.selected = nil
         controls.controls = savedControls; controls.visible = savedVisible; controls.sizeScale = savedSize
@@ -980,15 +1047,21 @@ struct LibraryBadges: View {
         HStack(spacing: 4) {
             if entry.bits == 32 || entry.bits == 64 { badge("\(entry.bits)-bit") }
             if let api = LibraryRendererBadge.compact(entry.graphicsAPI) { badge(api) }
+            // The last session's verdict, so a title that needs attention is
+            // visible in the library rather than only after opening it.
+            if let result = entry.compatResult, result.isFailure {
+                badge(result.categoriesTitle.isEmpty ? result.outcomeTitle : result.categoriesTitle, tint: .orange)
+            }
         }
     }
     @ViewBuilder private var size: some View {
         if let bytes = entry.folderBytes { badge(String(format: bytes < 1_000_000_000 ? "%.2f GB" : "%.1f GB", Double(bytes) / 1_000_000_000)) }
     }
-    private func badge(_ text: String) -> some View {
+    private func badge(_ text: String, tint: Color? = nil) -> some View {
         Text(text).font(.caption2.weight(.medium)).lineLimit(1).minimumScaleFactor(0.8)
             .padding(.horizontal, 5).padding(.vertical, 4)
-            .background(.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 6))
+            .foregroundStyle(tint ?? .primary)
+            .background((tint ?? .secondary).opacity(tint == nil ? 0.12 : 0.18), in: RoundedRectangle(cornerRadius: 6))
     }
 }
 

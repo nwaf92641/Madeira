@@ -303,7 +303,8 @@ struct LibraryEntry: Codable, Identifiable {
             executable: (launchRelativePath as NSString).lastPathComponent,
             relativePath: launchRelativePath,
             appid: steamAppID,
-            environment: ["WINEDLLOVERRIDES": getenv("WINEDLLOVERRIDES").map { String(cString: $0) } ?? ""],
+            environment: ["WINEDLLOVERRIDES": getenv("WINEDLLOVERRIDES").map { String(cString: $0) } ?? "",
+                          "DXMT_CONFIG": getenv("DXMT_CONFIG").map { String(cString: $0) } ?? ""],
             payloadDirectories: LibraryModel.compatPayloadDirectories(),
             importedDLLs: LibraryModel.importedDLLs(for: launchRelativePath),
             overrides: compat)
@@ -353,6 +354,16 @@ struct LibraryEntry: Codable, Identifiable {
                                                    unset: { unsetenv($0) })
         guard !plan.isEmpty else { return }
         GameCompatibility.applyEnvironment(plan, set: { setenv($0, $1, 1) }, unset: { unsetenv($0) })
+        // A profile may start another program than the entry picked (a launcher
+        // that does not run under Wine) and may drop arguments the launcher
+        // added; both happen before the bridge reads MADEIRA_EXE/MADEIRA_ARGS.
+        if let run = plan.launchExecutable { setenv("MADEIRA_EXE", run, 1) }
+        if !plan.removeArguments.isEmpty {
+            let existing = getenv("MADEIRA_ARGS").map { String(cString: $0) } ?? ""
+            let dropped = Set(plan.removeArguments.map { $0.lowercased() })
+            let kept = CompatGame.splitArguments(existing).filter { !dropped.contains($0.lowercased()) }
+            setenv("MADEIRA_ARGS", kept.joined(separator: " "), 1)
+        }
         // A profile's launch arguments join the entry's own (MADEIRA_ARGS was
         // set from them by configureLaunch, above).
         if !plan.launchArguments.isEmpty {
@@ -368,6 +379,16 @@ struct LibraryEntry: Codable, Identifiable {
         for line in GameCompatibility.summary(plan) { LogStore.shared.log("[compat] \(line)") }
         if written > 0 { LogStore.shared.log("[compat] registry: \(written) value(s) written") }
         if let error { LogStore.shared.log("[compat] registry write failed: \(error)", level: .error) }
+        // Files a title needs moved aside or removed (an old ddraw.dll beside
+        // the game). Applied once; a second launch changes nothing.
+        if !plan.files.isEmpty {
+            let gameDirectory = URL(fileURLWithPath: prefix.path)
+                .appendingPathComponent("drive_c")
+                .appendingPathComponent((launchRelativePath as NSString).deletingLastPathComponent).path
+            let outcome = GameCompatibility.applyFiles(plan, gameDirectory: gameDirectory, prefix: prefix.path)
+            if outcome.applied > 0 { LogStore.shared.log("[compat] files: \(outcome.applied) change(s) applied") }
+            for failure in outcome.failures { LogStore.shared.log("[compat] file fix failed: \(failure)", level: .error) }
+        }
     }
 
     /// What the bridge starts. Set on the main thread before the session begins.

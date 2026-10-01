@@ -213,6 +213,112 @@
       "launch_arguments": "-fullscreen -dx12",
       "notes": "Protonfixes appends -vulkan, which is a fix on Proton because Proton renders through Vulkan. Madeira presents through Metal and has no Vulkan, so the equivalent is the game's Direct3D 12 renderer: -vulkan becomes -dx12 and -fullscreen is kept.",
       "source": "protonfixes"
+    },
+    {
+      "title": "Steam client",
+      "executables": [
+        "steam.exe"
+      ],
+      "engine": "Steam",
+      "rating": "unknown",
+      "recipes": [
+        "steam-client-compat"
+      ],
+      "notes": "The client's own Windows build, started with its embedded browser's GPU and sandbox paths off and the overlay helper disabled. Madeira's Dock starts games without the client, so this profile matters when the client itself is added to the library.",
+      "unavailable_fixes": [
+        "the pre-exec hook Winlator runs before the client",
+        "the renderer configuration Winlator applies to the client's own Direct3D"
+      ],
+      "source": "winlator"
+    },
+    {
+      "title": "Steam web helper",
+      "executables": [
+        "steamwebhelper.exe"
+      ],
+      "engine": "Steam",
+      "rating": "unknown",
+      "recipes": [
+        "fex-strong-memory",
+        "software-3d-renderer"
+      ],
+      "notes": "The embedded browser the client's interface is drawn with. It is given Wine's software renderer so that it takes no graphics device, and strict memory ordering because its threads share state without barriers.",
+      "unavailable_fixes": [
+        "forcing Direct3D 8, 9, 10, 10_1, 10core, 11, DirectDraw and DXGI to Wine's builtin libraries, which Winlator does; on Madeira d3d9/10/11/dxgi are DXMT's, and the helper is kept off the GPU instead"
+      ],
+      "source": "winlator"
+    },
+    {
+      "title": "Chrono Trigger",
+      "executables": [
+        "Chrono Trigger.exe"
+      ],
+      "engine": "Unity",
+      "rating": "unknown",
+      "notes": "Winlator's fix for this title disables Wine's built-in streaming decoder (winegstreamer=d). On Madeira winegstreamer is the decoder itself, so applying that by default would remove its video and audio rather than repair them; the same fix is kept as a fallback, for a prefix that has native codecs, and the component route (native-quartz) is the other.",
+      "fallbacks": [
+        {
+          "name": "Disable the built-in streaming decoder",
+          "recipes": [
+            "winegstreamer-off"
+          ],
+          "note": "Winlator's fix, kept as an attempt: it is only right when a native codec payload is installed, because Madeira has no other decoder for these streams."
+        }
+      ],
+      "source": "winlator"
+    },
+    {
+      "title": "Disciples II (GOG)",
+      "executables": [
+        "Discipl2.exe"
+      ],
+      "engine": "Disciples",
+      "rating": "unknown",
+      "recipes": [
+        "legacy-d3d-tuning"
+      ],
+      "dll_overrides": {
+        "ddraw": "b",
+        "d3d8": "b"
+      },
+      "notes": "Winlator makes Wine's own DirectDraw and Direct3D 8 libraries win over the ones the game ships, and gives the container the 2002-era adapter settings this recipe carries. On Madeira the builtin path is wined3d, so a DirectDraw wrapper (cnc-ddraw) is the fallback if it cannot present through Metal.",
+      "fallbacks": [
+        {
+          "name": "DirectDraw wrapper",
+          "dependencies": [
+            "cnc-ddraw"
+          ],
+          "note": "Used when Wine's builtin DirectDraw cannot present this title on Metal."
+        }
+      ],
+      "source": "winlator"
+    },
+    {
+      "title": "Moto Racer (GOG)",
+      "executables": [
+        "MotoRacer.exe"
+      ],
+      "rating": "unknown",
+      "recipes": [
+        "native-winmm"
+      ],
+      "notes": "Winlator pairs this title with a native winmm.dll (winmm=n,b): its audio and timing go through waveOut, and Wine's builtin one gives it the wrong device mix. The override only takes effect once a winmm.dll is in the payload directory (Winetricks' winmm verb provides one).",
+      "source": "winlator"
+    },
+    {
+      "title": "Far Cry 3",
+      "appid": 220240,
+      "executables": [
+        "farcry3.exe",
+        "farcry3_d3d11.exe"
+      ],
+      "engine": "Dunia 2",
+      "rating": "unknown",
+      "notes": "Winlator needs a Wine patch to stop this title opening the service control manager (WINE_DO_NOT_OPEN_SC_MANAGER). Madeira keeps the service control manager and removes the race in the same path instead (patches/wine-rpcss-scm-bootstrap.patch), which is the failure this patch works around.",
+      "unavailable_fixes": [
+        "the Wine patch that makes the service control manager unopenable"
+      ],
+      "source": "winlator"
     }
   ]
 }

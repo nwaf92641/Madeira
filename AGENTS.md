@@ -43,11 +43,17 @@ replace it when adding a feature.
 - Data, not code: `compat/dependencies.json`, `compat/games.json`,
   `compat/recipes.json` are the sources; `build/tools/gen-game-compat.py`
   builds `app/Madeira/compat.json` (run it with `--protonfixes DIR
-  --winetricks DIR --bottles DIR` to import upstream fixes, `--check` to
-  compare without writing). Never hand-edit `app/Madeira/compat.json`.
+  --winetricks DIR --bottles DIR --winlator DIR` to import upstream fixes,
+  `--check` to compare without writing). Never hand-edit
+  `app/Madeira/compat.json`.
 - Upstream projects (`/workspace/refs/protonfixes`, `winetricks`,
-  `bottles-deps`) are sources of fixes, not code to copy. Anything that
-  depends on Linux, Vulkan, Proton's runtime or root access is recorded as an
-  unavailable fix on the title instead of being ported.
+  `bottles-deps`, `winlator-app`, `winlator`) are sources of fixes, not code to
+  copy. Anything that depends on Linux, Vulkan, Proton's or Winlator's own
+  runtime, root access or a kernel module is recorded as an unavailable fix on
+  the title instead of being ported. A fix that only means something on that
+  runtime (a Wine patch of theirs, a loader switch FEX does not have) gets the
+  same treatment, with the Madeira counterpart named where one exists.
 - A fix is expressed as a DLL override, a registry value, an environment
-  variable or a launch argument, applied per launch and per game.
+  variable or a launch argument, applied per launch and per game. `{app}` in a
+  registry key or value is replaced by the launched executable's name, which is
+  how Wine's per-application keys are written.

@@ -299,8 +299,13 @@ let universal = db(#"""
  "baseline":{"title":"Any Windows program","windows_version":"win10"},
  "dependencies":{
    "xact":{"title":"XACT","support":"builtin","imports":["xactengine3_7"]},
-   "eac":{"title":"Easy Anti-Cheat","kind":"anticheat","category":"anticheat","support":"unsupported"},
-   "font":{"title":"Fonts","support":"payload","dlls":["arial.ttf"]}},
+   "eac":{"title":"Easy Anti-Cheat","kind":"anticheat","category":"anticheat","support":"unsupported",
+          "imports":["easyanticheat_x64"]},
+   "font":{"title":"Fonts","support":"payload","dlls":["arial.ttf"]},
+   "ole-served":{"title":"OLE, on the builtin","support":"builtin","imports":["ole32"],
+                 "dll_overrides":{"ole32":"b"}},
+   "xaudio-absent":{"title":"XAudio2 2.7","support":"builtin","imports":["xaudio2_7"],
+                    "dll_overrides":{"xaudio2_7":"b"}}},
  "recipes":{
    "legacy-d3d":{"title":"Legacy Direct3D configuration","category":"dx9",
                  "registry":[{"hive":"HKCU","key":"Software\\Wine\\AppDefaults\\{app}\\Direct3D",
@@ -318,13 +323,16 @@ let universal = db(#"""
    {"id":"anticheat-eac-files","title":"Easy Anti-Cheat files","when":{"files":["easyanticheat_x64"]},
     "dependencies":["eac"]},
    {"id":"media-foundation-64bit","title":"64-bit Media Foundation","when":{"imports":["mfplat"],"bits":64},
-    "env":{"MADEIRA_WG_64BIT":"1"}},
+    "env":{"MADEIRA_WG_64BIT":"1"},
+    "note":"the media unix side is 32-bit only until the 64-bit module ships"},
    {"id":"never","title":"Never matches","when":{"imports":["nosuchdll"]},"env":{"MADEIRA_UNUSED":"1"}}],
  "remedies":{
    "dx9":{"name":"Legacy Direct3D settings","recipes":["legacy-d3d"]},
    "audio":{"name":"DirectShow wave path","recipes":["wave"]}},
- "wine_modules":["ole32","d3d9","mfplat","user32"],
+ "wine_modules":["ole32","d3d9","mfplat","user32","dmusic"],
+ "wine_modules_64":["ole32","d3d9","user32"],
  "wine_not_shipped":["ir50_32","vulkan-1"],
+ "not_built":[{"name":"mfcore","reason":"Windows 8 split the Media Foundation platform in two"}],
  "api_set_prefixes":["api-ms-win-","ext-ms-win-"]}
 """#)
 
@@ -392,14 +400,64 @@ check(loose.unaccountedImports == ["thirdparty"], "an import nothing accounts fo
 check(loose.rules.contains("legacy-directdraw"), "an import a rule answers for applies the rule")
 check(loose.notes.contains { $0.contains("ir50_32") }, "the report says which module is missing")
 check(loose.notes.allSatisfy { !$0.contains("ddraw") }, "an import that is answered is not reported as unaccounted")
+
+// A 64-bit program cannot load a module the 32-bit build has: the two farms are
+// not the same set, and the report has to say which half of the runtime is short.
+let half64 = GameCompatibility.plan(CompatLaunch(executable: "x64.exe", importedDLLs: ["dmusic.dll"],
+                                                 bits: 64), database: universal)
+check(half64.unavailableModules == ["dmusic"], "a module only the 32-bit side carries is missing for a 64-bit launch")
+check(half64.notes.contains { $0.contains("the 64-bit runtime does not ship") && $0.contains("dmusic") },
+      "the note names the 64-bit runtime rather than the runtime")
+let same32 = GameCompatibility.plan(CompatLaunch(executable: "x86.exe", importedDLLs: ["dmusic.dll"],
+                                                 bits: 32), database: universal)
+check(same32.unavailableModules.isEmpty, "the same import is served on the 32-bit side")
+let mediaRule64 = GameCompatibility.plan(CompatLaunch(executable: "player.exe", importedDLLs: ["mfplat.dll"],
+                                                      bits: 64), database: universal)
+check(mediaRule64.rules.contains("media-foundation-64bit")
+      && mediaRule64.notes.contains { $0.contains("32-bit only") },
+      "the rule that answers a 64-bit media import carries its own note, and that note is the report")
+let never = GameCompatibility.plan(CompatLaunch(executable: "any.exe", importedDLLs: ["mfcore.dll"]),
+                                   database: universal)
+check(never.unavailableModules == ["mfcore"], "a component Wine never built is reported as unavailable")
+check(never.notes.contains { $0.contains("Windows 8 split the Media Foundation platform in two") },
+      "the reason a component can never be served is carried into the report")
 let apiSets = GameCompatibility.plan(CompatLaunch(executable: "modern.exe",
     importedDLLs: ["api-ms-win-core-synch-l1-1-0.dll", "api-ms-win-crt-runtime-l1-1-0.dll",
                    "ext-ms-win-ntuser-window-l1-1-0.dll"]), database: universal)
 check(apiSets.unaccountedImports.isEmpty && apiSets.unavailableModules.isEmpty,
       "an API set name is resolved by the loader, so it is neither missing nor unaccounted")
 let blank = GameCompatibility.emptyDatabase()
-check(blank.isAPISet("api-ms-win-core-heap-l1-1-0.dll") && blank.providedModules.isEmpty,
+check(blank.isAPISet("api-ms-win-core-heap-l1-1-0.dll") && blank.providedModules(nil).isEmpty,
       "with no database at all, a loader-resolved name is still not reported")
+
+// A payload the title ships itself is not something the user has to supply.
+let payload = db(#"{"schema":1,"dependencies":{"dx9":{"title":"DirectX 9","support":"payload","dlls":["d3dx9_43.dll"]}},"games":[{"title":"P","executables":["p.exe"],"dependencies":["dx9"]}]}"#)
+check(GameCompatibility.plan(CompatLaunch(executable: "p.exe"), database: payload).unsatisfied.map(\.id) == ["dx9"],
+      "a payload nobody supplied is reported with its file names")
+check(GameCompatibility.plan(CompatLaunch(executable: "p.exe", files: ["D3DX9_43.DLL"]), database: payload).unsatisfied.isEmpty,
+      "a payload the title ships beside itself is satisfied")
+
+// A builtin pin is a claim about this runtime, so it is only written when the
+// runtime can back it; otherwise it would hide the title's own copy.
+let servedPin = GameCompatibility.plan(CompatLaunch(executable: "game.exe", importedDLLs: ["ole32.dll"]),
+                                       database: universal)
+check(servedPin.dllOverrides["ole32"] == "b", "a pin the runtime can honour is kept")
+let deadPin = GameCompatibility.plan(CompatLaunch(executable: "game.exe", importedDLLs: ["xaudio2_7.dll"]),
+                                     database: universal)
+check(deadPin.dllOverrides["xaudio2_7"] == nil, "a pin for a module the runtime does not ship is dropped")
+check(deadPin.notes.contains { $0.contains("no builtin pin for") },
+      "and the plan says why, instead of writing an override that cannot resolve")
+check(deadPin.unaccountedImports == ["xaudio2_7"],
+      "the import is left to the title rather than answered by a component the architecture cannot honour")
+
+// An unsupported component is itself the answer, so its import is not repeated
+// as a module the runtime is short of.
+let anticheat = GameCompatibility.plan(CompatLaunch(executable: "game.exe",
+                                                    importedDLLs: ["EasyAntiCheat_x64.dll"]),
+                                       database: universal)
+check(anticheat.unsatisfied.map(\.id) == ["eac"], "a component that cannot work here is reported")
+check(anticheat.unaccountedImports.isEmpty && anticheat.unavailableModules.isEmpty,
+      "and its import is not reported a second time as a module nothing answers")
 
 // the architecture a rule matches on, read from a PE header
 func peImage(machine: Int) -> Data {
@@ -441,11 +499,23 @@ if CommandLine.arguments.count > 1, let data = try? Data(contentsOf: URL(fileURL
     let gpu = GameCompatibility.plan(CompatLaunch(executable: "sample.exe",
         importedDLLs: ["nvapi64.dll", "oo2core_9_win64.dll", "d3dcompiler_46.dll", "xaudio2_7.dll",
                        "api-ms-win-crt-stdio-l1-1-0.dll", "d3d11.dll"]), database: real)
-    check(gpu.dllOverrides["nvapi64"] == "b", "a vendor GPU library is pinned to the Wine stub")
     check(gpu.dllOverrides["d3dcompiler_46"] == "b", "an older shader compiler is pinned to Wine's builtin")
     check(gpu.dependencies.map(\.id).contains("d3d10-d3d11"),
           "Direct3D 11 is recognised as Madeira's own DXMT path")
-    check(gpu.unsatisfied.isEmpty, "none of those components is reported as missing")
+    check(gpu.unsatisfied.map(\.id) == ["vendor-gpu-libraries"],
+          "the vendor GPU libraries are reported as unsupported, and nothing else is missing")
+    check(gpu.dllOverrides["nvapi64"] == nil && gpu.dllOverrides["nvngx_dlss"] == nil,
+          "no builtin pin is written for a vendor library the runtime does not have: it would hide the title's own file")
+    let d3dcompile = GameCompatibility.plan(CompatLaunch(executable: "sample.exe",
+        importedDLLs: ["d3dcompiler_44.dll", "dxil.dll"]), database: real)
+    check(d3dcompile.unavailableModules.contains("d3dcompiler_44") && d3dcompile.unavailableModules.contains("dxil"),
+          "a shader compiler Wine never shipped is reported as unavailable, not claimed as a builtin")
+    let media64 = GameCompatibility.plan(CompatLaunch(executable: "sample.exe",
+        importedDLLs: ["mfplat.dll", "quartz.dll", "xaudio2_7.dll"], bits: 64), database: real)
+    check(media64.rules.contains("media-unix-side-64bit") && media64.environment["MADEIRA_WG_64BIT"] == "1",
+          "a 64-bit title that decodes media gets the runtime's media switch")
+    check(media64.notes.contains { $0.contains("winegstreamer") },
+          "and is told what the 64-bit farm is missing rather than failing with no explanation")
     let vulkan = GameCompatibility.plan(CompatLaunch(executable: "sample.exe", importedDLLs: ["vulkan-1.dll"]), database: real)
     check(vulkan.dependencies.map(\.id).contains("vulkan") && vulkan.unsatisfied.isEmpty,
           "a Vulkan import is classified without being called a missing file")
@@ -455,10 +525,19 @@ if CommandLine.arguments.count > 1, let data = try? Data(contentsOf: URL(fileURL
           "an unprofiled executable still gets the universal configuration")
     check(real.ruleList.count >= 8 && real.remedyTable.count >= 6,
           "the bundled database carries the general rules and the remedies")
-    check(real.providedModules.contains("ole32") && real.providedModules.contains("d3d11"),
+    check(real.providedModules(nil).contains("ole32") && real.providedModules(nil).contains("d3d11"),
           "the module list is what this runtime provides (Wine's, plus the names DXMT answers for)")
-    check(real.absentModules.contains("ir50_32") && !real.absentModules.contains("d3d11"),
+    check(real.absentModules(nil).contains("ir50_32") && !real.absentModules(nil).contains("d3d11"),
           "the modules the iOS build leaves out are listed apart, and not the DXMT-owned ones")
+    let farm64 = real.providedModules(64)
+    check(farm64.contains("d3d11") && !farm64.contains("quartz") && !farm64.contains("winegstreamer")
+          && real.providedModules(nil).contains("quartz"),
+          "the 64-bit farm is its own set: the media and DirectShow modules are 32-bit only here")
+    check(real.absentModules(64).contains("quartz") && real.absentModules(64).contains("dinput8") == false,
+          "a module the 64-bit farm does not carry is absent for a 64-bit launch")
+    check(real.wineNotBuilt?.contains { $0.name == "mfcore" } == true
+          && real.notBuiltReason("MFCore.dll")?.isEmpty == false,
+          "the components Wine never built are carried with the reason the report quotes")
     let odd = GameCompatibility.plan(CompatLaunch(executable: "sample.exe",
         importedDLLs: ["ole32.dll", "madeup_thing.dll"]), database: real)
     check(odd.unaccountedImports == ["madeup_thing"], "a runtime module is not reported; an unknown one is")
@@ -625,6 +704,20 @@ def check_database() -> None:
     guarded = sum(1 for game in games if game.get('conditional'))
     require(guarded >= 20, f'game fixes that depend on a runtime condition are flagged ({guarded})')
 
+    # The two Winlator repositories do not carry the same assets, and passing
+    # the one without them used to import a smaller database in silence.
+    winlator_root = ROOT / 'compat'
+    require(generator.winlator_assets(winlator_root) is None,
+            'a path that is not a Winlator assets directory is refused, not imported as an empty set')
+    with tempfile.TemporaryDirectory() as tmp:
+        assets = Path(tmp) / 'assets' / 'wincomponents'
+        assets.mkdir(parents=True)
+        (assets / 'wincomponents.json').write_text('{}', encoding='utf-8')
+        require(generator.winlator_assets(Path(tmp)) == Path(tmp) / 'assets',
+                'the app repository root is found')
+        require(generator.winlator_assets(Path(tmp) / 'assets') == Path(tmp) / 'assets',
+                'and so is the assets directory itself')
+
     # Editing compat/games.json without regenerating compat.json is the easy
     # mistake, so the committed database must carry every curated profile.
     stale: list[str] = []
@@ -652,7 +745,9 @@ def check_database() -> None:
     rules = data.get('rules') or []
     remedies = data.get('remedies') or {}
     modules = data.get('wine_modules') or []
+    modules_64 = data.get('wine_modules_64') or []
     not_shipped = data.get('wine_not_shipped') or []
+    not_built = data.get('not_built') or []
     valid_categories = {'dependency', 'dll', 'registry', 'dx9', 'dx11', 'dx12', 'media', 'audio',
                         'input', 'wine_fex', 'drm', 'anticheat', 'save_path', 'launch', 'other'}
     require(bool(baseline.get('title')) and baseline.get('windows_version'),
@@ -662,6 +757,37 @@ def check_database() -> None:
     require(len(modules) >= 400, f'the runtime module list is present ({len(modules)})')
     require('ir50_32' in not_shipped and 'ir50_32' not in modules,
             'the modules the iOS build leaves out are listed apart from the ones it provides')
+    # The 64-bit list is not a hand-written table: it is the farm directories
+    # (gen-game-compat.py's farm_modules()), so a DLL copied into a farm reaches
+    # the engine without a Wine checkout. check-pe-imports.py checks the same
+    # list against the shipped files and their imports.
+    require(sorted(generator.farm_modules()) == sorted(modules_64),
+            f'the 64-bit module list is the farms the app ships ({len(modules_64)} names)')
+    require({'winemetal', 'wineios.drv', 'xtajit64'} <= set(modules_64),
+            "the farms' own modules are in it (DXMT winemetal, Madeira wineios.drv, FEX xtajit64)")
+    built_never = {(entry or {}).get('name', '').lower() for entry in not_built}
+    require({'mfcore', 'd3dcompiler_44', 'd3dcompiler_45'} <= built_never,
+            'the names Wine has never built in any architecture are listed, with their reasons')
+    require(all((entry or {}).get('reason') for entry in not_built)
+            and not (built_never & (set(modules) | set(modules_64))),
+            'each never-built name carries the reason the report quotes, and none is also claimed as provided')
+    # An override that pins the builtin alone cannot resolve when the runtime has
+    # no builtin of that name, and it stops the title's own copy from loading.
+    # The import sanitiser drops what it finds; this keeps the database clean. An
+    # API set name is the exception: the loader resolves it to the module
+    # implementing the contract, so pinning it is how the UCRT recipe keeps the
+    # contracts inside the prefix.
+    api_set_prefixes = [str(prefix).lower() for prefix in data.get('api_set_prefixes') or []]
+    def serves(name: str) -> bool:
+        return name in modules or name in modules_64 \
+            or any(name.startswith(prefix) for prefix in api_set_prefixes)
+    named = list(dependencies.items()) + list(recipes.items()) \
+        + [(game.get('title') or str(index), game) for index, game in enumerate(games)]
+    for owner, block in named:
+        for name, order in (block.get('dll_overrides') or {}).items():
+            require(name == name.lower().lstrip('*'), f'{owner}: override {name!r} is not a module name')
+            if set(t for t in order.split(',') if t) == {'b'}:
+                require(serves(name), f'{owner}: {name}=b pins a module the runtime does not ship')
     general: list[str] = []
     for rule in rules:
         if not rule.get('id') or not rule.get('when'):
@@ -692,12 +818,17 @@ def check_database() -> None:
         print('  ' + problem)
 
     # Every DLL named in the Stage 3 audit is answered: by the catalogue, by a
-    # general rule, or by the runtime itself. Silence here means a game that
-    # imports it gets no component, no fix and no note.
+    # general rule, or by the runtime itself. A name Wine has never built in any
+    # architecture (mfcore, the DirectX SDK compilers) is answered too, because
+    # the report carries it with the reason and the title is told to bring its
+    # own copy. Silence here means a game that imports it gets no component, no
+    # fix and no note.
     answered = imports | {name for rule in rules
                           for name in (rule.get('when', {}).get('imports') or [])
                           + (rule.get('when', {}).get('files') or [])}
     answered |= {name.lower() for name in modules}
+    answered |= {name.lower() for name in modules_64}
+    answered |= {(entry or {}).get('name', '').lower() for entry in (data.get('not_built') or [])}
     for name in ['easyanticheat', 'easyanticheat_x64', 'beclient', 'beclient_x64', 'vmprotect', 'themida',
                  'dstorage', 'dstoragecore', 'opengl32', 'glu32', 'mfcore', 'mfreadwrite', 'eossdk',
                  'eossdk-win64-shipping', 'upc_r2_loader64', 'uplay_r1_loader', 'discord_game_sdk',

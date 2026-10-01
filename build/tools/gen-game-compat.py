@@ -36,6 +36,35 @@ ROOT = Path(__file__).resolve().parents[2]
 COMPAT = ROOT / 'compat'
 OUT = ROOT / 'app/Madeira/compat.json'
 
+# The 64-bit half of the runtime, as the app ships it: one directory per guest
+# architecture (ARM64EC for the x86-64 emulation path, aarch64 for a native
+# ARM64 guest), each holding the PE modules the loader searches first
+# (WineProcessBridge.m sets WINEDLLPATH to the bundle root).
+#
+# Read from the directories, not from compat/wine-modules.json: that file needs
+# a Wine checkout to regenerate, and a DLL added to a farm has to reach the
+# engine without one. build/host-tests/check-pe-imports.py requires the two to
+# agree, so this cannot drift from what is shipped.
+FARMS_64 = ('arm64ec-windows', 'aarch64-windows')
+# Module file extensions the farms hold. A DLL loses the extension (the Wine
+# module list's spelling); anything else keeps it. Programs (.exe) are not
+# import targets -- the launch path probes those -- so they are not modules.
+MODULE_SUFFIXES = ('.dll', '.drv', '.cpl', '.ax', '.acm', '.ocx')
+
+
+def farm_modules() -> list[str]:
+    """The modules the app ships for a 64-bit guest, from the farm directories."""
+    names: set[str] = set()
+    for directory in FARMS_64:
+        path = ROOT / 'app' / 'Madeira' / directory
+        if not path.is_dir():
+            continue
+        for entry in path.iterdir():
+            name = entry.name.lower()
+            if name.endswith(MODULE_SUFFIXES):
+                names.add(name[:-4] if name.endswith('.dll') else name)
+    return sorted(names)
+
 # Wine DLL override orders (Protonfixes OverrideOrder -> Wine's one-letter form).
 OVERRIDE_ORDERS = {
     'DISABLED': '',
@@ -1120,6 +1149,13 @@ def validate_universal(database: dict) -> None:
     for name in not_shipped:
         if name in modules:
             fail(f'wine_not_shipped: {name!r} is also listed as provided')
+    modules_64 = database.get('wine_modules_64') or []
+    if len(modules_64) < 80:
+        fail(f'wine_modules_64: {len(modules_64)} names; the 64-bit farms are '
+             'missing or empty (app/Madeira/*-windows)')
+    for name in modules_64:
+        if not name or name != name.lower():
+            fail(f'wine_modules_64: {name!r} must be a lowercase module name')
     api_sets = database.get('api_set_prefixes') or []
     if not api_sets:
         fail('api_set_prefixes: a Wine module list without the API set prefixes '
@@ -1134,6 +1170,153 @@ def validate_universal(database: dict) -> None:
         if dep.get('category') in {'anticheat', 'drm'} and dep.get('support') != 'unsupported':
             fail(f'dependency {dep_id}: category {dep["category"]} must be unsupported '
                  '(the ladder stops on it)')
+
+    # What the runtime serves decides which claims the catalogue may make. A
+    # component that says "the runtime has this" has to name a module one of the
+    # farms carries; one that says "partly" must not claim a name Wine never
+    # built without naming the file it installs itself. Otherwise the entry
+    # silences the report while nothing answers the import, which is how a title
+    # fails with no explanation.
+    provided, never_built, prefixes = runtime_names(database)
+    for dep_id, dep in dependencies.items():
+        support = dep.get('support')
+        if support not in ('builtin', 'partial'):
+            continue
+        installed = {normalise_name(name) for name in dep.get('dlls') or []}
+        for name in dep.get('imports') or []:
+            if serves(provided, prefixes, name) or normalise_name(name) in installed:
+                continue
+            if support == 'builtin':
+                fail(f'dependency {dep_id}: imports {name!r}, which no farm provides')
+            if normalise_name(name) in never_built:
+                fail(f'dependency {dep_id}: claims {name!r}, which Wine never built, without '
+                     'naming a file it installs (add it to dlls, or drop it from imports: '
+                     'the engine reports such a name as unavailable)')
+
+    # An override that pins the builtin alone cannot resolve when the runtime has
+    # no builtin of that name, and it stops the title's own copy from loading.
+    # The import sanitiser drops what it finds in imported data; this keeps an
+    # authored one from creeping back in.
+    def check_overrides(owner: str, overrides: dict) -> None:
+        for name, order in (overrides or {}).items():
+            if name != name.lower().lstrip('*'):
+                fail(f'{owner}: override name {name!r} is not a normalised module name')
+            tokens = [token.strip() for token in str(order).split(',') if token.strip()]
+            if tokens == ['b'] and not serves(provided, prefixes, name):
+                fail(f'{owner}: {name}=b names a module the runtime does not ship')
+
+    for dep_id, dep in dependencies.items():
+        check_overrides(f'dependency {dep_id}', dep.get('dll_overrides'))
+    for recipe_id, recipe in recipes.items():
+        check_overrides(f'recipe {recipe_id}', recipe.get('dll_overrides'))
+    for rule in database.get('rules', []):
+        check_overrides(f'rule {rule.get("id")}', rule.get('dll_overrides'))
+    for category, remedy in (database.get('remedies') or {}).items():
+        check_overrides(f'remedy {category}', remedy.get('dll_overrides'))
+    if database.get('baseline'):
+        check_overrides('baseline', database['baseline'].get('dll_overrides'))
+    for game in database.get('games', []):
+        check_overrides(f'game {game.get("title")}', game.get('dll_overrides'))
+
+
+def normalise_name(name: str) -> str:
+    """A module or import name as the engine compares them."""
+    name = str(name).lower()
+    return name[:-4] if name.endswith('.dll') else name
+
+
+def runtime_names(database: dict) -> tuple[set[str], set[str], list[str]]:
+    """(names the runtime serves, names Wine never built, API set prefixes).
+
+    Both architectures count: a component is a claim about what the runtime
+    serves, and the per-launch report decides which half applies. The second set
+    is what Wine never built (mfcore, the DirectX SDK compilers), whose reasons
+    the engine quotes. An API set name is not a file yet is served all the same:
+    the loader resolves it to the module implementing the contract.
+    """
+    provided = {normalise_name(name) for name in (database.get('wine_modules') or [])}
+    provided |= {normalise_name(name) for name in (database.get('wine_modules_64') or [])}
+    missing = {normalise_name((entry or {}).get('name') or '') for entry in (database.get('not_built') or [])}
+    prefixes = [str(prefix).lower() for prefix in database.get('api_set_prefixes') or []]
+    return provided, missing, prefixes
+
+
+def serves(provided: set[str], prefixes: list[str], name: str) -> bool:
+    """Whether the runtime answers an import, API sets included."""
+    name = normalise_name(name)
+    return name in provided or any(name.startswith(prefix) for prefix in prefixes)
+
+
+def sanitise_overrides(database: dict) -> list[str]:
+    """Correct the DLL overrides taken from other launchers, in place.
+
+    Two spellings mean something in another runtime and nothing here:
+
+    * a leading `*` (Protonfixes writes `winedll_override('*dsound', BUILTIN)`),
+      which Proton understands as a wildcard and Wine reads as a module name no
+      DLL has. Madeira's overrides are written for the one launch, so the
+      literal name is the fix the file meant;
+    * `b` alone for a module this runtime does not ship, which cannot resolve
+      and — worse — stops the title's own copy from loading. Winlator's data has
+      `vulkan-1=b` for titles it runs on a Wine with Vulkan; here it would break
+      the file the title ships. The override is dropped and the title records
+      why, which is what `unavailable_fixes` is for.
+
+    Returns the lines the caller logs.
+    """
+    provided, missing, prefixes = runtime_names(database)
+    notes: list[str] = []
+
+    def fix(owner: str, overrides: dict) -> tuple[dict, list[str]]:
+        result: dict[str, str] = {}
+        dropped: list[str] = []
+        for name, order in overrides.items():
+            clean = name.lower().lstrip('*')
+            tokens = [token.strip() for token in str(order).split(',') if token.strip()]
+            if clean != name.lower():
+                notes.append(f'{owner}: {name} -> {clean} (a `*` wildcard is not Wine syntax)')
+            if tokens == ['b'] and not serves(provided, prefixes, clean):
+                why = 'Wine never built it' if normalise_name(clean) in missing else 'this runtime does not ship it'
+                notes.append(f'{owner}: dropped {clean}={order} ({why}; it would hide the copy the title ships)')
+                dropped.append(clean)
+                continue
+            result[clean] = order
+        return result, dropped
+
+    def before(block: dict, owner: str) -> None:
+        if 'dll_overrides' not in block:
+            return
+        original = dict(block.get('dll_overrides') or {})
+        fixed, dropped = fix(owner, original)
+        if fixed == original:
+            return
+        block['dll_overrides'] = fixed
+        if not dropped:
+            return   # a renamed wildcard needs no apology; the data says it
+        if 'title' in block or 'executables' in block or 'unavailable_fixes' in block:
+            # A title records the loss where the details screen shows it.
+            fixes = list(block.get('unavailable_fixes') or [])
+            fixes.append('DLL override dropped: ' + ', '.join(dropped)
+                         + ' (this runtime does not ship it, and pinning it would hide the file the title brings)')
+            block['unavailable_fixes'] = fixes
+        else:
+            lines = [line for line in notes if line.startswith(owner + ':')]
+            existing = block.get('notes')
+            block['notes'] = (existing + ' ' if existing else '') + '; '.join(lines)
+
+    for dep_id, dep in database.get('dependencies', {}).items():
+        before(dep, f'dependency {dep_id}')
+    for recipe_id, recipe in database.get('recipes', {}).items():
+        before(recipe, f'recipe {recipe_id}')
+    for rule in database.get('rules', []):
+        before(rule, f'rule {rule.get("id")}')
+    for category, remedy in (database.get('remedies') or {}).items():
+        before(remedy, f'remedy {category}')
+    if database.get('baseline'):
+        before(database['baseline'], 'baseline')
+    for game in database.get('games', []):
+        before(game, f'game {game.get("title") or game.get("appid") or game.get("gog_slug")}')
+    return notes
 
 
 def validate(database: dict) -> None:
@@ -1263,7 +1446,9 @@ def build(protonfixes: Path | None, winetricks: Path | None, bottles: Path | Non
         'rules': load(COMPAT / 'rules.json').get('rules', []),
         'remedies': load(COMPAT / 'rules.json').get('remedies', {}),
         'wine_modules': load(COMPAT / 'wine-modules.json').get('modules', []),
+        'wine_modules_64': farm_modules(),
         'wine_not_shipped': load(COMPAT / 'wine-modules.json').get('not_shipped', []),
+        'not_built': load(COMPAT / 'wine-modules.json').get('not_built', []),
         'api_set_prefixes': load(COMPAT / 'wine-modules.json').get('api_set_prefixes', []),
     }
     recipes = database['recipes']
@@ -1298,8 +1483,25 @@ def build(protonfixes: Path | None, winetricks: Path | None, bottles: Path | Non
             database['games'].append(game)
         database['winlator_skipped_generic_sections'] = skipped
 
+    sanitised = sanitise_overrides(database)
+    for line in sanitised:
+        print('override:' , line)
     validate(database)
     return database
+
+
+def winlator_assets(path: Path) -> Path | None:
+    """The Winlator assets directory in a path that may be either repository.
+
+    The two repositories do not carry the same assets: the box64 per-executable
+    profiles and the Windows component definitions live in the app repository.
+    A path with neither file is not a source, and saying so beats importing the
+    smaller set without saying anything.
+    """
+    for candidate in (path / 'app/src/main/assets', path / 'assets', path):
+        if (candidate / 'box64/default.box64rc').exists() or (candidate / 'wincomponents/wincomponents.json').exists():
+            return candidate
+    return None
 
 
 def main() -> int:
@@ -1317,12 +1519,11 @@ def main() -> int:
         winetricks = winetricks / 'src/winetricks'
     winlator = args.winlator
     if winlator:
-        # Accept the repository root, the app repository root, or the assets
-        # directory itself.
-        for candidate in (winlator / 'app/src/main/assets', winlator / 'assets', winlator):
-            if (candidate / 'box64/default.box64rc').exists() or (candidate / 'wincomponents/wincomponents.json').exists():
-                winlator = candidate
-                break
+        winlator = winlator_assets(args.winlator)
+        if winlator is None:
+            raise SystemExit(f'{args.winlator} does not look like the Winlator assets directory '
+                             '(no box64/default.box64rc and no wincomponents/wincomponents.json)')
+        print(f'winlator: reading {winlator}')
     database = build(args.protonfixes, winetricks, args.bottles, winlator)
     text = json.dumps(database, indent=1, sort_keys=False, ensure_ascii=False) + '\n'
     if args.check:

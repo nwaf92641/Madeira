@@ -4,16 +4,16 @@
  "_comment": "General compatibility rules: a fix that follows from what a program *is* (the DLLs it imports, the files beside it, its name, its architecture) rather than from which title it is. They apply to any executable, known or not, which is what makes an unprofiled program work without a profile. A rule's conditions all have to hold; within one condition list any name is enough. `remedies` maps a diagnosis category (CompatDiagnosis.swift) to the variation tried on the next launch when a session failed that way, so an unknown program is retried with the fix for what actually went wrong instead of being retried blindly.",
  "rules": [
   {
-   "id": "media-foundation-64bit",
-   "title": "64-bit Media Foundation",
+   "id": "media-unix-side-64bit",
+   "title": "64-bit media decoding",
    "when": {
-    "imports": ["mfplat", "mfreadwrite", "mf", "mfcore"],
+    "imports": ["mfplat", "mfreadwrite", "mf", "mfmediaengine", "mfsrcsnk", "mfmp4srcsnk", "mfasfsrcsnk", "mfplay", "quartz", "qasf", "devenum", "amstream", "mciqtz32", "wmvcore", "wmvdecod", "wmadmod", "xaudio2_7", "xaudio2_8", "xaudio2_9", "xactengine3_7", "x3daudio1_7", "xapofx1_5"],
     "bits": 64
    },
    "env": {
     "MADEIRA_WG_64BIT": "1"
    },
-   "note": "A 64-bit program that decodes through Media Foundation needs the runtime's real media unix side; without MADEIRA_WG_64BIT=1 it gets the stub table and playback fails. 32-bit (WoW64) callers have it by default, so this is set only for 64-bit images. See docs/MEDIA.md.",
+   "note": "Every media decoder in this Wine runs through winegstreamer's unix side: Media Foundation's source resolver and media engine, the DirectShow MP3/WAV parsers, quartz's MP4 splitter, and the WMA voice decoder FAudio asks COM for on every xWMA/XMA sound (without it the compressed bytes reach the mixer as PCM, which is loud static). A 64-bit caller gets the stub table unless MADEIRA_WG_64BIT=1, so the switch is set for it here; 32-bit (WoW64) callers have the unix side by default and need nothing. This build's 64-bit farm does not carry winegstreamer.dll yet, so a 64-bit title that plays video or xWMA audio still has no decoder until that module is installed beside the others (docs/MEDIA.md).",
    "source": "madeira"
   },
   {

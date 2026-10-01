@@ -30,6 +30,12 @@ API set names are the third case. A modern Windows program imports a dozen
 to the module that implements the contract (ucrtbase for the C runtime sets,
 kernelbase for the core ones). They are recorded as prefixes, because there are
 hundreds of them and a program may invent its own from the same schema.
+
+What this tool does not write is the 64-bit module set: that is whatever the
+app's farm directories hold, and `build/tools/gen-game-compat.py` reads them
+directly (`farm_modules()`), so a DLL added to a farm reaches the engine
+without a Wine checkout. `build/host-tests/check-pe-imports.py` checks the two
+against each other.
 """
 from __future__ import annotations
 
@@ -55,6 +61,58 @@ DXMT_OWNED = {'d3d9', 'd3d10core', 'd3d11', 'dxgi', 'winemetal'}
 # hundreds of them.
 API_SET_PREFIXES = ['api-ms-win-', 'ext-ms-win-']
 MODULE_DIR = re.compile(r'dlls/([A-Za-z0-9_.+-]+)(?:/[A-Za-z0-9_.+-]+)*')
+
+# Windows components this runtime does not build at all, with the reason. They
+# differ from `not_shipped` above: those are Wine modules the iOS build drops,
+# these are names Wine has never had (a Windows split or a redistributable
+# library). A program that imports one by name cannot be served — the engine
+# says so instead of assuming the title ships it — and the reason is what the
+# catalogue and the docs quote.
+NOT_BUILT = {
+    'mfcore':
+        'Windows 8 split the Media Foundation platform in two; Wine implements '
+        'the platform API in mfplat.dll and has no mfcore module',
+    'd3dcompiler_44':
+        'a DirectX SDK shader compiler; Wine builds d3dcompiler_33 through 43, 46 and 47',
+    'd3dcompiler_45':
+        'a DirectX SDK shader compiler; Wine builds d3dcompiler_33 through 43, 46 and 47',
+    'd3d11_1':
+        'Windows 8 renamed the Direct3D 11.1 interfaces into a second DLL; Wine '
+        'exports them from d3d11.dll, which is the file a title should link',
+    'dxgi1_2': 'Windows 8 split the DXGI 1.2 interfaces into this DLL; Wine exports them from dxgi.dll',
+    'dxgi1_3': 'Windows 8.1 split the DXGI 1.3 interfaces into this DLL; Wine exports them from dxgi.dll',
+    'dxgi1_4': 'Windows 10 split the DXGI 1.4 interfaces into this DLL; Wine exports them from dxgi.dll',
+    'dxil':
+        'the DirectX Shader Compiler\'s validator, a redistributable that ships '
+        'with the title rather than with Windows; neither Wine nor DXMT builds it',
+    'dxcompiler':
+        'the DirectX Shader Compiler, a redistributable that ships with the '
+        'title rather than with Windows; neither Wine nor DXMT builds it',
+    'mscoreei':
+        '.NET\'s installation shim; Wine has one managed entry point, mscoree.dll',
+    'xactengine2_1': 'Wine builds xactengine2_0, 2_4, 2_7, 2_9 and the 3.x series only',
+    'xactengine2_2': 'Wine builds xactengine2_0, 2_4, 2_7, 2_9 and the 3.x series only',
+    'xactengine2_3': 'Wine builds xactengine2_0, 2_4, 2_7, 2_9 and the 3.x series only',
+    'xactengine2_5': 'Wine builds xactengine2_0, 2_4, 2_7, 2_9 and the 3.x series only',
+    'xactengine2_6': 'Wine builds xactengine2_0, 2_4, 2_7, 2_9 and the 3.x series only',
+    'xactengine2_8': 'Wine builds xactengine2_0, 2_4, 2_7, 2_9 and the 3.x series only',
+    'xactengine2_10': 'Wine builds xactengine2_0, 2_4, 2_7, 2_9 and the 3.x series only',
+    'nvapi':
+        'NVIDIA\'s driver interface; there is no NVIDIA driver behind Metal, and '
+        'DXMT\'s nvapi module is not in the farms this app ships',
+    'nvapi64':
+        'NVIDIA\'s driver interface; there is no NVIDIA driver behind Metal, and '
+        'DXMT\'s nvapi64 module is not in the farms this app ships',
+    'nvngx': 'the DLSS entry point behind NVAPI; DXMT builds one and this app does not ship it',
+    'nvngx_dlss': 'the DLSS runtime a title ships itself; it needs an NVIDIA driver, which Metal is not',
+    'nvngx_dlssg': 'the DLSS frame-generation runtime; it needs an NVIDIA driver, which Metal is not',
+    'amdxc64': 'AMD\'s DX11 shader compiler driver component; there is no AMD driver behind Metal',
+    'amdxcffx64': 'AMD\'s FidelityFX driver component; there is no AMD driver behind Metal',
+    'amfrt64': 'AMD\'s Media Framework runtime; there is no AMD driver behind Metal',
+    'atiadlxx': 'AMD\'s display library; there is no AMD driver behind Metal',
+    'atiumd64': 'AMD\'s user-mode display driver; there is no AMD driver behind Metal',
+    'atiumd6a': 'AMD\'s video component; there is no AMD driver behind Metal',
+}
 
 
 def not_shipped_from_build(path: Path) -> list[str]:
@@ -123,6 +181,9 @@ def main() -> int:
     not_shipped = not_shipped_from_build(arguments.skip_from)
     dropped = set(not_shipped)
     modules = [name for name in upstream if name not in dropped]
+    for name in NOT_BUILT:
+        if name in modules:
+            raise SystemExit(f'not_built lists {name!r}, which this Wine build provides')
     if len(modules) < 400:
         raise SystemExit(f'{configure} lists only {len(modules)} modules; is it a Wine configure?')
     document = {
@@ -133,6 +194,13 @@ def main() -> int:
                 'here and is reported.',
         'modules': modules,
         'not_shipped': not_shipped,
+        'not_built_note':
+            'Windows components this runtime does not build at all, with the '
+            'reason. Unlike not_shipped, which is the iOS build dropping a module '
+            'Wine has, these are names Wine has never had; a program importing one '
+            'cannot be served, and the engine reports it as unavailable rather '
+            'than as a file the title will ship.',
+        'not_built': [{'name': name, 'reason': NOT_BUILT[name]} for name in sorted(NOT_BUILT)],
         'api_set_prefixes': list(API_SET_PREFIXES),
     }
     text = json.dumps(document, indent=2, sort_keys=False) + '\n'

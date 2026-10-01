@@ -46,13 +46,38 @@ replace it when adding a feature.
   builds `app/Madeira/compat.json` (run it with `--protonfixes DIR
   --winetricks DIR --bottles DIR --winlator DIR` to import upstream fixes,
   `--check` to compare without writing). Never hand-edit
-  `app/Madeira/compat.json`.
+  `app/Madeira/compat.json`. `--winlator` wants the app repository's assets
+  (`winlator-app/app/src/main/assets`): the box64 per-executable profiles and
+  the component definitions are only there, and a path carrying neither is
+  refused rather than imported as an empty set.
 - `compat/wine-modules.json` is generated too, by
   `build/tools/gen-wine-modules.py --configure <wine>/configure` (or `--wine
-  <checkout>`): the modules the runtime provides, the ones the iOS build skips
-  (`build/wine-i386/build.sh`, SKIP_REASON) and the API set prefixes the loader
-  resolves. It is the list the engine uses to tell "Wine answers this" from
-  "nothing here has this".
+  <checkout>`): the modules the runtime provides in the 32-bit architecture,
+  the names Wine never built (with the reason the report quotes), the ones the
+  iOS build skips (`build/wine-i386/build.sh`, SKIP_REASON) and the API set
+  prefixes the loader resolves. The 64-bit half is not written there: it is
+  read from the farm directories by `gen-game-compat.py`, so what the database
+  claims to ship is what the bundle holds. Together they are the list the
+  engine uses to tell "Wine answers this" from "nothing here has this".
+- The two PE farms are not the same set: the 64-bit farm is a smaller list
+  (the media, DirectShow, XACT/XAudio, Direct2D and D3DX families are 32-bit
+  only in the farm the app ships today). So an answer about what the runtime
+  has is per launch, not global — `absentModules(bits)` and `serves(name,
+  bits:)` are the two ways to ask, and a `builtin` pin the launching
+  architecture cannot resolve is dropped with the reason in the plan instead
+  of being written. Do not undo that filter: it exists because `xaudio2_7=b`
+  on a 64-bit launch hides the copy the title shipped and loads nothing.
+- That 64-bit shortfall is a build step, not a property of the port:
+  `build/wine-arm64ec/build.sh` installs the farm (every module the configured
+  tree has a rule for, minus a policy list whose entries each carry a reason)
+  and then checks the import closure of what it installed. `check-pe-imports.py`
+  checks the committed farm the same way and keeps `compat.json` in step with
+  it. The classification behind the policy — 494 of the 513 missing modules
+  install as they are, 7 load with one failing feature, 8 and the host drivers
+  cannot load at all — is in docs/GAME_COMPATIBILITY.md, "The 64-bit farm's
+  missing modules". Do not add a module to the policy without its reason, and
+  do not "fix" a module that loads by skipping it: the ones that load are
+  installed on purpose.
 - The universal path is data, in order of priority: `baseline.json` (Windows
   version for everything) < `rules.json` (a fix that follows from what the
   program is: its imports, the files beside it, its name, its architecture) <

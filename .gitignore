@@ -159,3 +159,7 @@ app/Madeira/i386-windows/*
 # Madeira Dock: built from research/madeira-dock by build/madeira-dock/build.sh
 app/Madeira/arm64ec-windows/dockhost.exe
 app/Madeira/arm64ec-windows/dock-notices.txt
+
+# Python tool imports (build/tools/*.py imported by a host test) leave bytecode
+__pycache__/
+*.pyc

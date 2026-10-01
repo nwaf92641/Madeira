@@ -293,6 +293,134 @@ check(combined.gameList.count == 2, "an overlay replaces a shared game and adds 
 check(combined.gameList.first { $0.appid == 1 }?.title == "A2", "the overlay wins for a shared game")
 check(combined.dependencyTable["x"] != nil && combined.dependencyTable["y"] != nil, "an overlay keeps and adds dependencies")
 
+// the universal configuration, the general rules and the remedies
+let universal = db(#"""
+{"schema":1,
+ "baseline":{"title":"Any Windows program","windows_version":"win10"},
+ "dependencies":{
+   "xact":{"title":"XACT","support":"builtin","imports":["xactengine3_7"]},
+   "eac":{"title":"Easy Anti-Cheat","kind":"anticheat","category":"anticheat","support":"unsupported"},
+   "font":{"title":"Fonts","support":"payload","dlls":["arial.ttf"]}},
+ "recipes":{
+   "legacy-d3d":{"title":"Legacy Direct3D configuration","category":"dx9",
+                 "registry":[{"hive":"HKCU","key":"Software\\Wine\\AppDefaults\\{app}\\Direct3D",
+                              "name":"VideoMemorySize","type":"REG_SZ","value":"1024"}]},
+   "no-3d":{"title":"No 3D for this program","category":"launch",
+            "registry":[{"hive":"HKCU","key":"Software\\Wine\\AppDefaults\\{app}\\Direct3D",
+                         "name":"renderer","type":"REG_SZ","value":"no3d"}]},
+   "wave":{"title":"DirectShow wave renderer","category":"audio"}},
+ "games":[{"title":"Known","executables":["known.exe"],"windows_version":"win7"}],
+ "rules":[
+   {"id":"legacy-directdraw","title":"DirectDraw-era Direct3D","when":{"imports":["ddraw","d3d8"]},
+    "recipes":["legacy-d3d"]},
+   {"id":"helper-no-3d","title":"Helper process, no Direct3D","when":{"executable_contains":["crashhandler"]},
+    "recipes":["no-3d"]},
+   {"id":"anticheat-eac-files","title":"Easy Anti-Cheat files","when":{"files":["easyanticheat_x64"]},
+    "dependencies":["eac"]},
+   {"id":"media-foundation-64bit","title":"64-bit Media Foundation","when":{"imports":["mfplat"],"bits":64},
+    "env":{"MADEIRA_WG_64BIT":"1"}},
+   {"id":"never","title":"Never matches","when":{"imports":["nosuchdll"]},"env":{"MADEIRA_UNUSED":"1"}}],
+ "remedies":{
+   "dx9":{"name":"Legacy Direct3D settings","recipes":["legacy-d3d"]},
+   "audio":{"name":"DirectShow wave path","recipes":["wave"]}},
+ "wine_modules":["ole32","d3d9","mfplat","user32"],
+ "wine_not_shipped":["ir50_32","vulkan-1"],
+ "api_set_prefixes":["api-ms-win-","ext-ms-win-"]}
+"""#)
+
+let unknown = GameCompatibility.plan(CompatLaunch(executable: "somegame.exe"), database: universal)
+check(unknown.matched.isEmpty && unknown.baselineTitle == "Any Windows program",
+      "a program with no profile starts from the universal configuration")
+check(unknown.windowsVersion == "win10" && !unknown.isEmpty,
+      "the baseline sets the Windows version and makes the plan real")
+check(GameCompatibility.summary(unknown).contains { $0.contains("no profile matches") },
+      "the summary says no profile matched")
+let known = GameCompatibility.plan(CompatLaunch(executable: "known.exe"), database: universal)
+check(known.windowsVersion == "win7" && known.matched.first?.title == "Known",
+      "a profile overrides the baseline")
+
+let ddraw = GameCompatibility.plan(CompatLaunch(executable: "oldgame.exe", importedDLLs: ["DDRAW.DLL"]), database: universal)
+check(ddraw.rules == ["legacy-directdraw"], "a rule applies from the DLL the program imports")
+check(ddraw.recipes.contains("legacy-d3d"), "the rule's fix is applied")
+check(ddraw.registry.contains { $0.name == "VideoMemorySize"
+        && ($0.key?.contains("AppDefaults\\oldgame.exe") ?? false) },
+      "a rule's per-application registry value is written for this program")
+check(GameCompatibility.summary(ddraw).contains { $0.hasPrefix("rules: ") }, "the summary names the rules")
+let modern = GameCompatibility.plan(CompatLaunch(executable: "modern.exe", importedDLLs: ["d3d11.dll"]), database: universal)
+check(modern.rules.isEmpty && modern.environment["MADEIRA_UNUSED"] == nil,
+      "a rule whose conditions do not hold does not apply")
+
+let files = GameCompatibility.plan(CompatLaunch(executable: "game.exe", files: ["easyanticheat_x64.dll", "assets"]),
+                                   database: universal)
+check(files.rules.contains("anticheat-eac-files") && files.unsatisfied.contains { $0.id == "eac" },
+      "a file beside the program selects the rule that names the component")
+check(files.isFatal && files.alternatives.count == 1,
+      "an anti-cheat title keeps one attempt: no configuration helps")
+let helper = GameCompatibility.plan(CompatLaunch(executable: "UnityCrashHandler64.exe"), database: universal)
+check(helper.rules.contains("helper-no-3d"), "a rule can match the program's name alone")
+
+let mf64 = GameCompatibility.plan(CompatLaunch(executable: "player.exe", importedDLLs: ["mfplat.dll"], bits: 64),
+                                  database: universal)
+check(mf64.environment["MADEIRA_WG_64BIT"] == "1", "a 64-bit Media Foundation title gets the runtime's media side")
+let mf32 = GameCompatibility.plan(CompatLaunch(executable: "player.exe", importedDLLs: ["mfplat.dll"], bits: 32),
+                                  database: universal)
+check(mf32.environment["MADEIRA_WG_64BIT"] == nil, "the same import on 32-bit needs nothing: the default applies")
+
+let dx9Failure = GameCompatibility.plan(CompatLaunch(executable: "unknown.exe", importedDLLs: ["ddraw.dll"],
+                                                 previousFailure: ["dx9"]), database: universal)
+check(dx9Failure.alternatives.count == 2 && dx9Failure.alternatives[1].name == "Legacy Direct3D settings",
+      "a failed category adds the attempt that answers it")
+let retry = GameCompatibility.plan(CompatLaunch(executable: "unknown.exe", importedDLLs: ["ddraw.dll"],
+                                                previousFailure: ["dx9"]), database: universal, alternative: 1)
+check(retry.remedy == "dx9" && retry.recipes.contains("legacy-d3d"), "the remedy is applied on the second attempt")
+check(retry.notes.contains { $0.contains("retry") }, "the retry says why it happened")
+let noRemedy = GameCompatibility.plan(CompatLaunch(executable: "unknown.exe", previousFailure: ["save_path"]),
+                                      database: universal)
+check(noRemedy.alternatives.count == 1, "a category with no remedy adds no attempt")
+let fatal = GameCompatibility.plan(CompatLaunch(executable: "online.exe", files: ["easyanticheat_x64"],
+                                                previousFailure: ["dx9"]), database: universal)
+check(fatal.isFatal && fatal.alternatives.count == 1, "a fatal reason collapses the ladder even when a remedy exists")
+let outOfRange = GameCompatibility.plan(CompatLaunch(executable: "unknown.exe", previousFailure: ["dx9"]),
+                                     database: universal, alternative: 9)
+check(outOfRange.alternativeIndex == outOfRange.alternatives.count - 1, "an out-of-range attempt clamps")
+
+let loose = GameCompatibility.plan(CompatLaunch(executable: "odd.exe",
+                                                importedDLLs: ["ole32.dll", "ir50_32.dll", "thirdparty.dll", "ddraw.dll"]),
+                                   database: universal)
+check(loose.unavailableModules == ["ir50_32"], "a module the runtime does not ship is named as such")
+check(loose.unaccountedImports == ["thirdparty"], "an import nothing accounts for is named")
+check(loose.rules.contains("legacy-directdraw"), "an import a rule answers for applies the rule")
+check(loose.notes.contains { $0.contains("ir50_32") }, "the report says which module is missing")
+check(loose.notes.allSatisfy { !$0.contains("ddraw") }, "an import that is answered is not reported as unaccounted")
+let apiSets = GameCompatibility.plan(CompatLaunch(executable: "modern.exe",
+    importedDLLs: ["api-ms-win-core-synch-l1-1-0.dll", "api-ms-win-crt-runtime-l1-1-0.dll",
+                   "ext-ms-win-ntuser-window-l1-1-0.dll"]), database: universal)
+check(apiSets.unaccountedImports.isEmpty && apiSets.unavailableModules.isEmpty,
+      "an API set name is resolved by the loader, so it is neither missing nor unaccounted")
+let blank = GameCompatibility.emptyDatabase()
+check(blank.isAPISet("api-ms-win-core-heap-l1-1-0.dll") && blank.providedModules.isEmpty,
+      "with no database at all, a loader-resolved name is still not reported")
+
+// the architecture a rule matches on, read from a PE header
+func peImage(machine: Int) -> Data {
+    var bytes = [UInt8](repeating: 0, count: 0x80)
+    bytes[0] = 0x4d; bytes[1] = 0x5a                       // "MZ"
+    bytes[0x3c] = 0x40                                     // e_lfanew
+    bytes[0x40] = 0x50; bytes[0x41] = 0x45                 // "PE"
+    bytes[0x44] = UInt8(machine & 0xff); bytes[0x45] = UInt8((machine >> 8) & 0xff)
+    return Data(bytes)
+}
+check(GameCompatibility.machineBits(peImage(machine: 0x8664)) == 64,
+      "a 64-bit PE image is read as 64-bit")
+check(GameCompatibility.machineBits(peImage(machine: 0x014c)) == 32,
+      "a 32-bit PE image is read as 32-bit")
+check(GameCompatibility.machineBits(peImage(machine: 0x01c4)) == 32,
+      "an ARM PE image is read as 32-bit")
+check(GameCompatibility.machineBits(peImage(machine: 0x1234)) == nil
+      && GameCompatibility.machineBits(Data([0x4d, 0x5a])) == nil
+      && GameCompatibility.machineBits(Data("not a program".utf8)) == nil,
+      "an unknown machine, a truncated header and a non-PE file are all no answer")
+
 // the real database
 if CommandLine.arguments.count > 1, let data = try? Data(contentsOf: URL(fileURLWithPath: CommandLine.arguments[1])),
    let real = GameCompatibility.decode(data) {
@@ -321,6 +449,40 @@ if CommandLine.arguments.count > 1, let data = try? Data(contentsOf: URL(fileURL
     let vulkan = GameCompatibility.plan(CompatLaunch(executable: "sample.exe", importedDLLs: ["vulkan-1.dll"]), database: real)
     check(vulkan.dependencies.map(\.id).contains("vulkan") && vulkan.unsatisfied.isEmpty,
           "a Vulkan import is classified without being called a missing file")
+    check(real.baseline?.windowsVersion == "win10", "the bundled database carries the universal baseline")
+    let unprofiled = GameCompatibility.plan(CompatLaunch(executable: "no-such-title.exe"), database: real)
+    check(unprofiled.matched.isEmpty && unprofiled.windowsVersion == "win10",
+          "an unprofiled executable still gets the universal configuration")
+    check(real.ruleList.count >= 8 && real.remedyTable.count >= 6,
+          "the bundled database carries the general rules and the remedies")
+    check(real.providedModules.contains("ole32") && real.providedModules.contains("d3d11"),
+          "the module list is what this runtime provides (Wine's, plus the names DXMT answers for)")
+    check(real.absentModules.contains("ir50_32") && !real.absentModules.contains("d3d11"),
+          "the modules the iOS build leaves out are listed apart, and not the DXMT-owned ones")
+    let odd = GameCompatibility.plan(CompatLaunch(executable: "sample.exe",
+        importedDLLs: ["ole32.dll", "madeup_thing.dll"]), database: real)
+    check(odd.unaccountedImports == ["madeup_thing"], "a runtime module is not reported; an unknown one is")
+    check(real.isAPISet("api-ms-win-crt-stdio-l1-1-0.dll") && !real.isAPISet("kernel32.dll"),
+          "the bundled database carries the API set prefixes, and a real module name is not one")
+    let modern = GameCompatibility.plan(CompatLaunch(executable: "modern.exe",
+        importedDLLs: ["api-ms-win-core-synch-l1-1-0.dll", "api-ms-win-core-file-l1-2-0.dll"]), database: real)
+    check(modern.unaccountedImports.isEmpty && modern.unavailableModules.isEmpty,
+          "a modern program whose extra imports are all API sets is reported clean")
+    let eacFiles = GameCompatibility.plan(CompatLaunch(executable: "game.exe", files: ["EasyAntiCheat_x64.dll"]),
+                                          database: real)
+    check(eacFiles.rules.contains("anticheat-eac-files") && eacFiles.isFatal,
+          "the anti-cheat files beside a program stop the retry ladder")
+    let retryable = GameCompatibility.plan(CompatLaunch(executable: "sample.exe", importedDLLs: ["ddraw.dll"],
+                                                        previousFailure: ["dx9"]), database: real)
+    check(retryable.alternatives.count >= 2 && retryable.rules.contains("legacy-directdraw"),
+          "a DirectDraw title has its fix applied and a remedy to try next")
+    let steamStub = GameCompatibility.plan(CompatLaunch(executable: "sample.exe", files: ["steam_api64.dll"]), database: real)
+    check(steamStub.rules.contains("steam-drm-stub") && steamStub.dependencies.map(\.id).contains("steamworks"),
+          "a Steam-wrapped program is pointed at the Steam client rather than at DRM support")
+    let gfwl = GameCompatibility.plan(CompatLaunch(executable: "sample.exe", importedDLLs: ["xlive.dll"]), database: real)
+    check(gfwl.dependencies.map(\.id).contains("gfwl") && gfwl.unsatisfied.contains { $0.id == "gfwl" },
+          "a Games for Windows LIVE title is told what is missing rather than left to fail silently")
+    check(!gfwl.isFatal, "an uninstallable client is reported without stopping the retry ladder")
 } else {
     check(false, "the bundled database loads")
 }
@@ -421,6 +583,24 @@ def check_database() -> None:
     require(len(imports) >= 300, f'the catalogue recognises the DLLs games actually import ({len(imports)})')
     require(all(name == name.lower() and not name.endswith('.dll') for name in imports),
             'import names are stored normalised (lowercase, no extension)')
+    # A "builtin" claim has to name a module the runtime ships, or an API set
+    # the loader resolves. Otherwise the component looks answered while nothing
+    # answers it, which is the failure this list exists to catch.
+    modules = set(data.get('wine_modules') or [])
+    prefixes = tuple(data.get('api_set_prefixes') or [])
+    unbacked = []
+    for dep_id, dep in dependencies.items():
+        if dep.get('support') != 'builtin':
+            continue
+        names = [name.lower() for name in dep.get('imports') or []]
+        names = [name[:-4] if name.endswith('.dll') else name for name in names]
+        if not names:
+            continue
+        if not any(name in modules or name.startswith(prefixes) for name in names):
+            unbacked.append(f'{dep_id}: {names}')
+    require(not unbacked, 'every builtin claim names a module the runtime ships')
+    for problem in unbacked[:10]:
+        print('  ' + problem)
     recipes_used = {recipe for game in games for recipe in game.get('recipes', [])}
     require(len(recipes_used) >= 5, f'titles reuse the fix library ({len(recipes_used)} recipes referenced)')
     classified = sum(1 for game in games if game.get('unavailable_fixes'))
@@ -464,6 +644,66 @@ def check_database() -> None:
     require(not stale, f'the database is regenerated from compat/games.json ({len(curated)} curated profiles)')
     for problem in stale:
         print('  ' + problem)
+
+    # Stage 3: what makes a program nobody has profiled work. The baseline, the
+    # general rules, the remedies for a failed session, and the list of modules
+    # this runtime actually provides.
+    baseline = data.get('baseline') or {}
+    rules = data.get('rules') or []
+    remedies = data.get('remedies') or {}
+    modules = data.get('wine_modules') or []
+    not_shipped = data.get('wine_not_shipped') or []
+    valid_categories = {'dependency', 'dll', 'registry', 'dx9', 'dx11', 'dx12', 'media', 'audio',
+                        'input', 'wine_fex', 'drm', 'anticheat', 'save_path', 'launch', 'other'}
+    require(bool(baseline.get('title')) and baseline.get('windows_version'),
+            'the database carries the universal baseline')
+    require(len(rules) >= 8, f'the general rules cover what a program is, not only which title it is ({len(rules)})')
+    require(len(remedies) >= 6, f'a failed session has a remedy to try next ({len(remedies)})')
+    require(len(modules) >= 400, f'the runtime module list is present ({len(modules)})')
+    require('ir50_32' in not_shipped and 'ir50_32' not in modules,
+            'the modules the iOS build leaves out are listed apart from the ones it provides')
+    general: list[str] = []
+    for rule in rules:
+        if not rule.get('id') or not rule.get('when'):
+            general.append(f'rule {rule.get("id")!r}: no id or no conditions')
+        for name in (rule.get('when', {}).get('imports') or []) + (rule.get('when', {}).get('files') or []):
+            if name != name.lower() or name.endswith('.dll'):
+                general.append(f'rule {rule.get("id")}: {name!r} is not normalised')
+        for dep_id in rule.get('dependencies', []):
+            if dep_id not in dependencies:
+                general.append(f'rule {rule.get("id")}: unknown dependency {dep_id}')
+        for recipe in rule.get('recipes', []):
+            if recipe not in recipes:
+                general.append(f'rule {rule.get("id")}: unknown recipe {recipe}')
+        for token in (rule.get('dll_overrides') or {}).values():
+            if token not in valid_tokens:
+                general.append(f'rule {rule.get("id")}: token {token!r}')
+    for category, remedy in remedies.items():
+        if category not in valid_categories:
+            general.append(f'remedy {category!r}: not a diagnosis category')
+        for recipe in remedy.get('recipes', []):
+            if recipe not in recipes:
+                general.append(f'remedy {category}: unknown recipe {recipe}')
+        for dep_id in remedy.get('dependencies', []):
+            if dep_id not in dependencies:
+                general.append(f'remedy {category}: unknown dependency {dep_id}')
+    require(not general, 'the rules and remedies reference only known components and recipes')
+    for problem in general[:10]:
+        print('  ' + problem)
+
+    # Every DLL named in the Stage 3 audit is answered: by the catalogue, by a
+    # general rule, or by the runtime itself. Silence here means a game that
+    # imports it gets no component, no fix and no note.
+    answered = imports | {name for rule in rules
+                          for name in (rule.get('when', {}).get('imports') or [])
+                          + (rule.get('when', {}).get('files') or [])}
+    answered |= {name.lower() for name in modules}
+    for name in ['easyanticheat', 'easyanticheat_x64', 'beclient', 'beclient_x64', 'vmprotect', 'themida',
+                 'dstorage', 'dstoragecore', 'opengl32', 'glu32', 'mfcore', 'mfreadwrite', 'eossdk',
+                 'eossdk-win64-shipping', 'upc_r2_loader64', 'uplay_r1_loader', 'discord_game_sdk',
+                 'physxcore', 'physxloader', 'xactengine3_7', 'd3d8', 'ddraw', 'd3drm', 'quartz',
+                 'devenum', 'dinput8', 'xinput1_3', 'gfwlivesetup', 'xlive', 'binkw32']:
+        require(name in answered, f'{name} is answered by a component, a rule or the runtime')
 
 
 def check_wiring() -> None:
@@ -513,14 +753,68 @@ def check_wiring() -> None:
     require("'recipes.json'" in (ROOT / 'build/tools/gen-game-compat.py').read_text(encoding='utf-8'),
             'the generator loads the fix library')
 
+    # Stage 3 wiring: the universal configuration, the rules, the remedies and
+    # the module list reach the engine, and the launcher hands them what they
+    # match on.
+    generator = (ROOT / 'build/tools/gen-game-compat.py').read_text(encoding='utf-8')
+    require("'baseline.json'" in generator and "'rules.json'" in generator and "'wine-modules.json'" in generator,
+            'the generator loads the baseline, the rules and the module list')
+    require('def validate_universal' in generator and "'wine_modules'" in generator,
+            'the generator validates what applies to every launch and carries it into the database')
+    require('struct CompatRule' in engine and 'struct CompatRuleWhen' in engine and 'var wineModules: [String]?' in engine,
+            'the engine models the rules, their conditions and the module list')
+    require('func remedyAttempts' in engine and 'var unaccountedImports: [String]' in engine,
+            'the engine retries with a remedy and reports what nothing accounts for')
+    require('func mergeBaseline' in engine and 'rules(database, launch)' in engine,
+            'the engine merges the baseline first and the matching rules over it')
+    require('files: LibraryModel.folderNames(for:' in library and 'bits: LibraryModel.programBits(for:' in library,
+            'the launch hands the rules the files beside the program and its architecture')
+    require('previousFailure: compatResult?.categories' in library,
+            'the launch remembers the categories the last session failed with')
+    require('static func folderNames' in library and 'static func programBits' in library,
+            'the program folder and the architecture of its programs are read, not guessed')
+    require('GameCompatibility.machineBits(header)' in library and 'static func machineBits(_ image: Data)' in engine,
+            'the launcher reads the PE header and the engine parses it, so both halves are testable')
 
-def load_generator():
-    """The compatibility database generator, as a module.
+    module_tool = ROOT / 'build/tools/gen-wine-modules.py'
+    require(module_tool.exists(), 'the module list has its own generator')
+    if module_tool.exists():
+        tool = load_generator(module_tool, 'gen_wine_modules')
+        require('ir50_32' in tool.not_shipped_from_build(tool.BUILD_SCRIPT),
+                'the iOS build script is the source of the modules that are not shipped')
+        with tempfile.TemporaryDirectory() as tmp:
+            script = Path(tmp) / 'build.sh'
+            script.write_text('SKIP_REASON=(\n'
+                              '  "ir50_32.dll|ir50_32=Indeo codec"\n'
+                              '  "vulkan-1.dll=no Vulkan"\n'
+                              '  "d3d9=d3d9 is DXMT\'s"\n'
+                              '  "not a module name!"\n'
+                              ')\n', encoding='utf-8')
+            left_out = set(tool.not_shipped_from_build(script))
+            require(left_out == {'ir50_32', 'vulkan-1'},
+                    'the skip list is read as module names, and a DXMT-owned one is a provision, not a gap')
+            configure = Path(tmp) / 'configure'
+            configure.write_text('# Generated by GNU Autoconf 2.72 for Wine 11.18\n'
+                                 'ac_dlls="dlls/ole32/Makefile.in dlls/d3d9/Makefile.in '
+                                 'dlls/mfplat/Makefile.in dlls/ddraw/Makefile.in dlls/win16.dll16/Makefile.in"\n',
+                                 encoding='utf-8')
+            for name in ('ole32', 'd3d9', 'mfplat', 'ddraw'):
+                (Path(tmp) / 'dlls' / name).mkdir(parents=True)
+                (Path(tmp) / 'dlls' / name / 'Makefile.in').write_text('', encoding='utf-8')
+            modules, version = tool.modules_from_configure(configure)
+            require(version == '11.18' and set(modules) == {'ole32', 'd3d9', 'mfplat', 'ddraw'},
+                    'the module list and the Wine version come from a configure')
+            provided = [name for name in modules if name not in left_out]
+            require(provided == modules, 'a module is provided unless the build leaves it out')
+
+
+def load_generator(path: Path | None = None, name: str = 'gen_game_compat'):
+    """A build tool, as a module.
 
     Importing it must not leave a __pycache__ behind in the repository.
     """
-    path = ROOT / 'build/tools/gen-game-compat.py'
-    spec = importlib.util.spec_from_file_location('gen_game_compat', path)
+    path = path or ROOT / 'build/tools/gen-game-compat.py'
+    spec = importlib.util.spec_from_file_location(name, path)
     module = importlib.util.module_from_spec(spec)
     writing = sys.dont_write_bytecode
     sys.dont_write_bytecode = True

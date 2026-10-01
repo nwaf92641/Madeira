@@ -90,6 +90,8 @@ enum LibraryModel {
     static func compatDatabase() -> CompatDatabase { GameCompatibility.emptyDatabase() }
     static func compatPayloadDirectories() -> [String] { [] }
     static func importedDLLs(for relativePath: String) -> [String] { [] }
+    static func folderNames(for relativePath: String) -> [String] { [] }
+    static func programBits(for relativePath: String) -> Int? { nil }
 }
 func madeira_seed_prefix_if_needed(_ path: String) {}
 var published: (Int32, Int32) = (0, 0)

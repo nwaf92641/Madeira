@@ -16,7 +16,10 @@ all.
 Windows game (.exe)
    ↓  identify            appid / executable / GOG slug / install path
    ↓  compatibility data  compat.json (bundled seed + Documents update)
-   ↓  detect              the executable's PE import table
+   ↓  detect              the executable's PE import table, the files beside it, its architecture
+   ↓  baseline            compat/baseline.json: what every Windows program gets
+   ↓  rules               compat/rules.json: what follows from what the program is
+   ↓  profile             what the title specifically needs
    ↓  dependencies        runtimes, DirectX, media, audio, fonts, .NET …
    ↓  fixes               reusable recipes: DLL overrides, registry, environment
    ↓  launch config       MADEIRA_ARGS and the process environment
@@ -26,10 +29,10 @@ Windows game (.exe)
 the session ends
    ↓  classify            CompatDiagnosis.swift reads the log and the exit status
    ↓  record              the verdict is kept on the library entry
-   ↓  retry               a failure moves the title to its next alternative
+   ↓  retry               the remedy for that category, or the title's next alternative
 ```
 
-Everything above the runtime is data-driven and per-game. Nothing changes the
+Everything above the runtime is data-driven and per-launch. Nothing changes the
 runtime: a fix is expressed as an override, a registry value, an environment
 variable or a launch argument, all scoped to one launch of one game.
 
@@ -37,20 +40,25 @@ variable or a launch argument, all scoped to one launch of one game.
 
 | Path | What it is |
 | --- | --- |
-| `app/Madeira/GameCompat.swift` | The engine: matching, dependency resolution, recipes, fallbacks, the plan, and the registry-text merge. Foundation-only and host-testable. |
+| `app/Madeira/GameCompat.swift` | The engine: matching, the baseline, the rules, dependency resolution, recipes, fallbacks, remedies, the plan, and the registry-text merge. Foundation-only and host-testable. |
 | `app/Madeira/CompatDiagnosis.swift` | Classifies a finished session into the categories a user can act on, and the result recorded on the entry. |
 | `app/Madeira/GameCompatView.swift` | Game details › Compatibility. |
 | `compat/dependencies.json` | The dependency catalogue, hand-written: what each Windows component is and how Madeira satisfies it. |
 | `compat/games.json` | Curated per-title profiles. |
 | `compat/recipes.json` | Reusable fixes, referenced by name from a dependency or a profile. |
+| `compat/baseline.json` | The universal configuration, applied to every launch, matched or not. |
+| `compat/rules.json` | General rules (`when` → what to apply) and the remedies used to retry a failed session. |
+| `compat/wine-modules.json` | The modules this runtime provides, and the ones the iOS build leaves out. Generated from the Wine tree by `build/tools/gen-wine-modules.py` (below). |
 | `build/tools/gen-game-compat.py` | Builds `app/Madeira/compat.json`; optionally imports Protonfixes game scripts, Winetricks verb metadata and Bottles dependency definitions. |
+| `build/tools/gen-wine-modules.py` | Builds `compat/wine-modules.json` from a Wine `configure` output and `build/wine-i386/build.sh`. |
 | `app/Madeira/compat.json` | The database the app ships, bundled as a resource. Generated, not edited by hand. |
 | `Documents/madeira-compat/` | Optional update, payload DLLs and fonts (below). |
 
 `LibraryEntry.applyEnvironment()` (in `Library.swift`) resolves the plan just
-before the JIT pool is taken, and `LibraryModel.importedDLLs(for:)` supplies the
-executable's imports, reusing the import reader the renderer badge already
-uses.
+before the JIT pool is taken; `LibraryModel` supplies what the rules match on:
+the executable's imports (`importedDLLs(for:)`, reusing the import reader the
+renderer badge already uses), the names in its own folder (`folderNames(for:)`)
+and its architecture from the PE header (`programBits(for:)`).
 
 ## Matching
 
@@ -181,6 +189,84 @@ than dependencies:
 - **Vulkan** is `partial`, not a missing file. A title that merely imports
   `vulkan-1.dll` is told apart from one that refuses to start without a Vulkan
   device, and the report points at the Direct3D renderer instead.
+
+## A program nobody has profiled
+
+Import detection covers the components a program *links*. The rest of the
+universal path covers everything else a Windows program can be, so an arbitrary
+`.exe` — a game, a launcher, a map editor, an installer — gets a working
+configuration without anyone writing a profile for it.
+
+**The baseline** (`compat/baseline.json`) is applied to every launch before
+anything else and sets nothing but the Windows version (10, which is what the
+modern Windows APIs and store clients check for). It is the floor, not a
+default: a profile, a rule, a fallback or the user's own override wins over it.
+The Compatibility section says "no profile matches; the universal configuration
+applies" when that is what happened, so a title that works by baseline is not
+mistaken for one with a broken profile.
+
+**General rules** (`compat/rules.json`) follow from what the program is:
+
+```json
+{"id": "legacy-directdraw", "title": "DirectDraw-era Direct3D",
+ "when": {"imports": ["ddraw", "d3d8", "d3drm"]},
+ "recipes": ["legacy-d3d-tuning"],
+ "note": "These titles read the adapter and the video-memory report, and
+          arithmetic is done at 32-bit precision by default in Wine's DLLs."}
+```
+
+A rule's conditions are matched against the four things the launcher knows
+before the program runs: the DLLs it imports, the names in its own folder
+(files and directories, for what is loaded at runtime rather than linked — an
+anti-cheat, a copy-protection layer, a store client's own files), a fragment of
+its name (`crashhandler`, `webhelper`), and its architecture from the PE header
+(32 or 64). Every condition present has to hold; within one list any name is
+enough. Rules sit above the baseline and below a profile, so a curated title
+keeps its own configuration and everything else falls back to the general
+answer.
+
+Rules are what make anti-cheat, DRM and the store clients visible without a
+profile: `EasyAntiCheat_x64.dll` beside the program names the anti-cheat
+component, which is `unsupported`, which stops the retry ladder at the first
+attempt instead of spending sessions on it — while an offline title that bundles
+the same files still runs.
+
+**Remedies** close the loop for a program that fails: when a session ends, its
+diagnosis category picks a variation to try next (`remedies` in
+`compat/rules.json`), and that becomes another attempt on the very next launch —
+a Direct3D 9 failure is retried with the DirectDraw-era adapter identity, an
+audio failure with the DirectShow wave renderer, a launch failure with the
+loader forced on or off. The attempts are, in order: the profile, its own
+fallbacks, one remedy for each category the last session failed with (at most
+two), and then nothing. The user sees a plain "attempt 2 of 3" and the game
+details section, and a title that fails for a reason no configuration can
+answer (anti-cheat, DRM) is not retried at all.
+
+**What the runtime does not have** is reported rather than guessed.
+`compat/wine-modules.json` is generated from the Wine build itself: the modules
+the runtime provides (648 of them, including the names DXMT answers for) and the
+ones the iOS build leaves out (Indeo's `ir50_32`, `vulkan-1.dll`, `opencl.dll`
+and the rest, each with the build script's own reason). An import that nothing
+in the catalogue, no rule and no module accounts for, and that the runtime does
+not ship either, is listed on the game details screen — that is the honest
+answer for a component nobody has described yet, and it is how the gaps get
+found.
+
+Two families are deliberately not reported:
+
+- **API sets.** A modern program imports a dozen `api-ms-win-*.dll` and
+  `ext-ms-win-*.dll` names that are not files anywhere: the loader resolves them
+  to the module that implements the contract, `ucrtbase` for the C runtime sets
+  and `kernelbase` for the core ones. They are carried as prefixes in the
+  database (`api_set_prefixes`), so a program with a clean configuration is
+  reported as clean instead of being buried under names nobody can act on.
+- **The names DXMT answers for.** `d3d9`, `d3d10core`, `d3d11`, `dxgi` and
+  `winemetal` are DXMT's, not Wine's, and the iOS build deliberately skips
+  Wine's own copies, so they count as provided.
+
+`build/tools/gen-wine-modules.py --configure <wine>/configure` rewrites
+`compat/wine-modules.json` (and `--check` fails when it is out of date), which is
+what keeps the list honest when the runtime's Wine moves.
 
 ## Isolation between games
 

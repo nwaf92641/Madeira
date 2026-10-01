@@ -41,11 +41,24 @@ replace it when adding a feature.
 ## Game compatibility (the part that changes most)
 
 - Data, not code: `compat/dependencies.json`, `compat/games.json`,
-  `compat/recipes.json` are the sources; `build/tools/gen-game-compat.py`
+  `compat/recipes.json`, `compat/baseline.json`, `compat/rules.json` are the
+  sources; `build/tools/gen-game-compat.py`
   builds `app/Madeira/compat.json` (run it with `--protonfixes DIR
   --winetricks DIR --bottles DIR --winlator DIR` to import upstream fixes,
   `--check` to compare without writing). Never hand-edit
   `app/Madeira/compat.json`.
+- `compat/wine-modules.json` is generated too, by
+  `build/tools/gen-wine-modules.py --configure <wine>/configure` (or `--wine
+  <checkout>`): the modules the runtime provides, the ones the iOS build skips
+  (`build/wine-i386/build.sh`, SKIP_REASON) and the API set prefixes the loader
+  resolves. It is the list the engine uses to tell "Wine answers this" from
+  "nothing here has this".
+- The universal path is data, in order of priority: `baseline.json` (Windows
+  version for everything) < `rules.json` (a fix that follows from what the
+  program is: its imports, the files beside it, its name, its architecture) <
+  the title's profile. `rules.json` also holds `remedies`, the variation tried
+  on the next launch when a session failed with a given diagnosis category.
+  A program nobody profiled is a normal case, not a fallback: keep it that way.
 - Upstream projects (`/workspace/refs/protonfixes`, `winetricks`,
   `bottles-deps`, `winlator-app`, `winlator`) are sources of fixes, not code to
   copy. Anything that depends on Linux, Vulkan, Proton's or Winlator's own

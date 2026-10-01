@@ -307,6 +307,9 @@ struct LibraryEntry: Codable, Identifiable {
                           "DXMT_CONFIG": getenv("DXMT_CONFIG").map { String(cString: $0) } ?? ""],
             payloadDirectories: LibraryModel.compatPayloadDirectories(),
             importedDLLs: LibraryModel.importedDLLs(for: launchRelativePath),
+            files: LibraryModel.folderNames(for: launchRelativePath),
+            bits: LibraryModel.programBits(for: launchRelativePath),
+            previousFailure: compatResult?.categories ?? [],
             overrides: compat)
     }
 
@@ -449,6 +452,48 @@ final class LibraryModel: ObservableObject {
             directories.append(compat.appendingPathComponent(sub).path)
         }
         return directories
+    }
+
+    /// The names in the executable's own folder, files and subdirectories both,
+    /// lowercased. General rules use them for what a program loads at runtime
+    /// rather than links — an anti-cheat, a DRM layer, a store client's own
+    /// files — which never appear in an import table. One listing, bounded.
+    static func folderNames(for relativePath: String) -> [String] {
+        let target = drive.appendingPathComponent(relativePath)
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: target.path, isDirectory: &isDirectory) else { return [] }
+        let folder = isDirectory.boolValue ? target : target.deletingLastPathComponent()
+        let contents = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? []
+        return Array(contents.map { $0.lastPathComponent.lowercased() }.prefix(256).sorted())
+    }
+
+    /// 32 or 64, from the PE header of the program this entry starts: the named
+    /// executable, or a folder entry's own programs when they agree. nil when
+    /// it cannot be read or two architectures are mixed, so an architecture
+    /// rule applies only where the answer is unambiguous.
+    static func programBits(for relativePath: String) -> Int? {
+        let target = drive.appendingPathComponent(relativePath)
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: target.path, isDirectory: &isDirectory) else { return nil }
+        let programs: [URL]
+        if isDirectory.boolValue {
+            let contents = (try? FileManager.default.contentsOfDirectory(at: target, includingPropertiesForKeys: nil)) ?? []
+            programs = contents.filter { $0.pathExtension.lowercased() == "exe" }.sorted { $0.path < $1.path }.prefix(8).map { $0 }
+        } else {
+            programs = [target]
+        }
+        let bits = Set(programs.compactMap { machineBits($0) })
+        return bits.count == 1 ? bits.first : nil
+    }
+
+    /// The bits of one PE image: 32 for i386/ARM, 64 for AMD64/ARM64. The
+    /// header is parsed by the engine (GameCompatibility.machineBits), which is
+    /// where the rules that use it are tested.
+    static func machineBits(_ url: URL) -> Int? {
+        guard let handle = try? FileHandle(forReadingFrom: url),
+              let header = try? handle.read(upToCount: 4096) else { return nil }
+        try? handle.close()
+        return GameCompatibility.machineBits(header)
     }
 
     /// The DLLs an entry's programs import, for automatic dependency detection

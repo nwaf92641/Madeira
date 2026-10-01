@@ -321,6 +321,15 @@ struct CompatGame: Codable, Equatable {
     }
 }
 
+/// A Windows component the runtime does not build, with the reason
+/// (compat/wine-modules.json, `not_built`). A program that imports one cannot
+/// be served: there is no builtin, no native copy in the prefix and nothing a
+/// user could install.
+struct CompatMissingModule: Codable, Equatable {
+    var name: String?
+    var reason: String?
+}
+
 /// The whole database.
 struct CompatDatabase: Codable {
     var schema: Int?
@@ -335,17 +344,27 @@ struct CompatDatabase: Codable {
     /// Diagnosis category -> the variation tried on the next launch.
     var remedies: [String: CompatFallback]?
     /// Modules the runtime provides (compat/wine-modules.json), so an import
-    /// Wine resolves is not reported as missing.
+    /// Wine resolves is not reported as missing. This is the 32-bit set: the
+    /// i386 Wine build minus what the iOS build skips.
     var wineModules: [String]?
+    /// Modules the app ships for a 64-bit guest (the ARM64EC and native ARM64
+    /// farms). Smaller than the 32-bit list — no quartz, wmvcore or
+    /// winegstreamer — so the two have to be told apart.
+    var wineModules64: [String]?
     /// Modules upstream Wine builds that this runtime does not ship.
     var wineNotShipped: [String]?
+    /// Windows components Wine has never built (mfcore, the DirectX SDK
+    /// compilers), with the reason. An import of one cannot be served.
+    var wineNotBuilt: [CompatMissingModule]?
     /// Prefixes of the API set contract names (`api-ms-win-*`, `ext-ms-win-*`).
     var apiSetPrefixes: [String]?
 
     enum CodingKeys: String, CodingKey {
         case schema, updated, dependencies, recipes, games, baseline, rules, remedies
         case wineModules = "wine_modules"
+        case wineModules64 = "wine_modules_64"
         case wineNotShipped = "wine_not_shipped"
+        case wineNotBuilt = "not_built"
         case apiSetPrefixes = "api_set_prefixes"
     }
 
@@ -363,8 +382,38 @@ struct CompatDatabase: Codable {
     var ruleList: [CompatRule] { rules ?? [] }
     var remedyTable: [String: CompatFallback] { remedies ?? [:] }
     /// Module names as this engine compares them (lowercase, no ".dll").
-    var providedModules: Set<String> { Set((wineModules ?? []).map { GameCompatibility.importName($0) }) }
-    var absentModules: Set<String> { Set((wineNotShipped ?? []).map { GameCompatibility.importName($0) }) }
+    ///
+    /// A launch asks for the set its process can load: the 32-bit Wine build,
+    /// or the farms the app ships for a 64-bit guest. Anything in the other
+    /// set is missing for this launch even though the runtime has the file
+    /// somewhere — a 64-bit program cannot load a 32-bit module.
+    func providedModules(_ bits: Int?) -> Set<String> {
+        let names = bits == 64 ? (wineModules64 ?? wineModules ?? []) : (wineModules ?? [])
+        return Set(names.map { GameCompatibility.importName($0) })
+    }
+
+    /// Names this launch cannot load: what upstream Wine builds but the iOS
+    /// build skips, what Wine never built, and — for a 64-bit launch — every
+    /// module the 64-bit farms do not carry.
+    func absentModules(_ bits: Int?) -> Set<String> {
+        var absent = Set((wineNotShipped ?? []).map { GameCompatibility.importName($0) })
+        for entry in wineNotBuilt ?? [] { absent.insert(GameCompatibility.importName(entry.name ?? "")) }
+        if bits == 64 {
+            let all = Set(((wineModules ?? []) + (wineNotShipped ?? [])).map { GameCompatibility.importName($0) })
+            absent.formUnion(all.subtracting(providedModules(64)))
+        }
+        return absent
+    }
+
+    /// Why the runtime cannot serve a name, when it is a component Wine never
+    /// built. The catalogue and the details screen quote this.
+    func notBuiltReason(_ name: String) -> String? {
+        let wanted = GameCompatibility.importName(name)
+        for entry in wineNotBuilt ?? [] where GameCompatibility.importName(entry.name ?? "") == wanted {
+            return entry.reason
+        }
+        return nil
+    }
 
     /// Wine resolves an API set name (`api-ms-win-*`, `ext-ms-win-*`) to the
     /// module that implements the contract — ucrtbase for the C runtime sets,
@@ -375,6 +424,21 @@ struct CompatDatabase: Codable {
         let lower = name.lowercased()
         return (apiSetPrefixes ?? []).contains { lower.hasPrefix($0) }
     }
+
+    /// Whether this launch's runtime answers an import, API sets included.
+    /// A claim that is true for the 32-bit build can be false for a 64-bit
+    /// launch, because the two farms are not the same set.
+    func serves(_ name: String, bits: Int?) -> Bool {
+        let clean = GameCompatibility.importName(name)
+        return providedModules(bits).contains(clean) || isAPISet(clean)
+    }
+
+    /// Whether the database carries a module list at all. A partial or older
+    /// database does not, and then nothing can be said about what the runtime
+    /// serves: the engine keeps its previous behaviour rather than reading
+    /// silence as "nothing", which would drop every pin and report every
+    /// import as unanswered.
+    var knowsItsModules: Bool { !(wineModules ?? []).isEmpty }
 }
 
 /// Which attempt a launch is on, and what it consists of. The first plan is
@@ -767,7 +831,8 @@ enum GameCompatibility {
                     title: dependency.title ?? dependency.id, support: "manual",
                     reason: "needs a separate installer", category: dependency.category))
             case "payload":
-                let missing = missingPayload(dependency, directories: launch.payloadDirectories)
+                let missing = missingPayload(dependency, directories: launch.payloadDirectories,
+                                             beside: launch.files)
                 if missing.isEmpty {
                     merge(dependency, into: &plan)
                 } else {
@@ -853,6 +918,25 @@ enum GameCompatibility {
             if value.isEmpty { plan.unsetEnvironment.append(key) } else { plan.environment[key] = value }
         }
 
+        // A pin to the builtin is a claim about this runtime, and the claim can
+        // be false for the architecture being launched: d3dcompiler_33 and
+        // xaudio2_7 are in the 32-bit build and not in the 64-bit farms. Keeping
+        // such a pin would ignore the copy the title ships and load nothing in
+        // its place, so it is dropped for this launch and said out loud.
+        if !plan.dllOverrides.isEmpty, database.knowsItsModules {
+            var droppedPins: [String] = []
+            for (dll, order) in plan.dllOverrides
+            where isBuiltinOnly(order) && !database.serves(dll, bits: launch.bits) {
+                plan.dllOverrides.removeValue(forKey: dll)
+                droppedPins.append(dll)
+            }
+            if !droppedPins.isEmpty {
+                plan.notes.append("no builtin pin for " + summarise(droppedPins.sorted())
+                                  + ": \(launch.bits == 64 ? "the 64-bit runtime" : "the runtime") does not ship it,"
+                                  + " so this launch uses whatever the title brought")
+            }
+        }
+
         // WINEDLLOVERRIDES: merge with whatever the launch already carries, so
         // a madeira.cfg env. entry is not clobbered; our entries win.
         if !plan.dllOverrides.isEmpty {
@@ -915,23 +999,47 @@ enum GameCompatibility {
         // runtime for the modules Wine provides; anything left the program has
         // to ship itself. It is reported, never acted on: guessing a file for an
         // unknown import is how a prefix gets broken.
+        //
+        // A component's claim counts only as far as this launch's runtime can
+        // honour it. A `builtin` entry names modules Wine builds, and the 64-bit
+        // farms carry fewer of them than the 32-bit build, so a claim that is
+        // true for one architecture and false for the other does not silence
+        // the report for the launch that cannot load the module. An entry that
+        // brings its own file (payload, partial with `dlls`) answers whatever
+        // the architecture, and so does one that cannot work here at all: an
+        // unsupported component is an answer, and repeating it as a missing
+        // module would be the same fact twice.
         let importedDLLs = Set(launch.importedDLLs.map { importName($0) })
         if !importedDLLs.isEmpty {
             var accounted = Set(catalogue.keys.map { importName($0) })
             for dependency in catalogue.values {
-                for name in dependency.imports ?? [] { accounted.insert(importName(name)) }
+                let answers = !(dependency.dlls ?? []).isEmpty || dependency.supportName == "unsupported"
+                for name in dependency.imports ?? [] {
+                    let clean = importName(name)
+                    if answers || !database.knowsItsModules || database.serves(clean, bits: launch.bits) {
+                        accounted.insert(clean)
+                    }
+                }
             }
             for rule in applicable {
                 for name in (rule.when?.imports ?? []) + (rule.when?.files ?? []) { accounted.insert(importName(name)) }
             }
-            let unaccounted = importedDLLs.subtracting(accounted).subtracting(database.providedModules)
+            let unaccounted = importedDLLs.subtracting(accounted).subtracting(database.providedModules(launch.bits))
                 .filter { !database.isAPISet($0) }
-            let absent = database.absentModules
+            let absent = database.absentModules(launch.bits)
             plan.unavailableModules = unaccounted.intersection(absent).sorted()
             plan.unaccountedImports = unaccounted.subtracting(absent).sorted()
             if !plan.unavailableModules.isEmpty {
-                plan.notes.append("the runtime does not ship " + summarise(plan.unavailableModules)
+                // The 64-bit farms carry fewer modules than the 32-bit build,
+                // so the sentence says which half of the runtime is short.
+                let scope = launch.bits == 64 ? "the 64-bit runtime does not ship " : "the runtime does not ship "
+                plan.notes.append(scope + summarise(plan.unavailableModules)
                                   + "; a title that needs it must bring its own copy")
+                for name in plan.unavailableModules {
+                    if let reason = database.notBuiltReason(name) {
+                        plan.notes.append("\(name): \(reason)")
+                    }
+                }
             }
             if !plan.unaccountedImports.isEmpty {
                 plan.notes.append("no component or rule accounts for " + summarise(plan.unaccountedImports)
@@ -1091,6 +1199,16 @@ enum GameCompatibility {
         return (applied, failures)
     }
 
+    /// Whether an override order pins the builtin and nothing else. Wine loads
+    /// a native file only when the order allows it, so `b` alone means "never
+    /// the title's own copy".
+    static func isBuiltinOnly(_ order: String) -> Bool {
+        let tokens = order.split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespaces).lowercased() }
+            .filter { !$0.isEmpty }
+        return tokens == ["b"]
+    }
+
     /// "n,b" -> "native,builtin".
     static func registryOrder(_ order: String) -> String {
         order.split(separator: ",").map { token -> String in
@@ -1228,11 +1346,18 @@ enum GameCompatibility {
     }
 
     /// Which of a dependency's required files are absent from every payload
-    /// directory. Matching is case-insensitive.
-    static func missingPayload(_ dependency: CompatDependency, directories: [String]) -> [String] {
+    /// directory and from the program's own folder. Matching is
+    /// case-insensitive.
+    ///
+    /// `beside` is the executable's folder. A payload is a file the user would
+    /// otherwise have to supply, and a title that ships the runtime itself
+    /// (d3dx9_43.dll, oo2core, a store client) has already answered the
+    /// requirement — reporting it would be a false alarm on half the library.
+    static func missingPayload(_ dependency: CompatDependency, directories: [String],
+                              beside: [String] = []) -> [String] {
         let required = dependency.dlls ?? []
-        guard !required.isEmpty, !directories.isEmpty else { return required }
-        var found = Set<String>()
+        guard !required.isEmpty else { return [] }
+        var found = Set(beside.map { $0.lowercased() })
         let fm = FileManager.default
         for directory in directories {
             guard let names = try? fm.contentsOfDirectory(atPath: directory) else { continue }

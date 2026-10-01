@@ -1134,10 +1134,9 @@
    "imports": [
     "mfplat",
     "mfreadwrite",
-    "mf",
-    "mfcore"
+    "mf"
    ],
-   "notes": "64-bit processes only get the real Media Foundation unix side with MADEIRA_WG_64BIT=1; 32-bit (WoW64) processes get it by default (compat/rules.json sets it for 64-bit images that import these). mfcore is the Windows 10 split of the same pipeline; Wine has no separate mfcore module, so a title that imports it by name resolves against Wine's mf.",
+   "notes": "64-bit processes only get the real Media Foundation unix side with MADEIRA_WG_64BIT=1, and this build's 64-bit farm carries no winegstreamer module yet, so a 64-bit title that plays video cannot decode it: compat/rules.json names the media modules for a 64-bit launch and sets the switch for when the module ships (docs/MEDIA.md has the build step). 32-bit (WoW64) processes get the unix side by default. mfcore is the Windows 8 split of the same pipeline: Wine has no mfcore module at all, so it is listed under not_built and is not claimed here.",
    "source": "winetricks:mediafoundation",
    "recipes": [
     "video-media-foundation"
@@ -2031,7 +2030,7 @@
    "kind": "directx",
    "category": "dx9",
    "support": "builtin",
-   "summary": "The d3dcompiler_33 to _46 DLLs. Wine ships one complete builtin implementation for every version number, so a game that links an older compiler still compiles its shaders.",
+   "summary": "The versions Wine builds (33 to 43, 46 and 47). Wine ships one complete builtin implementation behind every one of those names, so a game that links an older compiler still compiles its shaders.",
    "imports": [
     "d3dcompiler_33",
     "d3dcompiler_34",
@@ -2043,8 +2042,6 @@
     "d3dcompiler_40",
     "d3dcompiler_41",
     "d3dcompiler_42",
-    "d3dcompiler_44",
-    "d3dcompiler_45",
     "d3dcompiler_46"
    ],
    "dll_overrides": {
@@ -2058,10 +2055,9 @@
     "d3dcompiler_40": "b",
     "d3dcompiler_41": "b",
     "d3dcompiler_42": "b",
-    "d3dcompiler_44": "b",
-    "d3dcompiler_45": "b",
     "d3dcompiler_46": "b"
    },
+   "notes": "d3dcompiler_44 and _45 are the two numbers between the versions Wine builds (43, then 46) that Wine has never shipped, so they are listed under not_built and a title that links one is told to bring its own copy rather than being given a builtin pin that cannot resolve.",
    "source": "wine:d3dcompiler"
   },
   "xaudio2-legacy": {
@@ -2197,44 +2193,40 @@
    "title": "GPU vendor libraries",
    "kind": "utility",
    "category": "dx11",
-   "support": "override",
-   "summary": "NVAPI, NVNGX, AMD AGS/AMF and the third-party SDKs (Aftermath, SSAO, WaveWorks). There is no NVIDIA or AMD driver behind Metal, so the Wine stubs answer them: a game that merely queries them keeps running, and one that refuses to start without the real library is reported instead of crashing.",
+   "support": "unsupported",
+   "summary": "NVAPI, NVNGX/DLSS and AMD's driver-side libraries (AMF, AGS driver parts, atiadlxx, atiumd*). There is no NVIDIA or AMD driver behind Metal, so none of them can do their job: a title that merely probes one keeps running on its own copy, and one that refuses to start without it is reported instead of crashing.",
    "imports": [
     "nvapi",
     "nvapi64",
     "nvngx",
     "nvngx_dlss",
+    "nvngx_dlssg",
     "amdxc64",
     "amdxcffx64",
-    "amd_ags_x64",
-    "amd_ags_x86",
+    "amfrt64",
     "atiadlxx",
     "atiumd64",
-    "atiumd6a",
-    "gfsdk_aftermath_lib_x64",
-    "gfsdk_ssao_win64",
-    "gfsdk_waveworks",
-    "amfrt64"
+    "atiumd6a"
    ],
-   "dll_overrides": {
-    "nvapi": "b",
-    "nvapi64": "b",
-    "nvngx": "b",
-    "nvngx_dlss": "b",
-    "amdxc64": "b",
-    "amdxcffx64": "b",
-    "amd_ags_x64": "b",
-    "amd_ags_x86": "b",
-    "atiadlxx": "b",
-    "atiumd64": "b",
-    "atiumd6a": "b",
-    "gfsdk_aftermath_lib_x64": "b",
-    "gfsdk_ssao_win64": "b",
-    "gfsdk_waveworks": "b",
-    "amfrt64": "b"
-   },
-   "notes": "The Protonfixes 'disable NVAPI' fix has the same intent on Linux; on Madeira the Wine stub is the only implementation there can be.",
+   "notes": "Protonfixes' 'disable NVAPI' fix pins these to the builtin so DXVK-NVAPI can answer instead, and that substitute is what this runtime lacks: DXMT builds nvapi64 and nvngx, but neither farm here ships them, so no implementation answers these names. No override is written for them: a builtin pin would not create one and would stop a title's own copy from loading.",
    "source": "protonfixes:disable_nvapi"
+  },
+  "gpu-sdk-libraries": {
+   "title": "GPU vendor SDKs a title ships",
+   "kind": "utility",
+   "category": "dx11",
+   "support": "partial",
+   "summary": "AMD AGS, NVIDIA Aftermath, SSAO and WaveWorks. These are not driver files: a title that uses one ships it in its own folder, and it loads as an ordinary native DLL, so there is nothing to install and nothing to override.",
+   "imports": [
+    "amd_ags_x64",
+    "amd_ags_x86",
+    "gfsdk_aftermath_lib_x64",
+    "gfsdk_aftermath_lib_x86",
+    "gfsdk_ssao_win64",
+    "gfsdk_waveworks"
+   ],
+   "notes": "The entry exists so the names are not reported as unknown imports. What the library does inside still depends on a driver this runtime does not have (a GPU crash dump, a vendor-specific SSAO or wave simulation); titles that treat it as optional carry on.",
+   "source": "madeira:title-shipped-sdk"
   },
   "intel-oodle": {
    "title": "Oodle data compression",
@@ -2305,13 +2297,9 @@
     "d3d10_1",
     "d3d10core",
     "d3d11",
-    "d3d11_1",
-    "dxgi",
-    "dxgi1_2",
-    "dxgi1_3",
-    "dxgi1_4"
+    "dxgi"
    ],
-   "notes": "There is one file per family here, as in Wine: dxgi.dll, d3d11.dll and d3d10*.dll. A title that links one of the versioned names (d3d11_1.dll, dxgi1_2.dll and up) is asking for a file no Wine build ships, and the interfaces it wants are in dxgi.dll and d3d11.dll already.",
+   "notes": "There is one file per family here, as in Wine: dxgi.dll, d3d11.dll and d3d10*.dll. A title that links one of the versioned names (d3d11_1.dll, dxgi1_2.dll and up) is asking for a file no Wine build ships, and the interfaces it wants are in dxgi.dll and d3d11.dll already; those names are in not_built rather than claimed here, so the engine says so instead of the entry staying silent.",
    "source": "madeira:dxmt"
   },
   "d3d12-madeira": {
@@ -2322,11 +2310,9 @@
    "summary": "Direct3D 12 (d3d12.dll / d3d12core.dll), which Wine builds and Madeira's own D3D12 path implements on top of. It is a newer path than D3D11, so a title that offers both may be steadier on D3D11.",
    "imports": [
     "d3d12",
-    "d3d12core",
-    "dxil",
-    "dxcompiler"
+    "d3d12core"
    ],
-   "notes": "dxil.dll and dxcompiler.dll are the DirectX Shader Compiler redistributables rather than system files: a title that links them ships them beside itself. Neither Wine nor DXMT builds them and there is nothing to install, so one that is genuinely missing from a game folder is a fact about that install.",
+   "notes": "dxil.dll and dxcompiler.dll are the DirectX Shader Compiler redistributables rather than system files: a title that links them ships them beside itself. Neither Wine nor DXMT builds them, so they are listed under not_built and a title missing one from its folder is told that is where they come from.",
    "source": "madeira:madeira-d3d12"
   },
   "vulkan": {
@@ -8915,7 +8901,7 @@
     "directmusic"
    ],
    "dll_overrides": {
-    "*dsound": "b"
+    "dsound": "b"
    },
    "recipes": [
     "native-ddraw",
@@ -8988,7 +8974,7 @@
     "directmusic"
    ],
    "dll_overrides": {
-    "*dsound": "b"
+    "dsound": "b"
    },
    "recipes": [
     "native-ddraw",
@@ -9337,10 +9323,11 @@
   {
    "title": "Ship Graveyard Simulator",
    "appid": 1286880,
-   "dll_overrides": {
-    "vulkan-1": "b"
-   },
-   "source": "protonfixes:steam/1286880"
+   "dll_overrides": {},
+   "source": "protonfixes:steam/1286880",
+   "unavailable_fixes": [
+    "DLL override dropped: vulkan-1 (this runtime does not ship it, and pinning it would hide the file the title brings)"
+   ]
   },
   {
    "title": "Forza Horizon 4",
@@ -9418,7 +9405,7 @@
     "directmusic"
    ],
    "dll_overrides": {
-    "*dsound": "b"
+    "dsound": "b"
    },
    "recipes": [
     "native-ddraw",
@@ -9478,10 +9465,11 @@
   {
    "title": "Ship Graveyard Simulator Prologue",
    "appid": 1664350,
-   "dll_overrides": {
-    "vulkan-1": "b"
-   },
-   "source": "protonfixes:steam/1664350"
+   "dll_overrides": {},
+   "source": "protonfixes:steam/1664350",
+   "unavailable_fixes": [
+    "DLL override dropped: vulkan-1 (this runtime does not ship it, and pinning it would hide the file the title brings)"
+   ]
   },
   {
    "title": "Game fix for Stronghold Crusader Extreme HD",
@@ -11720,21 +11708,39 @@
  },
  "rules": [
   {
-   "id": "media-foundation-64bit",
-   "title": "64-bit Media Foundation",
+   "id": "media-unix-side-64bit",
+   "title": "64-bit media decoding",
    "when": {
     "imports": [
      "mfplat",
      "mfreadwrite",
      "mf",
-     "mfcore"
+     "mfmediaengine",
+     "mfsrcsnk",
+     "mfmp4srcsnk",
+     "mfasfsrcsnk",
+     "mfplay",
+     "quartz",
+     "qasf",
+     "devenum",
+     "amstream",
+     "mciqtz32",
+     "wmvcore",
+     "wmvdecod",
+     "wmadmod",
+     "xaudio2_7",
+     "xaudio2_8",
+     "xaudio2_9",
+     "xactengine3_7",
+     "x3daudio1_7",
+     "xapofx1_5"
     ],
     "bits": 64
    },
    "env": {
     "MADEIRA_WG_64BIT": "1"
    },
-   "note": "A 64-bit program that decodes through Media Foundation needs the runtime's real media unix side; without MADEIRA_WG_64BIT=1 it gets the stub table and playback fails. 32-bit (WoW64) callers have it by default, so this is set only for 64-bit images. See docs/MEDIA.md.",
+   "note": "Every media decoder in this Wine runs through winegstreamer's unix side: Media Foundation's source resolver and media engine, the DirectShow MP3/WAV parsers, quartz's MP4 splitter, and the WMA voice decoder FAudio asks COM for on every xWMA/XMA sound (without it the compressed bytes reach the mixer as PCM, which is loud static). A 64-bit caller gets the stub table unless MADEIRA_WG_64BIT=1, so the switch is set for it here; 32-bit (WoW64) callers have the unix side by default and need nothing. This build's 64-bit farm does not carry winegstreamer.dll yet, so a 64-bit title that plays video or xWMA audio still has no decoder until that module is installed beside the others (docs/MEDIA.md).",
    "source": "madeira"
   },
   {
@@ -12603,6 +12609,145 @@
   "xpsprint",
   "xpssvcs"
  ],
+ "wine_modules_64": [
+  "actxprxy",
+  "advapi32",
+  "apisetschema",
+  "authz",
+  "avrt",
+  "bcrypt",
+  "bcryptprimitives",
+  "bthprops.cpl",
+  "cfgmgr32",
+  "combase",
+  "comctl32",
+  "comdlg32",
+  "coml2",
+  "compstui",
+  "concrt140",
+  "credui",
+  "crypt32",
+  "cryptbase",
+  "cryptnet",
+  "cryptui",
+  "d3d10core",
+  "d3d11",
+  "d3d12",
+  "d3d9",
+  "d3dcompiler_43",
+  "d3dcompiler_47",
+  "d3dx9_43",
+  "d3dxof",
+  "dbghelp",
+  "dcomp",
+  "dhcpcsvc",
+  "dinput",
+  "dinput8",
+  "dnsapi",
+  "dsound",
+  "dssenh",
+  "dwmapi",
+  "dwrite",
+  "dxgi",
+  "esent",
+  "fontsub",
+  "gdi32",
+  "hid",
+  "ieframe",
+  "imagehlp",
+  "imm32",
+  "iphlpapi",
+  "jscript",
+  "jsproxy",
+  "kernel32",
+  "kernelbase",
+  "ktmw32",
+  "madeira_d3d12",
+  "mf",
+  "mfplat",
+  "mfreadwrite",
+  "mmdevapi",
+  "mpr",
+  "msacm32",
+  "mscoree",
+  "msdmo",
+  "mshtml",
+  "msimg32",
+  "msvcp140",
+  "msvcp140_1",
+  "msvcp140_2",
+  "msvcp140_atomic_wait",
+  "msvcp140_codecvt_ids",
+  "msvcr120",
+  "msvcrt",
+  "mswsock",
+  "ncrypt",
+  "netapi32",
+  "netutils",
+  "newdev",
+  "normaliz",
+  "nsi",
+  "ntdll",
+  "ole32",
+  "oleacc",
+  "oleaut32",
+  "opengl32",
+  "pdh",
+  "powrprof",
+  "propsys",
+  "psapi",
+  "rpcrt4",
+  "rsaenh",
+  "rtworkq",
+  "schannel",
+  "sechost",
+  "secur32",
+  "setupapi",
+  "shcore",
+  "shell32",
+  "shlwapi",
+  "tftrace-x64",
+  "ucrtbase",
+  "uiautomationcore",
+  "urlmon",
+  "user32",
+  "userenv",
+  "uxtheme",
+  "vbscript",
+  "vcruntime140",
+  "vcruntime140_1",
+  "version",
+  "wevtapi",
+  "win32u",
+  "windows.gaming.input",
+  "windows.ui",
+  "windowscodecs",
+  "wined3d",
+  "wineios.drv",
+  "winemetal",
+  "winhttp",
+  "wininet",
+  "winmm",
+  "winspool.drv",
+  "wintrust",
+  "winusb",
+  "wlanapi",
+  "wldap32",
+  "wow64",
+  "wow64win",
+  "ws2_32",
+  "wsock32",
+  "wtsapi32",
+  "x3daudio1_7",
+  "xapofx1_5",
+  "xinput1_1",
+  "xinput1_2",
+  "xinput1_3",
+  "xinput1_4",
+  "xinput9_1_0",
+  "xtajit",
+  "xtajit64"
+ ],
  "wine_not_shipped": [
   "aero.msstyles",
   "cng.sys",
@@ -12646,6 +12791,120 @@
   "wpcap",
   "xtajit",
   "xtajit64"
+ ],
+ "not_built": [
+  {
+   "name": "amdxc64",
+   "reason": "AMD's DX11 shader compiler driver component; there is no AMD driver behind Metal"
+  },
+  {
+   "name": "amdxcffx64",
+   "reason": "AMD's FidelityFX driver component; there is no AMD driver behind Metal"
+  },
+  {
+   "name": "amfrt64",
+   "reason": "AMD's Media Framework runtime; there is no AMD driver behind Metal"
+  },
+  {
+   "name": "atiadlxx",
+   "reason": "AMD's display library; there is no AMD driver behind Metal"
+  },
+  {
+   "name": "atiumd64",
+   "reason": "AMD's user-mode display driver; there is no AMD driver behind Metal"
+  },
+  {
+   "name": "atiumd6a",
+   "reason": "AMD's video component; there is no AMD driver behind Metal"
+  },
+  {
+   "name": "d3d11_1",
+   "reason": "Windows 8 renamed the Direct3D 11.1 interfaces into a second DLL; Wine exports them from d3d11.dll, which is the file a title should link"
+  },
+  {
+   "name": "d3dcompiler_44",
+   "reason": "a DirectX SDK shader compiler; Wine builds d3dcompiler_33 through 43, 46 and 47"
+  },
+  {
+   "name": "d3dcompiler_45",
+   "reason": "a DirectX SDK shader compiler; Wine builds d3dcompiler_33 through 43, 46 and 47"
+  },
+  {
+   "name": "dxcompiler",
+   "reason": "the DirectX Shader Compiler, a redistributable that ships with the title rather than with Windows; neither Wine nor DXMT builds it"
+  },
+  {
+   "name": "dxgi1_2",
+   "reason": "Windows 8 split the DXGI 1.2 interfaces into this DLL; Wine exports them from dxgi.dll"
+  },
+  {
+   "name": "dxgi1_3",
+   "reason": "Windows 8.1 split the DXGI 1.3 interfaces into this DLL; Wine exports them from dxgi.dll"
+  },
+  {
+   "name": "dxgi1_4",
+   "reason": "Windows 10 split the DXGI 1.4 interfaces into this DLL; Wine exports them from dxgi.dll"
+  },
+  {
+   "name": "dxil",
+   "reason": "the DirectX Shader Compiler's validator, a redistributable that ships with the title rather than with Windows; neither Wine nor DXMT builds it"
+  },
+  {
+   "name": "mfcore",
+   "reason": "Windows 8 split the Media Foundation platform in two; Wine implements the platform API in mfplat.dll and has no mfcore module"
+  },
+  {
+   "name": "mscoreei",
+   "reason": ".NET's installation shim; Wine has one managed entry point, mscoree.dll"
+  },
+  {
+   "name": "nvapi",
+   "reason": "NVIDIA's driver interface; there is no NVIDIA driver behind Metal, and DXMT's nvapi module is not in the farms this app ships"
+  },
+  {
+   "name": "nvapi64",
+   "reason": "NVIDIA's driver interface; there is no NVIDIA driver behind Metal, and DXMT's nvapi64 module is not in the farms this app ships"
+  },
+  {
+   "name": "nvngx",
+   "reason": "the DLSS entry point behind NVAPI; DXMT builds one and this app does not ship it"
+  },
+  {
+   "name": "nvngx_dlss",
+   "reason": "the DLSS runtime a title ships itself; it needs an NVIDIA driver, which Metal is not"
+  },
+  {
+   "name": "nvngx_dlssg",
+   "reason": "the DLSS frame-generation runtime; it needs an NVIDIA driver, which Metal is not"
+  },
+  {
+   "name": "xactengine2_1",
+   "reason": "Wine builds xactengine2_0, 2_4, 2_7, 2_9 and the 3.x series only"
+  },
+  {
+   "name": "xactengine2_10",
+   "reason": "Wine builds xactengine2_0, 2_4, 2_7, 2_9 and the 3.x series only"
+  },
+  {
+   "name": "xactengine2_2",
+   "reason": "Wine builds xactengine2_0, 2_4, 2_7, 2_9 and the 3.x series only"
+  },
+  {
+   "name": "xactengine2_3",
+   "reason": "Wine builds xactengine2_0, 2_4, 2_7, 2_9 and the 3.x series only"
+  },
+  {
+   "name": "xactengine2_5",
+   "reason": "Wine builds xactengine2_0, 2_4, 2_7, 2_9 and the 3.x series only"
+  },
+  {
+   "name": "xactengine2_6",
+   "reason": "Wine builds xactengine2_0, 2_4, 2_7, 2_9 and the 3.x series only"
+  },
+  {
+   "name": "xactengine2_8",
+   "reason": "Wine builds xactengine2_0, 2_4, 2_7, 2_9 and the 3.x series only"
+  }
  ],
  "api_set_prefixes": [
   "api-ms-win-",

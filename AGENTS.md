@@ -49,10 +49,19 @@ replace it when adding a feature.
   `app/Madeira/compat.json`.
 - `compat/wine-modules.json` is generated too, by
   `build/tools/gen-wine-modules.py --configure <wine>/configure` (or `--wine
-  <checkout>`): the modules the runtime provides, the ones the iOS build skips
-  (`build/wine-i386/build.sh`, SKIP_REASON) and the API set prefixes the loader
-  resolves. It is the list the engine uses to tell "Wine answers this" from
-  "nothing here has this".
+  <checkout>`): the modules the runtime provides in each architecture, the
+  names Wine never built (with the reason the report quotes), the ones the iOS
+  build skips (`build/wine-i386/build.sh`, SKIP_REASON) and the API set
+  prefixes the loader resolves. It is the list the engine uses to tell "Wine
+  answers this" from "nothing here has this".
+- The two PE farms are not the same set: the 64-bit farm is a smaller list
+  (the media, DirectShow, XACT/XAudio, Direct2D and D3DX families are 32-bit
+  only today). So an answer about what the runtime has is per launch, not
+  global — `absentModules(bits)` and `serves(name, bits:)` are the two ways to
+  ask, and a `builtin` pin the launching architecture cannot resolve is
+  dropped with the reason in the plan instead of being written. Do not undo
+  that filter: it exists because `xaudio2_7=b` on a 64-bit launch hides the
+  copy the title shipped and loads nothing.
 - The universal path is data, in order of priority: `baseline.json` (Windows
   version for everything) < `rules.json` (a fix that follows from what the
   program is: its imports, the files beside it, its name, its architecture) <

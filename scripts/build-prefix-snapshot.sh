@@ -91,4 +91,12 @@ echo "==> Creating tarball: $OUTPUT"
 tar -C "$WORK_DIR" -czf "$OUTPUT" prefix
 ls -lh "$OUTPUT"
 
+# ml719: the archive must not carry links into the build machine's home, which
+# dangle on device and make every shell-folder lookup fail. Refuse to leave a
+# bad archive behind.
+if ! "$REPO_ROOT/tools/check-prefix-template.sh" "$OUTPUT"; then
+    rm -f "$OUTPUT"
+    exit 1
+fi
+
 echo "==> Done."

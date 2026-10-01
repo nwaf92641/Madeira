@@ -17,19 +17,23 @@ struct GameCompatSection: View {
 
     private var overrides: CompatOverrides { entry.compat ?? CompatOverrides() }
 
-    private func launch() -> CompatLaunch {
-        CompatLaunch(
-            executable: (entry.launchRelativePath as NSString).lastPathComponent,
-            relativePath: entry.launchRelativePath,
-            appid: entry.steamAppID,
-            payloadDirectories: LibraryModel.compatPayloadDirectories(),
-            overrides: entry.compat)
-    }
+    private func launch() -> CompatLaunch { entry.compatLaunch() }
 
     private func refresh() {
-        plan = GameCompatibility.plan(launch(), database: LibraryModel.compatDatabase())
+        plan = GameCompatibility.plan(launch(), database: LibraryModel.compatDatabase(),
+                                      alternative: max(entry.compatAttempt ?? 0, 0))
         extraDependencies = (entry.compat?.extraDependencies ?? []).joined(separator: ", ")
         loaded = true
+    }
+
+    /// Which configuration this game launches with. A title with fallbacks
+    /// advances on its own after a failure; this is where that is reset.
+    private var attempt: Binding<Int> {
+        Binding(get: { entry.compatAttempt ?? 0 }, set: { value in
+            entry.compatAttempt = value == 0 ? nil : value
+            entry.compatResult = nil
+            refresh()
+        })
     }
 
     private var automatic: Binding<Bool> {
@@ -87,6 +91,19 @@ struct GameCompatSection: View {
                 LabeledContent("DLL overrides", value: plan.dllOverrideString)
                     .font(.caption)
             }
+            if !plan.recipeTitles.isEmpty {
+                LabeledContent("Fixes", value: plan.recipeTitles.joined(separator: ", "))
+                    .font(.caption)
+            }
+            if plan.alternatives.count > 1 {
+                Picker("Configuration", selection: attempt) {
+                    ForEach(plan.alternatives, id: \.index) { Text($0.name).tag($0.index) }
+                }
+                if let selected = plan.alternatives.first(where: { $0.index == plan.alternativeIndex }),
+                   let note = selected.note {
+                    Text(note).font(.caption2).foregroundStyle(.secondary)
+                }
+            }
             Picker("Windows version", selection: windowsVersion) {
                 Text("Automatic").tag("")
                 ForEach(["win10", "win7", "winxp", "winxp64", "win2000", "win8", "vista"], id: \.self) { Text($0).tag($0) }
@@ -99,6 +116,24 @@ struct GameCompatSection: View {
             Text("Compatibility")
         } footer: {
             VStack(alignment: .leading, spacing: 6) {
+                if let result = entry.compatResult {
+                    Text("Last session: \(result.outcomeTitle)" +
+                         (result.categories.isEmpty ? "" : " — \(result.categoriesTitle)"))
+                        .foregroundStyle(result.isFailure ? .orange : .secondary)
+                    if let detail = result.detail { Text(detail).font(.caption2).foregroundStyle(.secondary) }
+                    if result.isFatal {
+                        Text("This title needs anti-cheat or copy protection that Madeira cannot provide.")
+                            .foregroundStyle(.orange)
+                    }
+                    if let next = entry.nextCompatibilityAlternative {
+                        Text("The next launch will try: \(next)")
+                    } else if (entry.compatAttempt ?? 0) > 0 {
+                        Button("Back to the first configuration") {
+                            entry.compatAttempt = nil; entry.compatResult = nil; refresh()
+                        }
+                        .font(.caption)
+                    }
+                }
                 if plan.unsatisfied.isEmpty {
                     Text("Madeira matches the game, prepares its runtimes and configures Wine automatically before it starts.")
                 } else {

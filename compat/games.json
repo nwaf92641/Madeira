@@ -18,7 +18,16 @@
       ],
       "windows_version": "win10",
       "notes": "Reference title for Madeira. Starts as its own program (no Steam client needed) and reaches gameplay.",
-      "source": "madeira"
+      "source": "madeira",
+      "fallbacks": [
+        {
+          "name": "Disable the Steam overlay",
+          "recipes": [
+            "steam-no-overlay"
+          ],
+          "note": "The overlay hook is the usual reason an older Unity title stops presenting."
+        }
+      ]
     },
     {
       "title": "ULTRAKILL",
@@ -34,7 +43,15 @@
       ],
       "windows_version": "win10",
       "notes": "Reference title for Madeira; D3D11 through DXMT.",
-      "source": "madeira"
+      "source": "madeira",
+      "fallbacks": [
+        {
+          "name": "Disable the Steam overlay",
+          "recipes": [
+            "steam-no-overlay"
+          ]
+        }
+      ]
     },
     {
       "title": "Stray",
@@ -55,7 +72,22 @@
       "issues": [
         "The launcher must be bypassed for the D3D11 renderer to be selected."
       ],
-      "source": "madeira"
+      "source": "madeira",
+      "fallbacks": [
+        {
+          "name": "Direct3D 9 renderer",
+          "recipes": [
+            "engine-dx9"
+          ],
+          "note": "If the D3D11 path fails on DXMT, the UE4 D3D9 renderer is the next thing to try."
+        },
+        {
+          "name": "Borderless window",
+          "recipes": [
+            "windowed-borderless"
+          ]
+        }
+      ]
     },
     {
       "title": "Marvel Cosmic Invasion",
@@ -95,7 +127,22 @@
       "issues": [
         "Requires a DirectX 9 path; see the d3dx9 and d3dcompiler dependencies."
       ],
-      "source": "protonfixes"
+      "source": "protonfixes",
+      "fallbacks": [
+        {
+          "name": "Builtin DirectInput 8",
+          "recipes": [
+            "builtin-dinput8"
+          ],
+          "note": "An old DSfix build with a broken proxy makes the native dinput8 fail to load."
+        },
+        {
+          "name": "Borderless window",
+          "recipes": [
+            "windowed-borderless"
+          ]
+        }
+      ]
     },
     {
       "title": "Grand Theft Auto IV",
@@ -113,7 +160,16 @@
       "issues": [
         "Games for Windows LIVE online services are gone."
       ],
-      "source": "protonfixes"
+      "source": "protonfixes",
+      "fallbacks": [
+        {
+          "name": "Report Windows 7",
+          "recipes": [
+            "windows-7"
+          ],
+          "note": "Some GTA IV builds refuse to start on a newer reported version."
+        }
+      ]
     },
     {
       "title": "Fallout 3",
@@ -129,6 +185,33 @@
         "gfw"
       ],
       "notes": "GFWL is unavailable; the game runs offline.",
+      "source": "protonfixes",
+      "fallbacks": [
+        {
+          "name": "Report Windows 7",
+          "recipes": [
+            "windows-7"
+          ]
+        },
+        {
+          "name": "Borderless window",
+          "recipes": [
+            "windowed-borderless"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Red Dead Redemption 2",
+      "appid": 1174180,
+      "executables": [
+        "RDR2.exe",
+        "PlayRDR2.exe"
+      ],
+      "engine": "RAGE",
+      "rating": "unknown",
+      "launch_arguments": "-fullscreen -dx12",
+      "notes": "Protonfixes appends -vulkan, which is a fix on Proton because Proton renders through Vulkan. Madeira presents through Metal and has no Vulkan, so the equivalent is the game's Direct3D 12 renderer: -vulkan becomes -dx12 and -fullscreen is kept.",
       "source": "protonfixes"
     }
   ]

@@ -18,10 +18,15 @@ Windows game (.exe)
    ↓  compatibility data  compat.json (bundled seed + Documents update)
    ↓  detect              the executable's PE import table
    ↓  dependencies        runtimes, DirectX, media, audio, fonts, .NET …
-   ↓  fixes               DLL overrides, registry, environment, Windows version
+   ↓  fixes               reusable recipes: DLL overrides, registry, environment
    ↓  launch config       MADEIRA_ARGS and the process environment
    ↓  Madeira runtime     Wine · FEX · DXMT · audio · video · input
    ↓  the game
+
+the session ends
+   ↓  classify            CompatDiagnosis.swift reads the log and the exit status
+   ↓  record              the verdict is kept on the library entry
+   ↓  retry               a failure moves the title to its next alternative
 ```
 
 Everything above the runtime is data-driven and per-game. Nothing changes the
@@ -32,11 +37,13 @@ variable or a launch argument, all scoped to one launch of one game.
 
 | Path | What it is |
 | --- | --- |
-| `app/Madeira/GameCompat.swift` | The engine: matching, dependency resolution, the plan, and the registry-text merge. Foundation-only and host-testable. |
+| `app/Madeira/GameCompat.swift` | The engine: matching, dependency resolution, recipes, fallbacks, the plan, and the registry-text merge. Foundation-only and host-testable. |
+| `app/Madeira/CompatDiagnosis.swift` | Classifies a finished session into the categories a user can act on, and the result recorded on the entry. |
 | `app/Madeira/GameCompatView.swift` | Game details › Compatibility. |
 | `compat/dependencies.json` | The dependency catalogue, hand-written: what each Windows component is and how Madeira satisfies it. |
 | `compat/games.json` | Curated per-title profiles. |
-| `build/tools/gen-game-compat.py` | Builds `app/Madeira/compat.json`; optionally imports Protonfixes game scripts. |
+| `compat/recipes.json` | Reusable fixes, referenced by name from a dependency or a profile. |
+| `build/tools/gen-game-compat.py` | Builds `app/Madeira/compat.json`; optionally imports Protonfixes game scripts, Winetricks verb metadata and Bottles dependency definitions. |
 | `app/Madeira/compat.json` | The database the app ships, bundled as a resource. Generated, not edited by hand. |
 | `Documents/madeira-compat/` | Optional update, payload DLLs and fonts (below). |
 
@@ -81,6 +88,45 @@ it needs, and how Madeira can satisfy it:
 A dependency can require others (`requires`), which are resolved first. The
 user can add extras or exclude any component for one game.
 
+## Reusable fixes (recipes)
+
+Most Wine fixes are a small combination: override these DLLs, set this variable,
+write this registry value, add this argument, make sure this component is
+present. They are written once in `compat/recipes.json` and referenced by name,
+from a dependency or a profile:
+
+```json
+{
+  "steam-no-overlay": {
+    "title": "Disable the Steam overlay",
+    "category": "launch",
+    "dll_overrides": {"gameoverlayrenderer64": "", "gameoverlayrenderer": ""},
+    "notes": "The overlay hook crashes some titles when it is injected."
+  }
+}
+```
+
+A recipe is applied at most once, after the components it belongs to. This is
+what keeps the database from repeating the same override in hundreds of
+profiles, and it is the seam through which an upstream fix (Protonfixes,
+Winetricks, Bottles) becomes a Madeira fix without being rewritten per game.
+
+## Fallbacks: a second and third attempt
+
+A curated profile can carry `fallbacks`. Each one is a variation that has been
+known to make the same title work when the first configuration does not:
+
+```json
+"fallbacks": [
+  {"name": "Wine's own dinput8", "dll_overrides": {"dinput8": "b"},
+   "note": "when the game ships its own proxy DLL"}
+]
+```
+
+The Compatibility section shows them as the game's configurations, and the
+first one is used. An alternative can carry its own `disable` list, which
+removes components and recipes the base plan would otherwise apply.
+
 ## Automatic detection from the import table
 
 A game's own executable names the DLLs it loads. That is the most reliable
@@ -93,9 +139,25 @@ and turns it into dependencies even when no profile matches:
 - `xactengine3_7.dll` → the XACT audio engine;
 - `physxloader.dll`, `OpenAL32.dll`, `quartz.dll`, `msxml6.dll`, …
 
-Names are matched lowercased and with or without the `.dll` extension. This is
-what makes the system general: a title nobody has written a profile for still
-gets the right overrides and an accurate report of anything that is missing.
+Names are matched lowercased and with or without the `.dll` extension. The
+catalogue recognises more than 360 names — every `d3dx9_*`, every
+`d3dcompiler_*`, the XAudio2 and XACT version families, the Visual C++ and UCRT
+runtimes, the media and audio DLLs, the engines' own players (mss32, bink,
+smacker, FMOD) and the vendor libraries (NVAPI, AMD AGS, PhysX, Oodle) whose
+right answer is a stub override. This is what makes the system general: a title
+nobody has written a profile for still gets the right overrides and an accurate
+report of anything that is missing.
+
+Two of those families are worth calling out because they are decisions rather
+than dependencies:
+
+- **GPU vendor libraries** are pinned to the Wine stub. There is no NVIDIA or
+  AMD driver behind Metal, and a game that loads the real one usually crashes;
+  the stub answers the queries it makes and the game keeps running. This is
+  Protonfixes' "disable NVAPI" fix, expressed as data.
+- **Vulkan** is `partial`, not a missing file. A title that merely imports
+  `vulkan-1.dll` is told apart from one that refuses to start without a Vulkan
+  device, and the report points at the Direct3D renderer instead.
 
 ## Isolation between games
 
@@ -118,18 +180,52 @@ updated in place rather than duplicated, and a one-time `.madeira-bak` backup is
 kept. Writing is skipped while a session is running, because wineserver holds
 the registry in memory.
 
+## When a game does not work
+
+Searching for a fix is the thing this system exists to remove, so a failure is
+not left for the user to interpret. When a session ends, `CompatDiagnosis.swift`
+reads the log (the head, where the DLL loader reports what it could not find,
+and the tail, where the crash is), the process exit status and whether a frame
+ever reached the screen, and classifies it:
+
+| Class | What it means |
+| --- | --- |
+| `dependency` | A Windows component or DLL is missing. |
+| `dll` | A plugin shipped with the game failed to load. |
+| `dx9`, `dx11`, `dx12` | A graphics path failed. |
+| `media`, `audio`, `input` | Playback, sound, controller or mouse. |
+| `registry`, `save_path` | A value or a folder the game writes to. |
+| `wine_fex` | Wine or the x86 emulator hit an unimplemented call. |
+| `drm`, `anticheat` | Cannot work on Madeira; reported, never retried. |
+| `launch` | The process started but never reached a frame. |
+
+The result is stored on the library entry: the game details show what happened
+and the next thing that will be tried, and the library row carries a badge after
+a failure. If the title has a fallback and this attempt failed, the next launch
+uses it — that is the automatic retry. A fatal classification (anti-cheat, DRM)
+stops the ladder, because no configuration will change it, and the user can go
+back to the first configuration from the same section.
+
+Madeira's own bracketed log lines (`[xinput]`, `[jit]`, `[render]`, …) are
+stripped before classification, so the app's diagnostics can never be mistaken
+for a game's failure.
+
 ## The user interface
 
 Game details › **Compatibility** shows what will happen for one game: the
-matched profile, engine and rating, the resolved dependencies, the DLL
-overrides, and anything that could not be satisfied. From here the user can:
+matched profile, engine and rating, the resolved dependencies, the fixes being
+applied, the DLL overrides, the configurations (fallbacks) it can use, how the
+last session ended, and anything that could not be satisfied. From here the user
+can:
 
 - turn automatic compatibility off for a game;
+- choose another configuration (attempt) for the game, or go back to the first
+  one after an automatic retry;
 - force a Windows version;
 - add extra dependency ids.
 
-Each control writes into the entry's `compat` field, so it is per game and
-survives across sessions.
+Each control writes into the entry itself, so it is per game and survives across
+sessions.
 
 ## Adding a game profile
 
@@ -150,6 +246,11 @@ Add an object to `compat/games.json`:
   ],
   "env": {"MADEIRA_WG_64BIT": "1"},
   "issues": ["The intro video needs Media Foundation."],
+  "recipes": ["dinput-proxy-off"],
+  "fallbacks": [
+    {"name": "Builtin DirectInput", "dll_overrides": {"dinput8": "b"},
+     "note": "when the game ships its own proxy DLL"}
+  ],
   "source": "protonfixes"
 }
 ```
@@ -163,14 +264,19 @@ build/tools/gen-game-compat.py
 `--protonfixes DIR` also imports profiles from a Protonfixes checkout: the App
 ID, dependencies (winetricks verbs the catalogue knows), DLL overrides,
 environment variables, registry keys and launch arguments, plus the logic
-fixes it cannot express as data (recorded as notes). Curated entries always win
-over an imported profile with the same key.
+fixes it cannot express as data (recorded as notes). Every store-specific
+directory is imported, not only Steam — `gamefixes-gog`, `gamefixes-egs`,
+`gamefixes-umu` and the rest — because they key their fixes by the same App ID.
+Curated entries always win over an imported profile with the same key.
+`--winetricks DIR` widens the dependency catalogue from the verb metadata, and
+`--bottles DIR` from the Bottles dependency definitions.
 
 Adding a dependency is the same idea in `compat/dependencies.json`; set
 `imports` so the import table can select it, `dlls` for the files a payload
-needs, and `support` for how it is satisfied. The generator validates the
-database: every referenced dependency must exist, override orders and registry
-types must be known, and game keys must be unique.
+needs, and `support` for how it is satisfied. Adding a fix that several
+profiles need belongs in `compat/recipes.json` instead. The generator validates
+the database: every referenced dependency, recipe, import name, override order
+and registry type must be known, and game keys must be unique.
 
 ## Updating without a rebuild
 
@@ -193,13 +299,17 @@ re-deriving it per game:
   (files, overrides, registry, installer) and the DLLs each component provides.
 - **Protonfixes** — game-specific fixes: App IDs, winetricks verbs, DLL
   overrides, environment variables, registry keys and launch arguments. The
-  generator imports these into per-game profiles.
+  generator imports these into per-game profiles, including the store-specific
+  directories (GOG, EGS, Ubisoft, Amazon, Humble, itch.io, Zoom Platform) and
+  the generic `gamefixes-umu` fallback.
 - **Proton and GE-Proton** — the kinds of fixes that make specific titles work,
   used to shape the catalogue and the profiles.
 - **Lutris** — how installers, prefixes and per-game configuration are
   described, which informed the profile model.
 - **Wine** — the authority on the overrides, `AppDefaults` keys, registry
-  format and DLL behaviour this system emits.
+  format, DLL behaviour, and which DLL names a builtin module serves under
+  (the source of the version families such as `d3dcompiler_*` and
+  `xaudio2_*`).
 - **Apple Game Porting Toolkit** — the reference for a Wine-adjacent stack on
   Apple silicon; Madeira's stack is its own (FEX, DXMT, Metal), so this informed
   direction rather than code.
@@ -207,13 +317,35 @@ re-deriving it per game:
 What was deliberately **not** carried over: Proton/DXVK/VKD3D (Madeira uses
 DXMT and Metal, not Vulkan), winetricks' bash and its `.verb` files (the data
 is re-expressed as JSON the app can read), Bottles' installers and runtimes
-(Madeira's prefix and runtimes are its own), and anything needing root, a
-kernel module or a Linux service (anti-cheat, some DRM), which is represented
-as an explicitly unsupported compatibility case instead.
+(Madeira's prefix and runtimes are its own), Protonfixes' Python (the fixes are
+read out of the scripts into data; a fix that is a Python function Madeira has
+no equivalent for is recorded as an unavailable fix on the title rather than
+dropped), and anything needing root, a kernel module or a Linux service
+(anti-cheat, some DRM), which is represented as an explicitly unsupported
+compatibility case instead.
+
+One import is adapted rather than copied, because it would have been a bug: a
+Protonfixes fix is a fix *on Proton*, and Proton renders through Vulkan. An
+appended `-vulkan` or an id Tech `+r_renderAPI 1` selects a device Madeira
+cannot create, so the generator drops those tokens and records them on the
+title, leaving the rest of the command alone. Red Dead Redemption 2 is the
+worked example: upstream appends `-fullscreen -vulkan`, and Madeira keeps
+`-fullscreen`, replaces the renderer with the game's Direct3D 12 path and says
+so in the profile's notes.
 
 ## Testing
 
-`build/host-tests/check-game-compat.py` compiles the engine with a harness and
-checks matching, detection, resolution, the plan, the registry merge, the
-overlay merge and the bundled database, then checks the source wiring. The
-database itself is validated for dangling references and unique keys.
+`build/host-tests/check-game-compat.py` compiles the engine and the diagnosis
+with a harness and checks matching, detection, dependency resolution, recipes,
+fallbacks and the alternatives a title offers, the plan, the registry merge,
+session classification, the overlay merge and the bundled database (including
+that every referenced dependency and recipe exists, that import names are
+normalised, and that the curated profiles were regenerated), then checks the
+source wiring and the Xcode project. `check-frontend.py` compiles
+`LibraryEntry` with the same engine, so the launch path and the compatibility
+plan cannot drift apart.
+
+The database itself is validated by the generator as well (`validate()` on every
+run, and `--check` to compare the committed database without writing), so a
+hand-edited profile that names a dependency or a recipe that does not exist
+fails the build rather than the game launch.

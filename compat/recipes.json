@@ -1,0 +1,300 @@
+{
+  "schema": 1,
+  "updated": "2026-10-01",
+  "_comment": "Reusable fixes. A profile or a dependency references a recipe by name and the engine applies it, so the same remedy is written once instead of being repeated for every title. Fields mean the same as in a game profile: dll_overrides, registry, env, launch_arguments, windows_version, dependencies, and requires for other recipes. 'category' is the failure class the fix belongs to (see app/Madeira/CompatDiagnosis.swift). Nothing here needs Linux, Vulkan or a Proton runtime: each recipe is an override, a registry value, an environment variable, an argument or a component.",
+  "recipes": {
+    "native-ddraw": {
+      "title": "Native ddraw",
+      "category": "dx9",
+      "summary": "Prefer the game's own ddraw.dll; Wine's builtin one lacks the DirectDraw-era behaviour some 1998-2003 titles need.",
+      "dll_overrides": {"ddraw": "n,b"},
+      "source": "protonfixes"
+    },
+    "native-d3d8": {
+      "title": "Native Direct3D 8",
+      "category": "dx9",
+      "summary": "Some D3D8 titles only render with a native d3d8.dll from the DirectX redistributable.",
+      "dependencies": ["d3d8"],
+      "dll_overrides": {"d3d8": "n,b"},
+      "source": "protonfixes"
+    },
+    "native-dsound": {
+      "title": "Native DirectSound",
+      "category": "audio",
+      "summary": "Titles whose mixer or EAX support exists only in the native dsound.dll.",
+      "dependencies": ["directx9"],
+      "dll_overrides": {"dsound": "n,b"},
+      "source": "protonfixes"
+    },
+    "native-winmm": {
+      "title": "Native winmm",
+      "category": "audio",
+      "summary": "Native winmm for titles that open MIDI or the MCI sequencer, or that must see a specific winmm version.",
+      "dll_overrides": {"winmm": "n,b"},
+      "source": "protonfixes"
+    },
+    "native-dinput": {
+      "title": "Native DirectInput",
+      "category": "input",
+      "summary": "Prefer the game's own dinput.dll so a bundled proxy or mapper is loaded.",
+      "dll_overrides": {"dinput": "n,b"},
+      "source": "protonfixes"
+    },
+    "broad-dinput8": {
+      "title": "Broad dinput8",
+      "category": "input",
+      "summary": "Prefer a native dinput8.dll when the game ships one, and fall back to Wine's builtin otherwise.",
+      "dll_overrides": {"dinput8": "n,b"},
+      "source": "protonfixes"
+    },
+    "builtin-dinput8": {
+      "title": "Builtin dinput8",
+      "category": "input",
+      "summary": "Force Wine's builtin dinput8 for titles broken by a native one.",
+      "dll_overrides": {"dinput8": "b"},
+      "source": "protonfixes"
+    },
+    "native-xinput": {
+      "title": "Native XInput",
+      "category": "input",
+      "summary": "Native xinput1_3/1_4 for titles that reject Wine's builtin stubs.",
+      "dependencies": ["xinput"],
+      "dll_overrides": {"xinput1_3": "n,b", "xinput1_4": "n,b"},
+      "source": "winetricks"
+    },
+    "native-winhttp": {
+      "title": "Native winhttp",
+      "category": "dependency",
+      "summary": "Native winhttp for launchers whose TLS or proxy handling fails on the builtin.",
+      "dll_overrides": {"winhttp": "n,b"},
+      "source": "protonfixes"
+    },
+    "native-dwmapi": {
+      "title": "Native dwmapi",
+      "category": "dll",
+      "summary": "Native dwmapi for titles that query DWM composition and refuse to start on the stub.",
+      "dll_overrides": {"dwmapi": "n,b"},
+      "source": "protonfixes"
+    },
+    "native-dwrite": {
+      "title": "Native dwrite",
+      "category": "dll",
+      "summary": "Native dwrite for titles whose text layout needs the real DirectWrite.",
+      "dll_overrides": {"dwrite": "n,b"},
+      "source": "protonfixes"
+    },
+    "disable-dcomp": {
+      "title": "Disable DirectComposition",
+      "category": "dx11",
+      "summary": "Titles that pick DirectComposition for their swapchain and then fail to present.",
+      "dll_overrides": {"dcomp": ""},
+      "source": "protonfixes"
+    },
+    "native-version": {
+      "title": "Native version.dll",
+      "category": "dll",
+      "summary": "Titles that read version resources from a native version.dll.",
+      "dll_overrides": {"version": "n,b"},
+      "source": "protonfixes"
+    },
+    "native-d3dcompiler": {
+      "title": "Native D3D shader compilers",
+      "category": "dx9",
+      "summary": "Native d3dcompiler_43/46/47 for titles that hit a compiler bug in the builtin compiler.",
+      "dependencies": ["d3dcompiler_43", "d3dcompiler_46", "d3dcompiler_47"],
+      "dll_overrides": {"d3dcompiler_43": "n,b", "d3dcompiler_46": "n,b", "d3dcompiler_47": "n,b"},
+      "source": "winetricks"
+    },
+    "native-d3dx9": {
+      "title": "Native D3DX9",
+      "category": "dx9",
+      "summary": "The D3DX9 helper DLLs are not implemented by Wine; a Direct3D 9 title that links them needs the native files.",
+      "dependencies": ["d3dx9"],
+      "dll_overrides": {"d3dx9_43": "n,b"},
+      "source": "winetricks"
+    },
+    "native-gdiplus": {
+      "title": "Native gdiplus",
+      "category": "dll",
+      "summary": "Native gdiplus for titles that hit a rendering or image-decoding bug in the builtin.",
+      "dependencies": ["gdiplus"],
+      "dll_overrides": {"gdiplus": "n,b"},
+      "source": "winetricks"
+    },
+    "native-msxml": {
+      "title": "Native MSXML",
+      "category": "dependency",
+      "summary": "Native MSXML 3, 4 and 6 for launchers and games that parse XML through MSXML.",
+      "dependencies": ["msxml3", "msxml4"],
+      "dll_overrides": {"msxml3": "n,b", "msxml4": "n,b"},
+      "source": "winetricks"
+    },
+    "native-richedit": {
+      "title": "Native rich edit",
+      "category": "dll",
+      "summary": "Native riched20/riched30 for titles whose in-game text or console needs the real control.",
+      "dependencies": ["riched20"],
+      "dll_overrides": {"riched20": "n,b", "riched30": "n,b"},
+      "source": "winetricks"
+    },
+    "video-quartz": {
+      "title": "Native DirectShow video",
+      "category": "media",
+      "summary": "Wine's builtin quartz has no working decoders on iOS, so titles that play a video need the native filter graph and codecs.",
+      "dependencies": ["quartz", "l3codecx"],
+      "dll_overrides": {"quartz": "n,b", "devenum": "n,b", "qasf": "n,b", "qcap": "n,b"},
+      "source": "winetricks"
+    },
+    "video-media-foundation": {
+      "title": "Media Foundation video",
+      "category": "media",
+      "summary": "Titles that decode video through Media Foundation (mfplat/mfreadwrite) instead of DirectShow.",
+      "dependencies": ["mfplat", "quartz"],
+      "dll_overrides": {"mfplat": "n,b", "mfreadwrite": "n,b", "mf": "n,b"},
+      "source": "winetricks"
+    },
+    "video-wmv": {
+      "title": "Windows Media video",
+      "category": "media",
+      "summary": "WMV/VC-1 playback, used by many intros and cutscenes.",
+      "dependencies": ["wmv9vcm", "l3codecx"],
+      "dll_overrides": {"wmvdecod": "n,b", "wmasf": "n,b"},
+      "source": "winetricks"
+    },
+    "audio-xact": {
+      "title": "XACT audio",
+      "category": "audio",
+      "summary": "xactengine2_0..3_7 plus X3DAudio/XAPOFX: the DirectX sound engine of the D3D9 era.",
+      "dependencies": ["xact"],
+      "dll_overrides": {"xactengine3_7": "n,b", "xactengine3_6": "n,b", "xaudio2_7": "n,b", "xaudio2_8": "n,b"},
+      "source": "winetricks"
+    },
+    "audio-openal": {
+      "title": "OpenAL",
+      "category": "audio",
+      "summary": "OpenAL32/wrap_oal for id Tech and other engines that ship or link OpenAL.",
+      "dependencies": ["openal"],
+      "source": "winetricks"
+    },
+    "audio-directmusic": {
+      "title": "DirectMusic",
+      "category": "audio",
+      "summary": "The DirectX 9 DirectMusic set, used by 2000s titles for soundtrack playback.",
+      "dependencies": ["directmusic"],
+      "source": "winetricks"
+    },
+    "physx-legacy": {
+      "title": "Legacy PhysX",
+      "category": "dependency",
+      "summary": "PhysXLoader/PhysXCore for titles from the Unreal Engine 3 era that link the pre-2.8 runtime.",
+      "dependencies": ["physx"],
+      "source": "winetricks"
+    },
+    "dotnet-desktop": {
+      "title": ".NET desktop runtime",
+      "category": "dependency",
+      "summary": "Titles that need the .NET Framework rather than wine-mono, at a Windows 10 version.",
+      "dependencies": ["dotnet40"],
+      "windows_version": "win10",
+      "source": "winetricks"
+    },
+    "unicode-fonts": {
+      "title": "Core and Unicode fonts",
+      "category": "other",
+      "summary": "Arial, Times, Courier and the CJK-capable fonts some engines measure text against.",
+      "dependencies": ["corefonts", "tahoma"],
+      "source": "winetricks"
+    },
+    "launcher-webview": {
+      "title": "Launcher web view",
+      "category": "dependency",
+      "summary": "Launchers and store clients that render their UI in an embedded browser need wininet/urlmon and WebView2.",
+      "dependencies": ["wininet", "urlmon", "webview2"],
+      "dll_overrides": {"wininet": "n,b", "urlmon": "n,b"},
+      "source": "winetricks"
+    },
+    "steam-offline": {
+      "title": "Steam offline launch",
+      "category": "launch",
+      "summary": "Start a Steam title as its own program in offline mode, without waiting for the client.",
+      "launch_arguments": "-offline",
+      "source": "madeira"
+    },
+    "steam-no-overlay": {
+      "title": "Disable the Steam overlay",
+      "category": "dll",
+      "summary": "The overlay hook can crash older D3D9 titles; the game still runs without it.",
+      "dll_overrides": {"gameoverlayrenderer": ""},
+      "source": "madeira"
+    },
+    "engine-dx11": {
+      "title": "Direct3D 11 renderer",
+      "category": "dx11",
+      "summary": "Unreal Engine 3 and 4 titles that default to another RHI but work through -dx11.",
+      "launch_arguments": "-dx11",
+      "source": "protonfixes"
+    },
+    "engine-dx9": {
+      "title": "Direct3D 9 renderer",
+      "category": "dx9",
+      "summary": "Titles whose Direct3D 11 path fails on DXMT but whose Direct3D 9 path works.",
+      "launch_arguments": "-dx9",
+      "source": "madeira"
+    },
+    "engine-fna-d3d11": {
+      "title": "FNA Direct3D 11 backend",
+      "category": "dx11",
+      "summary": "FNA has no OpenGL backend on iOS, so its D3D11 backend is selected explicitly.",
+      "env": {"FNA3D_FORCE_DRIVER": "D3D11"},
+      "source": "madeira"
+    },
+    "windowed-borderless": {
+      "title": "Borderless window",
+      "category": "launch",
+      "summary": "Some titles only present correctly in a borderless window on iOS.",
+      "launch_arguments": "-borderless",
+      "source": "protonfixes"
+    },
+    "skip-splash": {
+      "title": "Skip the splash screen",
+      "category": "launch",
+      "summary": "A splash that hangs on a video or a network check can be skipped.",
+      "launch_arguments": "-NoSplash",
+      "source": "protonfixes"
+    },
+    "windows-xp": {
+      "title": "Report Windows XP",
+      "category": "wine_fex",
+      "summary": "Pre-2007 titles that refuse to start on a newer reported Windows version.",
+      "windows_version": "winxp",
+      "source": "winetricks"
+    },
+    "windows-7": {
+      "title": "Report Windows 7",
+      "category": "wine_fex",
+      "summary": "Titles that check for a Windows 7-or-later API set.",
+      "windows_version": "win7",
+      "source": "winetricks"
+    },
+    "windows-10": {
+      "title": "Report Windows 10",
+      "category": "wine_fex",
+      "summary": "Titles that require Windows 10 to start or to expose their D3D11/D3D12 path.",
+      "windows_version": "win10",
+      "source": "winetricks"
+    },
+    "installer-mode-msi": {
+      "title": "MSI installation supported",
+      "category": "dependency",
+      "summary": "Wine's builtin msi can run a self-extracting redistributable's MSI payload; keep it builtin.",
+      "dll_overrides": {"msi": "b"},
+      "source": "winetricks"
+    },
+    "nocd-disc-check": {
+      "title": "Disc-check bypass",
+      "category": "drm",
+      "summary": "Titles whose SafeDisc/SecuROM check reads the original disc; no disc image can satisfy it on iOS.",
+      "source": "madeira"
+    }
+  }
+}

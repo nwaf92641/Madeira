@@ -25,6 +25,11 @@ graphics-API badge, and measures the install folder's size. The badge names an
 API only when exactly one is found: it describes what the files import, not
 which renderer a game picks at run time.
 
+What a game needs to run is a separate system. When it is launched, Madeira
+matches it against its compatibility database, reads the executable's imports
+and prepares the runtimes, DLL overrides, registry and Windows version it
+needs, per game. See [docs/GAME_COMPATIBILITY.md](GAME_COMPATIBILITY.md).
+
 Library data is written atomically to `Documents/madeira-library.json`
 (version 1); covers chosen from Files are stored as thumbnails in
 `Documents/madeira-art/`. A library file that cannot be read, or that has a

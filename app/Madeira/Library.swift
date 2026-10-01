@@ -196,6 +196,10 @@ struct LibraryEntry: Codable, Identifiable {
     /// D3D9 anisotropic filtering limit (DXMT_D9_ANISO_LIMIT: 1, 2, 4 or 8);
     /// nil = the application's own choice.
     var anisotropyLimit: Int?
+    /// The user's game-compatibility override for this entry (GameCompat.swift).
+    /// nil means fully automatic: the compatibility database decides. Anything
+    /// set here wins over the database and applies to this game's launches only.
+    var compat: CompatOverrides?
     /// A Steam game (SteamGames.swift): Madeira Dock starts it by this App ID
     /// through Valve's client, with Steam's default launch option.
     /// `relativePath` is then its install folder, relative to drive_c.
@@ -281,6 +285,46 @@ struct LibraryEntry: Codable, Identifiable {
         madeira_set_vsync_locked(effectiveFPSMode)
         fputs("[frontend] launch profile applied\n", stderr)
         LogStore.shared.log("[display-shape] resolution=\(resolution) mode=\(displayMode.rawValue)")
+        applyCompatibility()
+    }
+
+    /// Match this title against the compatibility database, resolve its
+    /// dependencies and apply the environment, DLL overrides, Windows version
+    /// and registry for this launch only (GameCompat.swift). Everything here is
+    /// per-game: DLL overrides go through WINEDLLOVERRIDES and the Windows
+    /// version through AppDefaults\<exe>, so two games in the one shared prefix
+    /// cannot affect each other.
+    func applyCompatibility() {
+        let launch = CompatLaunch(
+            executable: (launchRelativePath as NSString).lastPathComponent,
+            relativePath: launchRelativePath,
+            appid: steamAppID,
+            environment: ["WINEDLLOVERRIDES": getenv("WINEDLLOVERRIDES").map { String(cString: $0) } ?? ""],
+            payloadDirectories: LibraryModel.compatPayloadDirectories(),
+            importedDLLs: LibraryModel.importedDLLs(for: launchRelativePath),
+            overrides: compat)
+        let plan = GameCompatibility.plan(launch, database: LibraryModel.compatDatabase())
+        // Drop any compatibility variable a previous launch in this app run
+        // set, so one game's overrides cannot follow another into its session.
+        CompatEnvironmentRegistry.shared.reconcile(keeping: Set(plan.environment.keys),
+                                                   unset: { unsetenv($0) })
+        guard !plan.isEmpty else { return }
+        GameCompatibility.applyEnvironment(plan, set: { setenv($0, $1, 1) }, unset: { unsetenv($0) })
+        // A profile's launch arguments join the entry's own (MADEIRA_ARGS was
+        // set from them by configureLaunch, above).
+        if !plan.launchArguments.isEmpty {
+            let existing = getenv("MADEIRA_ARGS").map { String(cString: $0) } ?? ""
+            let combined = ([existing] + plan.launchArguments).filter { !$0.isEmpty }.joined(separator: " ")
+            setenv("MADEIRA_ARGS", combined, 1)
+        }
+        // Registry values are written before wineserver starts, into the prefix
+        // the session will use; the seeder makes sure it exists first.
+        let prefix = LibraryModel.documents.appendingPathComponent("wine")
+        madeira_seed_prefix_if_needed(prefix.path)
+        let (written, error) = GameCompatibility.writeRegistry(plan, prefix: prefix)
+        for line in GameCompatibility.summary(plan) { LogStore.shared.log("[compat] \(line)") }
+        if written > 0 { LogStore.shared.log("[compat] registry: \(written) value(s) written") }
+        if let error { LogStore.shared.log("[compat] registry write failed: \(error)", level: .error) }
     }
 
     /// What the bridge starts. Set on the main thread before the session begins.
@@ -318,6 +362,52 @@ final class LibraryModel: ObservableObject {
     static let shared = LibraryModel()
     static var documents: URL { FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0] }
     static var drive: URL { documents.appendingPathComponent("wine/drive_c", isDirectory: true).resolvingSymlinksInPath() }
+
+    /// The game-compatibility database (GameCompat.swift): the seed bundled as
+    /// compat.json, then an update in Documents/madeira-compat/compat.json when
+    /// one has been placed there, so a new profile needs no rebuild.
+    static func compatDatabase() -> CompatDatabase {
+        let bundled = Bundle.main.url(forResource: "compat", withExtension: "json").flatMap { try? Data(contentsOf: $0) }
+        let overlay = documents.appendingPathComponent("madeira-compat/compat.json")
+        return GameCompatibility.load(bundled: bundled, overlays: [overlay])
+    }
+
+    /// Where a dependency's native payload files (runtime DLLs, fonts) may be
+    /// found: the Microsoft VC++ runtime shipped in the bundle, and anything
+    /// dropped in Documents/madeira-compat.
+    static func compatPayloadDirectories() -> [String] {
+        var directories: [String] = []
+        if let resource = Bundle.main.resourceURL {
+            directories.append(resource.appendingPathComponent("x86_64-vcruntime").path)
+        }
+        let compat = documents.appendingPathComponent("madeira-compat")
+        for sub in ["dlls/x86_64", "dlls/i386", "dlls", "fonts"] {
+            directories.append(compat.appendingPathComponent(sub).path)
+        }
+        return directories
+    }
+
+    /// The DLLs an entry's programs import, for automatic dependency detection
+    /// (GameCompat.swift). Reuses the import reader the renderer badge already
+    /// uses (importNames, delayed imports included); the named executable is
+    /// read, or a folder entry's top-level programs, so a huge install costs a
+    /// few small reads rather than a scan.
+    static func importedDLLs(for relativePath: String) -> [String] {
+        let target = drive.appendingPathComponent(relativePath)
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: target.path, isDirectory: &isDirectory) else { return [] }
+        let files: [URL]
+        if isDirectory.boolValue {
+            let contents = (try? FileManager.default.contentsOfDirectory(at: target, includingPropertiesForKeys: nil)) ?? []
+            files = contents.filter { ["exe", "dll"].contains($0.pathExtension.lowercased()) }.prefix(8).map { $0 }
+        } else {
+            files = [target]
+        }
+        var names: Set<String> = []
+        for file in files { names.formUnion(importNames(file)) }
+        return names.sorted()
+    }
+
     @Published var enabled = false
     @Published var entries: [LibraryEntry] = []
     @Published var current: UUID?
@@ -1385,6 +1475,7 @@ struct LibraryDetail: View {
                 } header: { Text("Compatibility & performance") } footer: {
                     Text("Reduced-precision x87 can make older games faster at some cost in accuracy; it is off by default. Settings apply to the next launch; a precision change may still require restarting Madeira.")
                 }
+                if entry.desktop != true { GameCompatSection(entry: $entry) }
                 Section("On screen") {
                     Toggle("Performance overlay", isOn: $entry.performance)
                     Toggle("Live logs", isOn: $entry.liveLogs)

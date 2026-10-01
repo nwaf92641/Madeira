@@ -1,0 +1,4978 @@
+{
+ "schema": 1,
+ "updated": "2026-10-01",
+ "generated_by": "build/tools/gen-game-compat.py",
+ "dependencies": {
+  "vcrun6": {
+   "title": "Visual C++ 6 runtime",
+   "kind": "vcredist",
+   "support": "payload",
+   "summary": "Visual C++ 6 SP4 libraries (msvcrt, mfc42, msvcp60).",
+   "imports": [
+    "msvcrt",
+    "msvcp60",
+    "mfc42"
+   ],
+   "dlls": [
+    "mfc42.dll",
+    "msvcrt.dll",
+    "msvcp60.dll"
+   ],
+   "dll_overrides": {
+    "mfc42": "n,b",
+    "msvcp60": "n,b"
+   },
+   "notes": "Wine ships msvcrt and a partial mfc42; games that ship their own mfc42 in the install folder load it first anyway.",
+   "source": "winetricks:vcrun6"
+  },
+  "vcrun2005": {
+   "title": "Visual C++ 2005 runtime",
+   "kind": "vcredist",
+   "support": "payload",
+   "summary": "Visual C++ 2005 libraries (mfc80, msvcp80, msvcr80).",
+   "imports": [
+    "msvcr80",
+    "msvcp80",
+    "mfc80"
+   ],
+   "dlls": [
+    "msvcr80.dll",
+    "msvcp80.dll",
+    "mfc80.dll"
+   ],
+   "dll_overrides": {
+    "msvcr80": "n,b",
+    "msvcp80": "n,b",
+    "mfc80": "n,b"
+   },
+   "notes": "Wine has no msvcr80/msvcp80 builtin; native DLLs are needed.",
+   "source": "winetricks:vcrun2005"
+  },
+  "vcrun2008": {
+   "title": "Visual C++ 2008 runtime",
+   "kind": "vcredist",
+   "support": "payload",
+   "summary": "Visual C++ 2008 libraries (mfc90, msvcp90, msvcr90).",
+   "imports": [
+    "msvcr90",
+    "msvcp90",
+    "mfc90"
+   ],
+   "dlls": [
+    "msvcr90.dll",
+    "msvcp90.dll",
+    "mfc90.dll"
+   ],
+   "dll_overrides": {
+    "msvcr90": "n,b",
+    "msvcp90": "n,b",
+    "mfc90": "n,b"
+   },
+   "source": "winetricks:vcrun2008"
+  },
+  "vcrun2010": {
+   "title": "Visual C++ 2010 runtime",
+   "kind": "vcredist",
+   "support": "payload",
+   "summary": "Visual C++ 2010 libraries (atl100, mfc100, msvcp100, msvcr100, vcomp100).",
+   "imports": [
+    "msvcr100",
+    "msvcp100",
+    "mfc100",
+    "vcomp100",
+    "atl100"
+   ],
+   "dlls": [
+    "msvcr100.dll",
+    "msvcp100.dll",
+    "mfc100.dll",
+    "vcomp100.dll"
+   ],
+   "dll_overrides": {
+    "msvcr100": "n,b",
+    "msvcp100": "n,b",
+    "mfc100": "n,b",
+    "vcomp100": "n,b",
+    "atl100": "n,b"
+   },
+   "source": "winetricks:vcrun2010"
+  },
+  "vcrun2012": {
+   "title": "Visual C++ 2012 runtime",
+   "kind": "vcredist",
+   "support": "payload",
+   "summary": "Visual C++ 2012 libraries (atl110, mfc110, msvcp110, msvcr110, vcomp110).",
+   "imports": [
+    "msvcr110",
+    "msvcp110",
+    "mfc110",
+    "vcomp110",
+    "atl110"
+   ],
+   "dlls": [
+    "msvcr110.dll",
+    "msvcp110.dll",
+    "mfc110.dll",
+    "vcomp110.dll"
+   ],
+   "dll_overrides": {
+    "msvcr110": "n,b",
+    "msvcp110": "n,b",
+    "mfc110": "n,b",
+    "vcomp110": "n,b",
+    "atl110": "n,b"
+   },
+   "source": "winetricks:vcrun2012"
+  },
+  "vcrun2013": {
+   "title": "Visual C++ 2013 runtime",
+   "kind": "vcredist",
+   "support": "payload",
+   "summary": "Visual C++ 2013 libraries (atl120, mfc120, msvcp120, msvcr120, vcomp120).",
+   "imports": [
+    "msvcr120",
+    "msvcp120",
+    "mfc120",
+    "vcomp120",
+    "atl120"
+   ],
+   "dlls": [
+    "msvcr120.dll",
+    "msvcp120.dll",
+    "mfc120.dll",
+    "vcomp120.dll"
+   ],
+   "dll_overrides": {
+    "msvcr120": "n,b",
+    "msvcp120": "n,b",
+    "mfc120": "n,b",
+    "vcomp120": "n,b",
+    "atl120": "n,b"
+   },
+   "source": "winetricks:vcrun2013"
+  },
+  "vcrun2015": {
+   "title": "Visual C++ 2015 runtime",
+   "kind": "vcredist",
+   "support": "payload",
+   "summary": "Visual C++ 2015 (14.0) libraries: msvcp140, vcruntime140, vccorlib140, concrt140.",
+   "imports": [
+    "msvcp140",
+    "vcruntime140",
+    "concrt140",
+    "vccorlib140",
+    "vcamp140",
+    "vcomp140"
+   ],
+   "dlls": [
+    "msvcp140.dll",
+    "vcruntime140.dll",
+    "concrt140.dll",
+    "vccorlib140.dll",
+    "vcamp140.dll",
+    "vcomp140.dll"
+   ],
+   "dll_overrides": {
+    "msvcp140": "n,b",
+    "vcruntime140": "n,b",
+    "concrt140": "n,b",
+    "vccorlib140": "n,b"
+   },
+   "notes": "Madeira ships the x86_64 Microsoft VC++ 2015-2022 runtime DLLs in the app bundle (x86_64-vcruntime/), so 64-bit games are covered without any download.",
+   "source": "winetricks:vcrun2015"
+  },
+  "vcrun2017": {
+   "title": "Visual C++ 2017 runtime",
+   "kind": "vcredist",
+   "support": "payload",
+   "summary": "Visual C++ 2017 (14.1) libraries.",
+   "imports": [
+    "vcruntime140_1"
+   ],
+   "dlls": [
+    "msvcp140.dll",
+    "vcruntime140.dll",
+    "vcruntime140_1.dll",
+    "concrt140.dll"
+   ],
+   "dll_overrides": {
+    "msvcp140": "n,b",
+    "vcruntime140": "n,b",
+    "vcruntime140_1": "n,b",
+    "concrt140": "n,b"
+   },
+   "requires": [
+    "vcrun2015"
+   ],
+   "source": "winetricks:vcrun2017"
+  },
+  "vcrun2019": {
+   "title": "Visual C++ 2015-2019 runtime",
+   "kind": "vcredist",
+   "support": "payload",
+   "summary": "Visual C++ 2015-2019 (14.2) libraries.",
+   "imports": [
+    "msvcp140_1",
+    "msvcp140_2"
+   ],
+   "dlls": [
+    "msvcp140.dll",
+    "msvcp140_1.dll",
+    "msvcp140_2.dll",
+    "vcruntime140.dll",
+    "vcruntime140_1.dll",
+    "concrt140.dll"
+   ],
+   "dll_overrides": {
+    "msvcp140": "n,b",
+    "vcruntime140": "n,b",
+    "vcruntime140_1": "n,b",
+    "concrt140": "n,b"
+   },
+   "requires": [
+    "vcrun2015"
+   ],
+   "notes": "64-bit is bundled; a 32-bit (WoW64) title needs the i386 DLLs under Documents/madeira-compat/dlls/i386/.",
+   "source": "winetricks:vcrun2019"
+  },
+  "vcrun2022": {
+   "title": "Visual C++ 2015-2022 runtime",
+   "kind": "vcredist",
+   "support": "payload",
+   "summary": "Visual C++ 2015-2022 (14.3) libraries, superset of vcrun2019.",
+   "imports": [
+    "msvcp140_atomic_wait",
+    "msvcp140_codecvt_ids"
+   ],
+   "dlls": [
+    "msvcp140.dll",
+    "msvcp140_1.dll",
+    "msvcp140_2.dll",
+    "msvcp140_atomic_wait.dll",
+    "msvcp140_codecvt_ids.dll",
+    "vcruntime140.dll",
+    "vcruntime140_1.dll",
+    "concrt140.dll"
+   ],
+   "dll_overrides": {
+    "msvcp140": "n,b",
+    "vcruntime140": "n,b",
+    "vcruntime140_1": "n,b",
+    "concrt140": "n,b"
+   },
+   "requires": [
+    "vcrun2015"
+   ],
+   "source": "winetricks:vcrun2022"
+  },
+  "ucrtbase2019": {
+   "title": "Universal C Runtime (2019)",
+   "kind": "runtime",
+   "support": "builtin",
+   "summary": "api-ms-win-crt-* / ucrtbase, provided by Wine's builtin ucrtbase.",
+   "imports": [
+    "ucrtbase",
+    "api-ms-win-crt-runtime-l1-1-0"
+   ],
+   "dll_overrides": {
+    "ucrtbase": "b"
+   },
+   "source": "winetricks:ucrtbase2019"
+  },
+  "mfc42": {
+   "title": "Microsoft Foundation Classes 4.2",
+   "kind": "framework",
+   "support": "payload",
+   "summary": "mfc42.dll / mfc42u.dll used by pre-2005 Visual C++ programs.",
+   "imports": [
+    "mfc42",
+    "mfc42u"
+   ],
+   "dlls": [
+    "mfc42.dll",
+    "mfc42u.dll"
+   ],
+   "dll_overrides": {
+    "mfc42": "n,b",
+    "mfc42u": "n,b"
+   },
+   "source": "winetricks:mfc42"
+  },
+  "mfc40": {
+   "title": "Microsoft Foundation Classes 4.0",
+   "kind": "framework",
+   "support": "payload",
+   "summary": "mfc40.dll used by very old Visual C++ 4.x programs.",
+   "imports": [
+    "mfc40"
+   ],
+   "dlls": [
+    "mfc40.dll"
+   ],
+   "dll_overrides": {
+    "mfc40": "n,b"
+   },
+   "source": "winetricks:mfc40"
+  },
+  "d3dx9": {
+   "title": "DirectX 9 d3dx9 helper libraries",
+   "kind": "directx",
+   "support": "payload",
+   "summary": "d3dx9_24..d3dx9_43 (D3DX math, shader and texture helpers). Wine implements none of these natively.",
+   "imports": [
+    "d3dx9_24",
+    "d3dx9_25",
+    "d3dx9_26",
+    "d3dx9_27",
+    "d3dx9_28",
+    "d3dx9_29",
+    "d3dx9_30",
+    "d3dx9_31",
+    "d3dx9_32",
+    "d3dx9_33",
+    "d3dx9_34",
+    "d3dx9_35",
+    "d3dx9_36",
+    "d3dx9_37",
+    "d3dx9_38",
+    "d3dx9_39",
+    "d3dx9_40",
+    "d3dx9_41",
+    "d3dx9_42",
+    "d3dx9_43"
+   ],
+   "dlls": [
+    "d3dx9_43.dll"
+   ],
+   "dll_overrides": {
+    "d3dx9_24": "n,b",
+    "d3dx9_25": "n,b",
+    "d3dx9_26": "n,b",
+    "d3dx9_27": "n,b",
+    "d3dx9_28": "n,b",
+    "d3dx9_29": "n,b",
+    "d3dx9_30": "n,b",
+    "d3dx9_31": "n,b",
+    "d3dx9_32": "n,b",
+    "d3dx9_33": "n,b",
+    "d3dx9_34": "n,b",
+    "d3dx9_35": "n,b",
+    "d3dx9_36": "n,b",
+    "d3dx9_37": "n,b",
+    "d3dx9_38": "n,b",
+    "d3dx9_39": "n,b",
+    "d3dx9_40": "n,b",
+    "d3dx9_41": "n,b",
+    "d3dx9_42": "n,b",
+    "d3dx9_43": "n,b"
+   },
+   "notes": "Most D3D9 titles only need d3dx9_43; a game that also imports an older d3dx9_NN will need that DLL too.",
+   "source": "winetricks:d3dx9"
+  },
+  "d3dx9_43": {
+   "title": "DirectX 9 d3dx9_43.dll",
+   "kind": "directx",
+   "support": "payload",
+   "summary": "The single d3dx9 DLL most D3D9 games import.",
+   "dlls": [
+    "d3dx9_43.dll"
+   ],
+   "dll_overrides": {
+    "d3dx9_43": "n,b"
+   },
+   "source": "winetricks:d3dx9_43"
+  },
+  "d3dx11_43": {
+   "title": "DirectX 11 d3dx11_43.dll",
+   "kind": "directx",
+   "support": "payload",
+   "summary": "D3DX11 helpers for D3D11 games (D3DX11CompileFromFile and friends).",
+   "imports": [
+    "d3dx11_43"
+   ],
+   "dlls": [
+    "d3dx11_43.dll"
+   ],
+   "dll_overrides": {
+    "d3dx11_43": "n,b"
+   },
+   "source": "winetricks:d3dx11_43"
+  },
+  "d3dcompiler_42": {
+   "title": "DirectX d3dcompiler_42.dll",
+   "kind": "directx",
+   "support": "payload",
+   "summary": "D3D shader compiler, June 2010 (42).",
+   "dlls": [
+    "d3dcompiler_42.dll"
+   ],
+   "dll_overrides": {
+    "d3dcompiler_42": "n,b"
+   },
+   "source": "winetricks:d3dcompiler_42"
+  },
+  "d3dcompiler_43": {
+   "title": "DirectX d3dcompiler_43.dll",
+   "kind": "directx",
+   "support": "builtin",
+   "summary": "D3D shader compiler 43. Wine ships a complete builtin implementation.",
+   "imports": [
+    "d3dcompiler_43"
+   ],
+   "dll_overrides": {
+    "d3dcompiler_43": "b"
+   },
+   "source": "winetricks:d3dcompiler_43"
+  },
+  "d3dcompiler_46": {
+   "title": "DirectX d3dcompiler_46.dll",
+   "kind": "directx",
+   "support": "payload",
+   "summary": "D3D shader compiler 46.",
+   "dlls": [
+    "d3dcompiler_46.dll"
+   ],
+   "dll_overrides": {
+    "d3dcompiler_46": "n,b"
+   },
+   "source": "winetricks:d3dcompiler_46"
+  },
+  "d3dcompiler_47": {
+   "title": "DirectX d3dcompiler_47.dll",
+   "kind": "directx",
+   "support": "builtin",
+   "summary": "D3D shader compiler 47. Wine ships a complete builtin implementation, which is what DXMT's d3d11 uses.",
+   "imports": [
+    "d3dcompiler_47"
+   ],
+   "dll_overrides": {
+    "d3dcompiler_47": "b"
+   },
+   "requires": [
+    "d3dcompiler_47"
+   ],
+   "source": "winetricks:d3dcompiler_47"
+  },
+  "directx9": {
+   "title": "DirectX 9 runtime (June 2010)",
+   "kind": "directx",
+   "support": "manual",
+   "summary": "The DirectX 9.0c redistributable installs d3dx9/d3dx11/xact/xinput/dsound/directplay at once. Winetricks treats the all-in-one verb as deprecated.",
+   "notes": "Prefer the individual dependencies (d3dx9, d3dcompiler_*, xact, xinput, directplay, directmusic).",
+   "source": "winetricks:directx9"
+  },
+  "xinput": {
+   "title": "Microsoft XInput (Xbox controller)",
+   "kind": "directx",
+   "support": "builtin",
+   "summary": "xinput1_1..1_4 / xinput9_1_0. Madeira's Winios implements XInput over the host gamepad, so the builtin is used.",
+   "imports": [
+    "xinput1_1",
+    "xinput1_2",
+    "xinput1_3",
+    "xinput1_4",
+    "xinput9_1_0"
+   ],
+   "dll_overrides": {
+    "xinput1_1": "b",
+    "xinput1_2": "b",
+    "xinput1_3": "b",
+    "xinput1_4": "b",
+    "xinput9_1_0": "b"
+   },
+   "notes": "Gamepad support itself is a Madeira runtime feature (WiniosGamepad); the override just keeps games on the builtin.",
+   "source": "winetricks:xinput"
+  },
+  "dinput8": {
+   "title": "DirectInput 8",
+   "kind": "directx",
+   "support": "builtin",
+   "summary": "Wine's builtin dinput8 talks to Madeira's DirectInput bridge.",
+   "imports": [
+    "dinput8"
+   ],
+   "dll_overrides": {
+    "dinput8": "b"
+   },
+   "notes": "Some games ship a native dinput8 proxy (e.g. DSfix); if one sits next to the exe it is loaded first regardless, so this override is builtin by default.",
+   "source": "protonfixes"
+  },
+  "directplay": {
+   "title": "Microsoft DirectPlay",
+   "kind": "directx",
+   "support": "payload",
+   "summary": "dplayx.dll and friends, from the DirectX 9 user redistributable.",
+   "imports": [
+    "dplayx",
+    "dpnet",
+    "dplay"
+   ],
+   "dlls": [
+    "dplayx.dll",
+    "dpnet.dll",
+    "dplay.dll"
+   ],
+   "dll_overrides": {
+    "dplayx": "n,b",
+    "dpnet": "n,b"
+   },
+   "notes": "Only needed by games using the obsolete DirectPlay networking API.",
+   "source": "winetricks:directplay"
+  },
+  "directmusic": {
+   "title": "Microsoft DirectMusic",
+   "kind": "audio",
+   "support": "payload",
+   "summary": "dmband/dmcompos/dmime/dmloader/dmscript/dmstyle/dmsynth/dswave/dswave, the DirectX 9 DirectMusic set.",
+   "imports": [
+    "dmusic",
+    "dmime",
+    "dmsynth",
+    "dswave",
+    "dmloader"
+   ],
+   "dlls": [
+    "dmusic.dll",
+    "dmime.dll",
+    "dmsynth.dll",
+    "dswave.dll"
+   ],
+   "dll_overrides": {
+    "dmusic": "n,b",
+    "dmime": "n,b",
+    "dmsynth": "n,b",
+    "dmloader": "n,b"
+   },
+   "notes": "Provides the legacy MIDI/DLS synthesis path for older games.",
+   "source": "winetricks:directmusic"
+  },
+  "dmime": {
+   "title": "DirectMusic dmime.dll",
+   "kind": "audio",
+   "support": "payload",
+   "summary": "DirectMusic segment engine.",
+   "dlls": [
+    "dmime.dll"
+   ],
+   "dll_overrides": {
+    "dmime": "n,b"
+   },
+   "source": "winetricks:dmime"
+  },
+  "dmsynth": {
+   "title": "DirectMusic dmsynth.dll",
+   "kind": "audio",
+   "support": "payload",
+   "summary": "DirectMusic software synthesizer.",
+   "dlls": [
+    "dmsynth.dll"
+   ],
+   "dll_overrides": {
+    "dmsynth": "n,b"
+   },
+   "source": "winetricks:dmsynth"
+  },
+  "dswave": {
+   "title": "DirectMusic dswave.dll",
+   "kind": "audio",
+   "support": "payload",
+   "summary": "DirectMusic wave playback.",
+   "dlls": [
+    "dswave.dll"
+   ],
+   "dll_overrides": {
+    "dswave": "n,b"
+   },
+   "source": "winetricks:dswave"
+  },
+  "xact": {
+   "title": "Microsoft XACT Engine",
+   "kind": "audio",
+   "support": "payload",
+   "summary": "xactengine2_0..3_7 plus X3DAudio and XAPOFX: the DirectX audio engine many D3D9/D3D10 era games use for sound effects.",
+   "imports": [
+    "xactengine2_0",
+    "xactengine2_4",
+    "xactengine2_7",
+    "xactengine2_9",
+    "xactengine3_0",
+    "xactengine3_1",
+    "xactengine3_2",
+    "xactengine3_3",
+    "xactengine3_4",
+    "xactengine3_5",
+    "xactengine3_6",
+    "xactengine3_7",
+    "x3daudio1_1",
+    "x3daudio1_2",
+    "x3daudio1_3",
+    "x3daudio1_4",
+    "x3daudio1_5",
+    "x3daudio1_6",
+    "x3daudio1_7",
+    "xapofx1_1",
+    "xapofx1_2",
+    "xapofx1_3",
+    "xapofx1_4",
+    "xapofx1_5"
+   ],
+   "dlls": [
+    "xactengine3_7.dll",
+    "x3daudio1_7.dll",
+    "xapofx1_5.dll"
+   ],
+   "dll_overrides": {
+    "xactengine2_0": "n,b",
+    "xactengine2_4": "n,b",
+    "xactengine2_7": "n,b",
+    "xactengine2_9": "n,b",
+    "xactengine3_0": "n,b",
+    "xactengine3_1": "n,b",
+    "xactengine3_2": "n,b",
+    "xactengine3_3": "n,b",
+    "xactengine3_4": "n,b",
+    "xactengine3_5": "n,b",
+    "xactengine3_6": "n,b",
+    "xactengine3_7": "n,b",
+    "x3daudio1_1": "n,b",
+    "x3daudio1_2": "n,b",
+    "x3daudio1_3": "n,b",
+    "x3daudio1_4": "n,b",
+    "x3daudio1_5": "n,b",
+    "x3daudio1_6": "n,b",
+    "x3daudio1_7": "n,b",
+    "xapofx1_1": "n,b",
+    "xapofx1_2": "n,b",
+    "xapofx1_3": "n,b",
+    "xapofx1_4": "n,b",
+    "xapofx1_5": "n,b"
+   },
+   "source": "winetricks:xact"
+  },
+  "xaudio29": {
+   "title": "XAudio 2.9",
+   "kind": "audio",
+   "support": "payload",
+   "summary": "xaudio2_9.dll used by DirectX 11/12 era games; Wine has xaudio2_7 but not 2_8/2_9.",
+   "imports": [
+    "xaudio2_8",
+    "xaudio2_9"
+   ],
+   "dlls": [
+    "xaudio2_8.dll",
+    "xaudio2_9.dll"
+   ],
+   "dll_overrides": {
+    "xaudio2_8": "n,b",
+    "xaudio2_9": "n,b"
+   },
+   "source": "winetricks:xaudio29"
+  },
+  "openal": {
+   "title": "OpenAL 1.1",
+   "kind": "audio",
+   "support": "payload",
+   "summary": "OpenAL32.dll / wrap_oal.dll, used by id Tech and many 2000s games.",
+   "imports": [
+    "openal32",
+    "wrap_oal"
+   ],
+   "dlls": [
+    "OpenAL32.dll",
+    "wrap_oal.dll"
+   ],
+   "dll_overrides": {
+    "openal32": "n,b"
+   },
+   "notes": "Native OpenAL is only needed by games that load it directly; games using FAudio/XAudio are unaffected.",
+   "source": "winetricks:openal"
+  },
+  "dsound": {
+   "title": "DirectSound",
+   "kind": "audio",
+   "support": "builtin",
+   "summary": "Wine's builtin dsound on FAudio, routed to Madeira's AudioToolbox backend.",
+   "imports": [
+    "dsound"
+   ],
+   "dll_overrides": {
+    "dsound": "b"
+   },
+   "source": "winetricks:dsound"
+  },
+  "physx": {
+   "title": "NVIDIA PhysX (legacy runtime)",
+   "kind": "physx",
+   "support": "payload",
+   "summary": "PhysXLoader.dll / PhysXCore.dll / NxCharacter.dll, the pre-2.8 PhysX runtime many 2005-2010 games link.",
+   "imports": [
+    "physxloader",
+    "physxcoredll",
+    "nxcharacter"
+   ],
+   "dlls": [
+    "PhysXLoader.dll",
+    "PhysXCore.dll",
+    "NxCharacter.dll"
+   ],
+   "dll_overrides": {
+    "physxloader": "n,b",
+    "physxcore": "n,b"
+   },
+   "notes": "Games that bundle newer PhysX DLLs next to the exe load those first; this only covers titles that expect it in system32. GPU PhysX is not available through Metal.",
+   "source": "winetricks:physx"
+  },
+  "dotnet20": {
+   "title": ".NET Framework 2.0",
+   "kind": "dotnet",
+   "support": "manual",
+   "summary": "Microsoft .NET Framework 2.0. Madeira ships wine-mono, which runs many .NET 2.0-era managed games without the Microsoft runtime.",
+   "notes": "Installing the Microsoft .NET installer is not attempted automatically on iOS; wine-mono is the default and usually enough for XNA/Unity-ish managed titles.",
+   "source": "winetricks:dotnet20"
+  },
+  "dotnet35": {
+   "title": ".NET Framework 3.5",
+   "kind": "dotnet",
+   "support": "manual",
+   "summary": ".NET 3.5 including WPF and LINQ, on top of 2.0. wine-mono covers much of it.",
+   "requires": [
+    "dotnet20"
+   ],
+   "source": "winetricks:dotnet35"
+  },
+  "dotnet40": {
+   "title": ".NET Framework 4.0",
+   "kind": "dotnet",
+   "support": "partial",
+   "summary": ".NET 4.0. wine-mono implements a large part of the 4.x BCL.",
+   "notes": "Managed games that work under wine-mono need no action; ones that do not are reported as needing the Microsoft runtime, which is not installed automatically.",
+   "source": "winetricks:dotnet40"
+  },
+  "dotnet45": {
+   "title": ".NET Framework 4.5",
+   "kind": "dotnet",
+   "support": "partial",
+   "summary": ".NET 4.5 on top of 4.0.",
+   "requires": [
+    "dotnet40"
+   ],
+   "source": "winetricks:dotnet45"
+  },
+  "dotnet452": {
+   "title": ".NET Framework 4.5.2",
+   "kind": "dotnet",
+   "support": "partial",
+   "summary": ".NET 4.5.2.",
+   "requires": [
+    "dotnet45"
+   ],
+   "source": "winetricks:dotnet452"
+  },
+  "dotnet46": {
+   "title": ".NET Framework 4.6",
+   "kind": "dotnet",
+   "support": "partial",
+   "summary": ".NET 4.6.",
+   "requires": [
+    "dotnet40"
+   ],
+   "source": "winetricks:dotnet46"
+  },
+  "dotnet461": {
+   "title": ".NET Framework 4.6.1",
+   "kind": "dotnet",
+   "support": "partial",
+   "summary": ".NET 4.6.1.",
+   "requires": [
+    "dotnet46"
+   ],
+   "source": "winetricks:dotnet461"
+  },
+  "dotnet462": {
+   "title": ".NET Framework 4.6.2",
+   "kind": "dotnet",
+   "support": "partial",
+   "summary": ".NET 4.6.2.",
+   "requires": [
+    "dotnet461"
+   ],
+   "source": "winetricks:dotnet462"
+  },
+  "dotnet472": {
+   "title": ".NET Framework 4.7.2",
+   "kind": "dotnet",
+   "support": "partial",
+   "summary": ".NET 4.7.2.",
+   "requires": [
+    "dotnet462"
+   ],
+   "source": "winetricks:dotnet472"
+  },
+  "dotnet48": {
+   "title": ".NET Framework 4.8",
+   "kind": "dotnet",
+   "support": "partial",
+   "summary": ".NET 4.8, the last 4.x Framework. wine-mono handles a good share of 4.x titles.",
+   "requires": [
+    "dotnet40"
+   ],
+   "source": "winetricks:dotnet48"
+  },
+  "dotnet481": {
+   "title": ".NET Framework 4.8.1",
+   "kind": "dotnet",
+   "support": "partial",
+   "summary": ".NET 4.8.1.",
+   "requires": [
+    "dotnet48"
+   ],
+   "source": "winetricks:dotnet481"
+  },
+  "quartz": {
+   "title": "DirectShow quartz.dll",
+   "kind": "media",
+   "support": "payload",
+   "summary": "Native quartz.dll DirectShow filter graph manager. Wine's builtin quartz has no working video decoders on iOS.",
+   "imports": [
+    "quartz"
+   ],
+   "dlls": [
+    "quartz.dll"
+   ],
+   "dll_overrides": {
+    "quartz": "n,b"
+   },
+   "notes": "Madeira's winegstreamer supplies the WMA/MP3/WAV/MP4 decode path; a game that only needs those plays without native quartz.",
+   "source": "winetricks:quartz"
+  },
+  "qasf": {
+   "title": "DirectShow ASF reader (qasf.dll)",
+   "kind": "media",
+   "support": "payload",
+   "summary": "ASF/WMV splitter used by DirectShow.",
+   "imports": [
+    "qasf"
+   ],
+   "dlls": [
+    "qasf.dll"
+   ],
+   "dll_overrides": {
+    "qasf": "n,b"
+   },
+   "source": "winetricks:qasf"
+  },
+  "qcap": {
+   "title": "DirectShow capture filters (qcap.dll)",
+   "kind": "media",
+   "support": "payload",
+   "summary": "DirectShow capture/encoder filters.",
+   "imports": [
+    "qcap"
+   ],
+   "dlls": [
+    "qcap.dll"
+   ],
+   "dll_overrides": {
+    "qcap": "n,b"
+   },
+   "source": "winetricks:qcap"
+  },
+  "qedit": {
+   "title": "DirectShow Editing Services (qedit.dll)",
+   "kind": "media",
+   "support": "payload",
+   "summary": "DirectShow sample grabber and editing services.",
+   "imports": [
+    "qedit"
+   ],
+   "dlls": [
+    "qedit.dll"
+   ],
+   "dll_overrides": {
+    "qedit": "n,b"
+   },
+   "source": "winetricks:qedit"
+  },
+  "devenum": {
+   "title": "DirectShow device enumerator (devenum.dll)",
+   "kind": "media",
+   "support": "payload",
+   "summary": "Enumerates DirectShow filters for games that build their own graph.",
+   "imports": [
+    "devenum"
+   ],
+   "dlls": [
+    "devenum.dll"
+   ],
+   "dll_overrides": {
+    "devenum": "n,b"
+   },
+   "source": "winetricks:devenum"
+  },
+  "amstream": {
+   "title": "DirectShow multimedia stream (amstream.dll)",
+   "kind": "media",
+   "support": "payload",
+   "summary": "Media stream filter used by some video-playback code paths.",
+   "imports": [
+    "amstream"
+   ],
+   "dlls": [
+    "amstream.dll"
+   ],
+   "dll_overrides": {
+    "amstream": "n,b"
+   },
+   "source": "winetricks:amstream"
+  },
+  "icodecs": {
+   "title": "Indeo codecs",
+   "kind": "media",
+   "support": "payload",
+   "summary": "Indeo 4/5 video decoder, used by FMV in 1990s titles.",
+   "imports": [
+    "ir50_32",
+    "ir41_32"
+   ],
+   "dlls": [
+    "ir50_32.dll",
+    "ir41_32.dll"
+   ],
+   "dll_overrides": {
+    "ir50_32": "n,b"
+   },
+   "source": "winetricks:icodecs"
+  },
+  "l3codecx": {
+   "title": "MPEG Layer-3 codec",
+   "kind": "media",
+   "support": "builtin",
+   "summary": "Wine's builtin MP3 codec, used by the winegstreamer decoder.",
+   "imports": [
+    "l3codecx"
+   ],
+   "dll_overrides": {
+    "l3codecx": "b"
+   },
+   "source": "winetricks:l3codecx"
+  },
+  "mediafoundation": {
+   "title": "Media Foundation",
+   "kind": "media",
+   "support": "partial",
+   "summary": "mfplat/mf/mfreadwrite. Madeira's winegstreamer supplies the unix media source; DXMT/Wine provide the PE side.",
+   "imports": [
+    "mfplat",
+    "mfreadwrite",
+    "mf"
+   ],
+   "notes": "64-bit processes only get the real Media Foundation unix side with MADEIRA_WG_64BIT=1; 32-bit (WoW64) processes get it by default.",
+   "source": "winetricks:mediafoundation"
+  },
+  "mf": {
+   "title": "Media Foundation video playback",
+   "kind": "media",
+   "support": "partial",
+   "summary": "Alias for mediafoundation used by some game fixes; selects the winegstreamer Media Foundation source.",
+   "notes": "For a game whose intro video shows a black screen, MADEIRA_WG_64BIT=1 plus the mfplat/mf/mfreadwrite overrides is the usual fix.",
+   "source": "protonfixes"
+  },
+  "wmp9": {
+   "title": "Windows Media Player 9",
+   "kind": "media",
+   "support": "manual",
+   "summary": "WMP9 runtime used by games that embed the WMP ActiveX control.",
+   "source": "winetricks:wmp9"
+  },
+  "wmp10": {
+   "title": "Windows Media Player 10",
+   "kind": "media",
+   "support": "manual",
+   "summary": "WMP10 runtime (l3codecp.acm).",
+   "source": "winetricks:wmp10"
+  },
+  "wmp11": {
+   "title": "Windows Media Player 11",
+   "kind": "media",
+   "support": "manual",
+   "summary": "WMP11 runtime.",
+   "source": "winetricks:wmp11"
+  },
+  "corefonts": {
+   "title": "Microsoft core fonts",
+   "kind": "font",
+   "support": "payload",
+   "summary": "Arial, Courier New, Times New Roman, Comic Sans, Andale, Impact, Trebuchet, Verdana, Webdings.",
+   "dlls": [
+    "arial.ttf",
+    "times.ttf",
+    "cour.ttf"
+   ],
+   "registry": [
+    {
+     "hive": "HKCU",
+     "key": "Software\\Wine\\Fonts\\Replacements",
+     "name": "Arial",
+     "type": "REG_SZ",
+     "value": "Arial"
+    },
+    {
+     "hive": "HKCU",
+     "key": "Software\\Wine\\Fonts\\Replacements",
+     "name": "Courier New",
+     "type": "REG_SZ",
+     "value": "Courier New"
+    },
+    {
+     "hive": "HKCU",
+     "key": "Software\\Wine\\Fonts\\Replacements",
+     "name": "Times New Roman",
+     "type": "REG_SZ",
+     "value": "Times New Roman"
+    }
+   ],
+   "notes": "Drop the .ttf files in Documents/madeira-compat/fonts/ to install them.",
+   "source": "winetricks:corefonts"
+  },
+  "arial": {
+   "title": "Arial font",
+   "kind": "font",
+   "support": "payload",
+   "summary": "Arial required by a game's UI.",
+   "dlls": [
+    "arial.ttf"
+   ],
+   "source": "winetricks:arial"
+  },
+  "verdana": {
+   "title": "Verdana font",
+   "kind": "font",
+   "support": "payload",
+   "summary": "Verdana required by a game's UI.",
+   "dlls": [
+    "verdana.ttf"
+   ],
+   "source": "winetricks:verdana"
+  },
+  "tahoma": {
+   "title": "Tahoma font",
+   "kind": "font",
+   "support": "payload",
+   "summary": "Tahoma required by a game's UI.",
+   "dlls": [
+    "tahoma.ttf"
+   ],
+   "source": "winetricks:tahoma"
+  },
+  "courier": {
+   "title": "Courier New font",
+   "kind": "font",
+   "support": "payload",
+   "summary": "Courier New required by a game's console or UI.",
+   "dlls": [
+    "cour.ttf"
+   ],
+   "source": "winetricks:courier"
+  },
+  "trebuchet": {
+   "title": "Trebuchet MS font",
+   "kind": "font",
+   "support": "payload",
+   "summary": "Trebuchet MS required by a game's UI.",
+   "dlls": [
+    "trebuc.ttf"
+   ],
+   "source": "winetricks:trebuchet"
+  },
+  "lucida": {
+   "title": "Lucida fonts",
+   "kind": "font",
+   "support": "payload",
+   "summary": "Lucida Console / Lucida Sans, used by a few console fontsets.",
+   "dlls": [
+    "lucon.ttf",
+    "lsans.ttf"
+   ],
+   "source": "winetricks:lucida"
+  },
+  "segoe_script": {
+   "title": "Segoe Script font",
+   "kind": "font",
+   "support": "payload",
+   "summary": "Segoe Script, required by some modern UI.",
+   "dlls": [
+    "segoesc.ttf"
+   ],
+   "source": "protonfixes:segoe_script"
+  },
+  "msxml3": {
+   "title": "MSXML 3.0",
+   "kind": "framework",
+   "support": "payload",
+   "summary": "msxml3.dll XML parser used by older installers and games.",
+   "imports": [
+    "msxml3"
+   ],
+   "dlls": [
+    "msxml3.dll"
+   ],
+   "dll_overrides": {
+    "msxml3": "n,b"
+   },
+   "source": "winetricks:msxml3"
+  },
+  "msxml6": {
+   "title": "MSXML 6.0",
+   "kind": "framework",
+   "support": "payload",
+   "summary": "msxml6.dll XML parser used by modern launchers and games.",
+   "imports": [
+    "msxml6"
+   ],
+   "dlls": [
+    "msxml6.dll"
+   ],
+   "dll_overrides": {
+    "msxml6": "n,b"
+   },
+   "source": "winetricks:msxml6"
+  },
+  "gdiplus": {
+   "title": "GDI+",
+   "kind": "framework",
+   "support": "builtin",
+   "summary": "Wine's builtin gdiplus is complete enough for games and launchers.",
+   "imports": [
+    "gdiplus"
+   ],
+   "dll_overrides": {
+    "gdiplus": "b"
+   },
+   "source": "winetricks:gdiplus"
+  },
+  "riched20": {
+   "title": "RichEdit 2.0",
+   "kind": "framework",
+   "support": "payload",
+   "summary": "riched20.dll used for in-game text input and help.",
+   "imports": [
+    "riched20"
+   ],
+   "dlls": [
+    "riched20.dll"
+   ],
+   "dll_overrides": {
+    "riched20": "n,b"
+   },
+   "source": "winetricks:riched20"
+  },
+  "msftedit": {
+   "title": "RichEdit 4.1 (msftedit.dll)",
+   "kind": "framework",
+   "support": "payload",
+   "summary": "msftedit.dll used by newer text controls.",
+   "imports": [
+    "msftedit"
+   ],
+   "dlls": [
+    "msftedit.dll"
+   ],
+   "dll_overrides": {
+    "msftedit": "n,b"
+   },
+   "source": "bottles:msftedit"
+  },
+  "wsh57": {
+   "title": "Windows Script Host 5.7",
+   "kind": "framework",
+   "support": "payload",
+   "summary": "jscript/scrrun/vbscript/cscript used by some launchers and installers.",
+   "imports": [
+    "scrrun",
+    "jscript",
+    "vbscript"
+   ],
+   "dlls": [
+    "scrrun.dll",
+    "jscript.dll",
+    "vbscript.dll"
+   ],
+   "dll_overrides": {
+    "jscript": "n,b",
+    "scrrun": "n,b",
+    "vbscript": "n,b"
+   },
+   "source": "winetricks:wsh57"
+  },
+  "jet40": {
+   "title": "Microsoft Jet 4.0 (Access database)",
+   "kind": "framework",
+   "support": "manual",
+   "summary": "Jet 4.0 database engine, needed by games with Access-based data.",
+   "source": "winetricks:jet40"
+  },
+  "mdac28": {
+   "title": "MDAC 2.8 (ODBC/ADO)",
+   "kind": "framework",
+   "support": "manual",
+   "summary": "Microsoft Data Access Components.",
+   "source": "winetricks:mdac28"
+  },
+  "xna31": {
+   "title": "XNA Framework 3.1",
+   "kind": "framework",
+   "support": "partial",
+   "summary": "XNA 3.1 managed framework for XNA games.",
+   "notes": "XNA is a managed framework; wine-mono plus the XNA redistributable is the usual path.",
+   "source": "winetricks:xna31"
+  },
+  "xna40": {
+   "title": "XNA Framework 4.0",
+   "kind": "framework",
+   "support": "partial",
+   "summary": "XNA 4.0 managed framework for XNA games.",
+   "requires": [
+    "dotnet40"
+   ],
+   "source": "winetricks:xna40"
+  },
+  "gfw": {
+   "title": "Games for Windows LIVE",
+   "kind": "framework",
+   "support": "unsupported",
+   "summary": "Games for Windows LIVE (GFWL) client, required by a handful of GFWL-era titles.",
+   "notes": "GFWL needs a live Microsoft online service that no longer exists for most titles.",
+   "source": "winetricks:gfw"
+  },
+  "cnc-ddraw": {
+   "title": "cnc-ddraw",
+   "kind": "utility",
+   "support": "payload",
+   "summary": "Community DirectDraw wrapper that fixes old 2D RTS/DirectDraw games.",
+   "dlls": [
+    "ddraw.dll",
+    "cnc-ddraw.dll"
+   ],
+   "dll_overrides": {
+    "ddraw": "n,b"
+   },
+   "source": "lutris/bottles:cnc-ddraw"
+  },
+  "dgvoodoo2": {
+   "title": "dgVoodoo2",
+   "kind": "utility",
+   "support": "unsupported",
+   "summary": "DirectDraw/Direct3D 8/9 to Direct3D 11 wrapper. Converts to D3D11, which DXMT then maps to Metal, but dgVoodoo2 needs a full D3D11 feature set that is not available here.",
+   "notes": "Not useful on Madeira; the DXMT path already covers D3D11 games.",
+   "source": "protonfixes:dgvoodoo2"
+  },
+  "eac": {
+   "title": "Easy Anti-Cheat",
+   "kind": "anticheat",
+   "support": "unsupported",
+   "summary": "Easy Anti-Cheat kernel/user-mode service.",
+   "notes": "Anti-cheat needs a kernel driver and deep process integrity that iOS does not permit. Online anti-cheat titles cannot be supported; single-player games that merely bundle EAC often run without it.",
+   "source": "protonfixes:install_eac_runtime"
+  },
+  "battleye": {
+   "title": "BattlEye",
+   "kind": "anticheat",
+   "support": "unsupported",
+   "summary": "BattlEye anti-cheat runtime.",
+   "notes": "Same constraint as Easy Anti-Cheat; single-player/offline content is unaffected.",
+   "source": "protonfixes:install_battleye_runtime"
+  },
+  "denuvo": {
+   "title": "Denuvo DRM",
+   "kind": "anticheat",
+   "support": "unsupported",
+   "summary": "Denuvo anti-tamper DRM.",
+   "notes": "DRM layers that rely on tight Windows/hypervisor integration cannot be supported. Prefer DRM-free (GOG) builds of the same game.",
+   "source": "madeira"
+  },
+  "winhttp": {
+   "title": "Windows HTTP Services",
+   "kind": "runtime",
+   "support": "builtin",
+   "summary": "Wine's builtin winhttp/wininet, used for online checks and launchers.",
+   "imports": [
+    "winhttp",
+    "wininet"
+   ],
+   "dll_overrides": {
+    "winhttp": "b",
+    "wininet": "b"
+   },
+   "source": "winetricks:winhttp"
+  },
+  "devenum-winrt": {
+   "title": "Windows Runtime activation (WinRT)",
+   "kind": "runtime",
+   "support": "partial",
+   "summary": "Windows Runtime activation factories used by a few UWP-derived engines (e.g. Unity's WinRT video path).",
+   "notes": "Madeira's wine build handles the common activation-factory fallbacks; RoInitialize is available.",
+   "source": "madeira"
+  }
+ },
+ "games": [
+  {
+   "title": "Thumper",
+   "appid": 356400,
+   "executables": [
+    "THUMPER_win10.exe",
+    "THUMPER.exe"
+   ],
+   "engine": "Unity",
+   "rating": "playable",
+   "dependencies": [
+    "vcrun2015",
+    "d3dcompiler_47"
+   ],
+   "windows_version": "win10",
+   "notes": "Reference title for Madeira. Starts as its own program (no Steam client needed) and reaches gameplay.",
+   "source": "madeira"
+  },
+  {
+   "title": "ULTRAKILL",
+   "appid": 1229490,
+   "executables": [
+    "ULTRAKILL.exe"
+   ],
+   "engine": "Unity",
+   "rating": "playable",
+   "dependencies": [
+    "vcrun2019",
+    "d3dcompiler_47"
+   ],
+   "windows_version": "win10",
+   "notes": "Reference title for Madeira; D3D11 through DXMT.",
+   "source": "madeira"
+  },
+  {
+   "title": "Stray",
+   "appid": 1332010,
+   "executables": [
+    "Stray.exe",
+    "Stray-Win64-Shipping.exe"
+   ],
+   "engine": "Unreal Engine 4",
+   "rating": "runnable",
+   "dependencies": [
+    "vcrun2019",
+    "d3dcompiler_47"
+   ],
+   "launch_arguments": "-dx11",
+   "windows_version": "win10",
+   "notes": "The Stray.exe launcher builds its child's command line itself and drops the RHI switch, so Madeira can start Stray-Win64-Shipping.exe directly with -dx11.",
+   "issues": [
+    "The launcher must be bypassed for the D3D11 renderer to be selected."
+   ],
+   "source": "madeira"
+  },
+  {
+   "title": "Marvel Cosmic Invasion",
+   "engine": "FNA / MonoGame",
+   "rating": "runnable",
+   "executables": [
+    "MarvelCosmicInvasion.exe"
+   ],
+   "dependencies": [
+    "dotnet40",
+    "xna40"
+   ],
+   "env": {
+    "FNA3D_FORCE_DRIVER": "D3D11"
+   },
+   "notes": "FNA has no OpenGL backend on iOS; Madeira selects the D3D11 backend so the game routes through DXMT.",
+   "issues": [
+    "Controls are not reliable yet."
+   ],
+   "source": "madeira"
+  },
+  {
+   "title": "Dark Souls: Prepare to Die Edition",
+   "appid": 211420,
+   "executables": [
+    "DARKSOULS.exe"
+   ],
+   "dependencies": [
+    "directx9",
+    "d3dx9",
+    "d3dcompiler_43"
+   ],
+   "dll_overrides": {
+    "dinput8": "n,b"
+   },
+   "notes": "dinput8 prefers a native DLL so the optional DSfix proxy (DATA/dinput8.dll) loads, and falls back to the builtin otherwise.",
+   "issues": [
+    "Requires a DirectX 9 path; see the d3dx9 and d3dcompiler dependencies."
+   ],
+   "source": "protonfixes"
+  },
+  {
+   "title": "Grand Theft Auto IV",
+   "appid": 12210,
+   "executables": [
+    "GTAIV.exe"
+   ],
+   "dependencies": [
+    "directx9",
+    "d3dx9",
+    "vcrun2008",
+    "gfw"
+   ],
+   "notes": "GFWL sign-in is unavailable; offline content only.",
+   "issues": [
+    "Games for Windows LIVE online services are gone."
+   ],
+   "source": "protonfixes"
+  },
+  {
+   "title": "Fallout 3",
+   "appid": 22300,
+   "executables": [
+    "Fallout3.exe",
+    "FalloutLauncher.exe"
+   ],
+   "dependencies": [
+    "directx9",
+    "d3dx9",
+    "vcrun2005",
+    "gfw"
+   ],
+   "notes": "GFWL is unavailable; the game runs offline.",
+   "source": "protonfixes"
+  },
+  {
+   "title": "Setup for all GOG games",
+   "source": "protonfixes:gog/default",
+   "gog_slug": "default",
+   "env": {
+    "OPENSSL_ia32cap": "~0x20000000"
+   }
+  },
+  {
+   "title": "Game fix for Mafia: Definitive Edition",
+   "source": "protonfixes:gog/umu-1030840",
+   "gog_slug": "umu-1030840"
+  },
+  {
+   "title": "Game fix for Yakuza 5",
+   "source": "protonfixes:gog/umu-1105510",
+   "gog_slug": "umu-1105510",
+   "env": {
+    "WINE_DISABLE_SFN": "1"
+   }
+  },
+  {
+   "title": "Silent Hill 4: The Room",
+   "source": "protonfixes:gog/umu-1141086411",
+   "gog_slug": "umu-1141086411",
+   "dll_overrides": {
+    "d3d8": "n,b",
+    "dsound": "n,b"
+   }
+  },
+  {
+   "title": "Game fix for Senren*Banka",
+   "source": "protonfixes:gog/umu-1144400",
+   "gog_slug": "umu-1144400",
+   "launch_arguments": "-vomstyle=layer"
+  },
+  {
+   "title": "Game fix for Horizon Zero Dawn",
+   "source": "protonfixes:gog/umu-1151640",
+   "gog_slug": "umu-1151640",
+   "dependencies": [
+    "vcrun2019"
+   ]
+  },
+  {
+   "title": "Game fix for Tom Clancy's Rainbow Six",
+   "source": "protonfixes:gog/umu-1207658752",
+   "gog_slug": "umu-1207658752",
+   "dll_overrides": {
+    "winmm": "n,b"
+   },
+   "registry": [
+    {
+     "hive": "HKCU",
+     "key": "Software\\\\Wine",
+     "name": "Version",
+     "type": "REG_SZ",
+     "value": "win98"
+    }
+   ]
+  },
+  {
+   "title": "Two Worlds Epic Edition",
+   "source": "protonfixes:gog/umu-1207658861",
+   "gog_slug": "umu-1207658861",
+   "dependencies": [
+    "xact"
+   ]
+  },
+  {
+   "title": "Fix for The Journeyman Project 3: Legacy of Time",
+   "source": "protonfixes:gog/umu-1207659009",
+   "gog_slug": "umu-1207659009",
+   "fixes": [
+    "call:get_game_install_path",
+    "dos-device"
+   ]
+  },
+  {
+   "title": "Game fix for Medal of Honor: Allied Assault War Chest",
+   "source": "protonfixes:gog/umu-1207659126",
+   "gog_slug": "umu-1207659126",
+   "env": {
+    "MESA_EXTENSION_MAX_YEAR": "2002",
+    "__GL_ExtensionStringVersion": "17700"
+   }
+  },
+  {
+   "title": "Heroes Chronicles (Chapter 1-8)",
+   "source": "protonfixes:gog/umu-1207661743",
+   "conditional": true,
+   "gog_slug": "umu-1207661743"
+  },
+  {
+   "title": "Heroes Chronicles (Chapter 1-8)",
+   "source": "protonfixes:gog/umu-1207661753",
+   "conditional": true,
+   "gog_slug": "umu-1207661753"
+  },
+  {
+   "title": "Heroes Chronicles (Chapter 1-8)",
+   "source": "protonfixes:gog/umu-1207661763",
+   "conditional": true,
+   "gog_slug": "umu-1207661763"
+  },
+  {
+   "title": "Heroes Chronicles (Chapter 1-8)",
+   "source": "protonfixes:gog/umu-1207661773",
+   "conditional": true,
+   "gog_slug": "umu-1207661773"
+  },
+  {
+   "title": "Heroes Chronicles (Chapter 1-8)",
+   "source": "protonfixes:gog/umu-1207661783",
+   "conditional": true,
+   "gog_slug": "umu-1207661783"
+  },
+  {
+   "title": "Heroes Chronicles (Chapter 1-8)",
+   "source": "protonfixes:gog/umu-1207661793",
+   "conditional": true,
+   "gog_slug": "umu-1207661793"
+  },
+  {
+   "title": "Heroes Chronicles (Chapter 1-8)",
+   "source": "protonfixes:gog/umu-1207661803",
+   "conditional": true,
+   "gog_slug": "umu-1207661803"
+  },
+  {
+   "title": "Heroes Chronicles (Chapter 1-8)",
+   "source": "protonfixes:gog/umu-1207661813",
+   "conditional": true,
+   "gog_slug": "umu-1207661813"
+  },
+  {
+   "title": "Game fix for Soldier of Fortune II: Double Helix - Gold Edition",
+   "source": "protonfixes:gog/umu-1228964594",
+   "gog_slug": "umu-1228964594"
+  },
+  {
+   "title": "Death end re;Quest",
+   "source": "protonfixes:gog/umu-1266220",
+   "gog_slug": "umu-1266220",
+   "fixes": [
+    "cpu-limit"
+   ]
+  },
+  {
+   "title": "Game fix for Fallen Enchantress: Legendary Heroes",
+   "source": "protonfixes:gog/umu-1445591825",
+   "gog_slug": "umu-1445591825",
+   "dependencies": [
+    "vcrun2008",
+    "vcrun2015",
+    "d3dx9",
+    "d3dcompiler_43",
+    "d3dcompiler_47"
+   ],
+   "dll_overrides": {
+    "sdnxlfonts": ""
+   },
+   "fixes": [
+    "winetricks:usp10"
+   ]
+  },
+  {
+   "title": "Game fix for Beyond Good and Evil",
+   "source": "protonfixes:gog/umu-15130",
+   "gog_slug": "umu-15130",
+   "dependencies": [
+    "dsound",
+    "d3dx9",
+    "arial",
+    "d3dcompiler_47"
+   ],
+   "registry": [
+    {
+     "hive": "HKLM",
+     "key": "Software\\\\Wow6432Node\\\\Ubisoft\\\\Beyond Good & Evil",
+     "name": "InstallLanguage",
+     "type": "REG_DWORD",
+     "value": "1"
+    }
+   ]
+  },
+  {
+   "title": "Game fix for Flowers - Le Volume Sur Hiver",
+   "source": "protonfixes:gog/umu-1564851593",
+   "conditional": true,
+   "gog_slug": "umu-1564851593",
+   "fixes": [
+    "call:get_game_install_path"
+   ]
+  },
+  {
+   "title": "Oddworld: Stranger's Wrath HD",
+   "source": "protonfixes:gog/umu-15750",
+   "gog_slug": "umu-15750",
+   "fixes": [
+    "winetricks:mfc90"
+   ]
+  },
+  {
+   "title": "Resident Evil (1997)",
+   "source": "protonfixes:gog/umu-1580232252",
+   "gog_slug": "umu-1580232252",
+   "dll_overrides": {
+    "ddraw": "n,b",
+    "dinput": "n,b"
+   }
+  },
+  {
+   "title": "The Wheel of Time",
+   "source": "protonfixes:gog/umu-1584652180",
+   "gog_slug": "umu-1584652180",
+   "dll_overrides": {
+    "ddraw": "n,b"
+   }
+  },
+  {
+   "title": "Game fix for Breath of Fire IV",
+   "source": "protonfixes:gog/umu-1587885678",
+   "gog_slug": "umu-1587885678",
+   "dll_overrides": {
+    "ddraw": "n,b",
+    "dinput": "n,b"
+   }
+  },
+  {
+   "title": "Dino Crisis 2",
+   "source": "protonfixes:gog/umu-1597741823",
+   "gog_slug": "umu-1597741823",
+   "dll_overrides": {
+    "ddraw": "n,b",
+    "dinput": "n,b"
+   }
+  },
+  {
+   "title": "Dino Crisis",
+   "source": "protonfixes:gog/umu-1661434114",
+   "gog_slug": "umu-1661434114",
+   "dll_overrides": {
+    "ddraw": "n,b",
+    "dinput": "n,b"
+   }
+  },
+  {
+   "title": "Game fix for Parquet",
+   "source": "protonfixes:gog/umu-1662840",
+   "gog_slug": "umu-1662840",
+   "launch_arguments": "-vomstyle=layer"
+  },
+  {
+   "title": "Game fix for Flowers - Le Volume Sur Printemps",
+   "source": "protonfixes:gog/umu-1685981342",
+   "conditional": true,
+   "gog_slug": "umu-1685981342",
+   "fixes": [
+    "call:get_game_install_path",
+    "call:protondir",
+    "call:protonprefix"
+   ]
+  },
+  {
+   "title": "Game fix for Flowers - Le Volume Sur Printemps",
+   "source": "protonfixes:gog/umu-1697970811",
+   "conditional": true,
+   "gog_slug": "umu-1697970811",
+   "fixes": [
+    "call:get_game_install_path",
+    "call:protondir",
+    "call:protonprefix"
+   ]
+  },
+  {
+   "title": "METAL GEAR SOLID",
+   "source": "protonfixes:gog/umu-1771973390",
+   "gog_slug": "umu-1771973390",
+   "dll_overrides": {
+    "ddraw": "n,b",
+    "dinput": "n,b"
+   }
+  },
+  {
+   "title": "Game fix for Soldier of Fortune: Platinum Edition",
+   "source": "protonfixes:gog/umu-1828104558",
+   "gog_slug": "umu-1828104558"
+  },
+  {
+   "title": "Game fix for Flowers - Le Volume Sur Printemps",
+   "source": "protonfixes:gog/umu-2044697588",
+   "conditional": true,
+   "gog_slug": "umu-2044697588",
+   "fixes": [
+    "call:get_game_install_path",
+    "call:protondir",
+    "call:protonprefix"
+   ]
+  },
+  {
+   "title": "The Witcher 2: Assassins of Kings Enhanced Edition",
+   "source": "protonfixes:gog/umu-20920",
+   "gog_slug": "umu-20920"
+  },
+  {
+   "title": "Game fix for Grim Dawn",
+   "source": "protonfixes:gog/umu-219990",
+   "gog_slug": "umu-219990",
+   "dependencies": [
+    "d3dcompiler_43"
+   ]
+  },
+  {
+   "title": "Alien Breed: Impact",
+   "source": "protonfixes:gog/umu-22610",
+   "gog_slug": "umu-22610",
+   "dependencies": [
+    "physx"
+   ]
+  },
+  {
+   "title": "Alien Breed 2: Assault",
+   "source": "protonfixes:gog/umu-22650",
+   "gog_slug": "umu-22650",
+   "dependencies": [
+    "physx"
+   ]
+  },
+  {
+   "title": "Alien Breed 3: Descent",
+   "source": "protonfixes:gog/umu-22670",
+   "gog_slug": "umu-22670",
+   "dependencies": [
+    "physx"
+   ]
+  },
+  {
+   "title": "Game fix for Quake",
+   "source": "protonfixes:gog/umu-2310",
+   "conditional": true,
+   "gog_slug": "umu-2310",
+   "dll_overrides": {
+    "winmm": "n,b"
+   }
+  },
+  {
+   "title": "Game fix for Quake II (Original)",
+   "source": "protonfixes:gog/umu-2320",
+   "conditional": true,
+   "gog_slug": "umu-2320",
+   "dll_overrides": {
+    "winmm": "n,b"
+   }
+  },
+  {
+   "title": "Game fix for SpellForce",
+   "source": "protonfixes:gog/umu-245050",
+   "gog_slug": "umu-245050",
+   "dependencies": [
+    "directplay"
+   ]
+  },
+  {
+   "title": "Game fix for Wizardry 8",
+   "source": "protonfixes:gog/umu-245450",
+   "gog_slug": "umu-245450",
+   "dependencies": [
+    "mfc42"
+   ]
+  },
+  {
+   "title": "Game fix for Ground Control 2",
+   "source": "protonfixes:gog/umu-254840",
+   "gog_slug": "umu-254840",
+   "dependencies": [
+    "verdana"
+   ]
+  },
+  {
+   "title": "Game fix for Chronology",
+   "source": "protonfixes:gog/umu-269330",
+   "conditional": true,
+   "gog_slug": "umu-269330",
+   "dependencies": [
+    "dotnet20",
+    "dotnet40"
+   ]
+  },
+  {
+   "title": "Game fix for Kane & Lynch 2: Dog Days",
+   "source": "protonfixes:gog/umu-28000",
+   "gog_slug": "umu-28000"
+  },
+  {
+   "title": "Game fix for Soulbringer",
+   "source": "protonfixes:gog/umu-283310",
+   "gog_slug": "umu-283310",
+   "dependencies": [
+    "mfc42"
+   ]
+  },
+  {
+   "title": "Tex Murphy: Overseer.",
+   "source": "protonfixes:gog/umu-302370",
+   "gog_slug": "umu-302370"
+  },
+  {
+   "title": "Game fix for LEGO® Pirates of the Caribbean",
+   "source": "protonfixes:gog/umu-311770",
+   "gog_slug": "umu-311770",
+   "dependencies": [
+    "d3dcompiler_47"
+   ]
+  },
+  {
+   "title": "Game fix for Akiba's Trip: Undead & Undressed",
+   "source": "protonfixes:gog/umu-333980",
+   "gog_slug": "umu-333980"
+  },
+  {
+   "title": "Warhammer 40,000: Dawn of War - Definitive Edition",
+   "source": "protonfixes:gog/umu-3556750",
+   "gog_slug": "umu-3556750",
+   "dependencies": [
+    "ucrtbase2019"
+   ]
+  },
+  {
+   "title": "Game fix for Middle-earth: Shadow of War",
+   "source": "protonfixes:gog/umu-356190",
+   "gog_slug": "umu-356190",
+   "dependencies": [
+    "vcrun2022"
+   ]
+  },
+  {
+   "title": "Game fix for Mafia III: Definitive Edition",
+   "source": "protonfixes:gog/umu-360430",
+   "gog_slug": "umu-360430"
+  },
+  {
+   "title": "Game fix for Dragon's Dogma: Dark Arisen",
+   "source": "protonfixes:gog/umu-367500",
+   "gog_slug": "umu-367500",
+   "env": {
+    "SDL_JOYSTICK_HIDAPI": "0"
+   }
+  },
+  {
+   "title": "Game fix for Doom 2016",
+   "source": "protonfixes:gog/umu-379720",
+   "conditional": true,
+   "gog_slug": "umu-379720",
+   "launch_arguments": "+r_renderAPI 1",
+   "fixes": [
+    "call:move",
+    "winetricks:mfc140"
+   ]
+  },
+  {
+   "title": "Game fix for Dungeon Siege",
+   "source": "protonfixes:gog/umu-39190",
+   "gog_slug": "umu-39190",
+   "dependencies": [
+    "directplay"
+   ],
+   "launch_arguments": "Zonematch=true"
+  },
+  {
+   "title": "Game fix for Dungeon Siege II",
+   "source": "protonfixes:gog/umu-39200",
+   "gog_slug": "umu-39200",
+   "dependencies": [
+    "directplay"
+   ]
+  },
+  {
+   "title": "Game fix for Gothic 1 Classic",
+   "source": "protonfixes:gog/umu-39510",
+   "conditional": true,
+   "gog_slug": "umu-39510",
+   "dependencies": [
+    "directmusic"
+   ],
+   "dll_overrides": {
+    "*dsound": "b",
+    "ddraw": "n,b",
+    "dinput": "n,b"
+   },
+   "fixes": [
+    "ini-options"
+   ]
+  },
+  {
+   "title": "Game fix for SpellForce",
+   "source": "protonfixes:gog/umu-39540",
+   "gog_slug": "umu-39540",
+   "dependencies": [
+    "directplay"
+   ]
+  },
+  {
+   "title": "Game fix for SpellForce",
+   "source": "protonfixes:gog/umu-39550",
+   "gog_slug": "umu-39550",
+   "dependencies": [
+    "directplay"
+   ]
+  },
+  {
+   "title": "Game fix for BioShock 2 Remastered",
+   "source": "protonfixes:gog/umu-409710",
+   "gog_slug": "umu-409710",
+   "registry": [
+    {
+     "hive": "HKLM",
+     "key": "System\\\\CurrentControlSet\\\\Services\\\\winebus",
+     "name": "DisableHidraw",
+     "type": "REG_DWORD",
+     "value": "1"
+    }
+   ],
+   "fixes": [
+    "disable-esync",
+    "disable-fsync"
+   ]
+  },
+  {
+   "title": "Game fix for BioShock 2 Remastered",
+   "source": "protonfixes:gog/umu-409720",
+   "gog_slug": "umu-409720",
+   "registry": [
+    {
+     "hive": "HKLM",
+     "key": "System\\\\CurrentControlSet\\\\Services\\\\winebus",
+     "name": "DisableHidraw",
+     "type": "REG_DWORD",
+     "value": "1"
+    }
+   ],
+   "fixes": [
+    "disable-esync",
+    "disable-fsync"
+   ]
+  },
+  {
+   "title": "Game fix for Darksiders",
+   "source": "protonfixes:gog/umu-50620",
+   "gog_slug": "umu-50620",
+   "dependencies": [
+    "d3dcompiler_42",
+    "d3dcompiler_43",
+    "d3dcompiler_46",
+    "d3dcompiler_47"
+   ]
+  },
+  {
+   "title": "Game fix for Star Wars Jedi Knight: Jedi Academy",
+   "source": "protonfixes:gog/umu-6020",
+   "gog_slug": "umu-6020"
+  },
+  {
+   "title": "Game fix for Star Wars Jedi Knight II: Jedi Outcast",
+   "source": "protonfixes:gog/umu-6030",
+   "gog_slug": "umu-6030"
+  },
+  {
+   "title": "Game fix for Age of Wonders",
+   "source": "protonfixes:gog/umu-61500",
+   "gog_slug": "umu-61500",
+   "dependencies": [
+    "icodecs"
+   ]
+  },
+  {
+   "title": "They Are Billions",
+   "source": "protonfixes:gog/umu-644930",
+   "gog_slug": "umu-644930",
+   "dependencies": [
+    "gdiplus"
+   ],
+   "env": {
+    "WINE_MONO_HIDETYPES": "1"
+   }
+  },
+  {
+   "title": "Game fix for SpellForce",
+   "source": "protonfixes:gog/umu-65530",
+   "gog_slug": "umu-65530",
+   "dependencies": [
+    "directplay"
+   ]
+  },
+  {
+   "title": "Game fix for Gothic 1 Classic",
+   "source": "protonfixes:gog/umu-65540",
+   "conditional": true,
+   "gog_slug": "umu-65540",
+   "dependencies": [
+    "directmusic"
+   ],
+   "dll_overrides": {
+    "*dsound": "b",
+    "ddraw": "n,b",
+    "dinput": "n,b"
+   },
+   "fixes": [
+    "ini-options"
+   ]
+  },
+  {
+   "title": "Game fix for BioShock 2 Remastered",
+   "source": "protonfixes:gog/umu-7670",
+   "gog_slug": "umu-7670",
+   "registry": [
+    {
+     "hive": "HKLM",
+     "key": "System\\\\CurrentControlSet\\\\Services\\\\winebus",
+     "name": "DisableHidraw",
+     "type": "REG_DWORD",
+     "value": "1"
+    }
+   ],
+   "fixes": [
+    "disable-esync",
+    "disable-fsync"
+   ]
+  },
+  {
+   "title": "Game fix for Just Cause 2",
+   "source": "protonfixes:gog/umu-8190",
+   "gog_slug": "umu-8190",
+   "launch_arguments": "-borderless"
+  },
+  {
+   "title": "Game fix for BioShock 2 Remastered",
+   "source": "protonfixes:gog/umu-8850",
+   "gog_slug": "umu-8850",
+   "registry": [
+    {
+     "hive": "HKLM",
+     "key": "System\\\\CurrentControlSet\\\\Services\\\\winebus",
+     "name": "DisableHidraw",
+     "type": "REG_DWORD",
+     "value": "1"
+    }
+   ],
+   "fixes": [
+    "disable-esync",
+    "disable-fsync"
+   ]
+  },
+  {
+   "title": "Game fix for Return to Castle Wolfenstein",
+   "source": "protonfixes:gog/umu-9010",
+   "gog_slug": "umu-9010"
+  },
+  {
+   "title": "Game fix for Hexen II",
+   "source": "protonfixes:gog/umu-9060",
+   "conditional": true,
+   "gog_slug": "umu-9060",
+   "dll_overrides": {
+    "winmm": "n,b"
+   }
+  },
+  {
+   "title": "Game fix for Rebel Galaxy Outlaw",
+   "source": "protonfixes:gog/umu-910830",
+   "gog_slug": "umu-910830",
+   "dependencies": [
+    "mfc42"
+   ]
+  },
+  {
+   "title": "Bright Memory",
+   "source": "protonfixes:gog/umu-955050",
+   "gog_slug": "umu-955050",
+   "fixes": [
+    "disable-nvapi"
+   ]
+  },
+  {
+   "title": "Death end re;Quest",
+   "source": "protonfixes:gog/umu-990050",
+   "gog_slug": "umu-990050",
+   "fixes": [
+    "cpu-limit"
+   ]
+  },
+  {
+   "title": "Game fix for Age of Empires: DE",
+   "source": "protonfixes:steam/1017900",
+   "appid": 1017900,
+   "launch_arguments": "-NoStartup"
+  },
+  {
+   "title": "Postal III",
+   "source": "protonfixes:steam/10220",
+   "appid": 10220,
+   "dependencies": [
+    "lucida",
+    "courier",
+    "verdana",
+    "trebuchet",
+    "arial",
+    "tahoma"
+   ]
+  },
+  {
+   "title": "Game fix for Mafia II Definitive Edition",
+   "source": "protonfixes:steam/1030830",
+   "appid": 1030830,
+   "dependencies": [
+    "physx"
+   ]
+  },
+  {
+   "title": "Game fix for Fable III",
+   "source": "protonfixes:steam/105400",
+   "conditional": true,
+   "appid": 105400,
+   "fixes": [
+    "call:protonprefix",
+    "call:rmtree",
+    "winetricks:xliveless"
+   ]
+  },
+  {
+   "title": "Game fix for Age Of Empire 3: Complete Collection",
+   "source": "protonfixes:steam/105450",
+   "appid": 105450,
+   "windows_version": "winxp",
+   "dependencies": [
+    "mfc42",
+    "l3codecx",
+    "corefonts"
+   ]
+  },
+  {
+   "title": "Game fix for Phantasy Star Online 2",
+   "source": "protonfixes:steam/1056640",
+   "appid": 1056640,
+   "env": {
+    "WINE_NO_OPEN_FILE_SEARCH": "pso2_bin/data"
+   }
+  },
+  {
+   "title": "Dragon Star Varnir",
+   "source": "protonfixes:steam/1062040",
+   "appid": 1062040,
+   "dll_overrides": {
+    "xactengine3_7": "n"
+   }
+  },
+  {
+   "title": "Alan Wake",
+   "source": "protonfixes:steam/108710",
+   "appid": 108710,
+   "dependencies": [
+    "d3dcompiler_47"
+   ]
+  },
+  {
+   "title": "Game fix for Fall Guys",
+   "source": "protonfixes:steam/1097150",
+   "appid": 1097150,
+   "env": {
+    "DOTNET_BUNDLE_EXTRACT_BASE_DIR": ""
+   },
+   "fixes": [
+    "eac"
+   ]
+  },
+  {
+   "title": "Game fix for Yakuza 5",
+   "source": "protonfixes:steam/1105510",
+   "appid": 1105510,
+   "env": {
+    "WINE_DISABLE_SFN": "1"
+   }
+  },
+  {
+   "title": "Game fix for L.A. Noire",
+   "source": "protonfixes:steam/110800",
+   "appid": 110800,
+   "dependencies": [
+    "d3dx9_43",
+    "d3dcompiler_43",
+    "d3dx11_43",
+    "d3dcompiler_47"
+   ],
+   "launch_arguments": "-dx11"
+  },
+  {
+   "title": "Game fix for Project Torque",
+   "source": "protonfixes:steam/1112400",
+   "conditional": true,
+   "appid": 1112400,
+   "windows_version": "win10",
+   "fixes": [
+    "winetricks:dotnet35sp1"
+   ]
+  },
+  {
+   "title": "Game fix for Senren*Banka",
+   "source": "protonfixes:steam/1144400",
+   "appid": 1144400,
+   "launch_arguments": "-vomstyle=layer"
+  },
+  {
+   "title": "Utawarerumono: Mask of Truth",
+   "source": "protonfixes:steam/1151440",
+   "appid": 1151440,
+   "fixes": [
+    "import-saves"
+   ]
+  },
+  {
+   "title": "Game fix for Horizon Zero Dawn",
+   "source": "protonfixes:steam/1151640",
+   "appid": 1151640,
+   "dependencies": [
+    "vcrun2019"
+   ]
+  },
+  {
+   "title": "Game fix for Red Dead Redemption 2",
+   "source": "protonfixes:steam/1174180",
+   "appid": 1174180,
+   "launch_arguments": "-fullscreen -vulkan"
+  },
+  {
+   "title": "Game fix Tree Of Savior",
+   "source": "protonfixes:steam/1175730",
+   "appid": 1175730,
+   "dependencies": [
+    "d3dcompiler_47",
+    "vcrun2013",
+    "vcrun2022"
+   ]
+  },
+  {
+   "title": "Necromunda: Hired Gun",
+   "source": "protonfixes:steam/1222370",
+   "appid": 1222370
+  },
+  {
+   "title": "Game fix for A Way Out",
+   "source": "protonfixes:steam/1222700",
+   "appid": 1222700,
+   "env": {
+    "OPENSSL_ia32cap": ":~0x20000000"
+   }
+  },
+  {
+   "title": "Game fix for Titanfall 2",
+   "source": "protonfixes:steam/1237970",
+   "conditional": true,
+   "appid": 1237970,
+   "fixes": [
+    "call:get_game_install_path"
+   ]
+  },
+  {
+   "title": "Madden NFL 21 needs vcrun2019 for online mode to work",
+   "source": "protonfixes:steam/1239520",
+   "appid": 1239520,
+   "dependencies": [
+    "vcrun2019"
+   ]
+  },
+  {
+   "title": "Halo Infinite needs vcrun2019",
+   "source": "protonfixes:steam/1240440",
+   "appid": 1240440,
+   "dependencies": [
+    "vcrun2019"
+   ]
+  },
+  {
+   "title": "Game fix for Elden Ring: Create the `DLC.bdt` and `DLC.bhd` files to work around the \"Inappropriate activity detected\" error for players that don't own the DLC",
+   "source": "protonfixes:steam/1245620",
+   "appid": 1245620,
+   "fixes": [
+    "call:get_game_install_path"
+   ]
+  },
+  {
+   "title": "Game fix for Flight Simulator 2020",
+   "source": "protonfixes:steam/1250410",
+   "appid": 1250410,
+   "launch_arguments": "-FastLaunch"
+  },
+  {
+   "title": "Game fix for Pes 2021",
+   "source": "protonfixes:steam/1259970",
+   "conditional": true,
+   "appid": 1259970,
+   "dependencies": [
+    "vcrun2019",
+    "dotnet462"
+   ],
+   "fixes": [
+    "winetricks:allfonts"
+   ]
+  },
+  {
+   "title": "Death end re;Quest",
+   "source": "protonfixes:steam/1266220",
+   "appid": 1266220,
+   "fixes": [
+    "cpu-limit"
+   ]
+  },
+  {
+   "title": "Game fix for Re:ZERO -Starting Life in Another World- The Prophecy of the Throne",
+   "source": "protonfixes:steam/1277510",
+   "appid": 1277510,
+   "dependencies": [
+    "d3dcompiler_47"
+   ]
+  },
+  {
+   "title": "Overlord II",
+   "source": "protonfixes:steam/12810",
+   "appid": 12810,
+   "dependencies": [
+    "physx"
+   ]
+  },
+  {
+   "title": "Game fix for Dirt 2",
+   "source": "protonfixes:steam/12840",
+   "appid": 12840,
+   "fixes": [
+    "winetricks:xliveless"
+   ]
+  },
+  {
+   "title": "Planet Crafter",
+   "source": "protonfixes:steam/1284190",
+   "appid": 1284190,
+   "fixes": [
+    "import-saves"
+   ]
+  },
+  {
+   "title": "Game fix for Guild Wars 2",
+   "source": "protonfixes:steam/1284210",
+   "conditional": true,
+   "appid": 1284210
+  },
+  {
+   "title": "GWENT: The Witcher Card Game",
+   "source": "protonfixes:steam/1284410",
+   "appid": 1284410,
+   "fixes": [
+    "winetricks:mfc140"
+   ]
+  },
+  {
+   "title": "Ship Graveyard Simulator",
+   "source": "protonfixes:steam/1286880",
+   "appid": 1286880,
+   "dll_overrides": {
+    "vulkan-1": "b"
+   }
+  },
+  {
+   "title": "Forza Horizon 4",
+   "source": "protonfixes:steam/1293830",
+   "appid": 1293830,
+   "dependencies": [
+    "vcrun2019"
+   ]
+  },
+  {
+   "title": "Battle Engine Aquila",
+   "source": "protonfixes:steam/1346400",
+   "appid": 1346400,
+   "dependencies": [
+    "dsound"
+   ]
+  },
+  {
+   "title": "Game fix for Warhammer 40,000: Darktide",
+   "source": "protonfixes:steam/1361210",
+   "appid": 1361210,
+   "launch_arguments": "-eac-untrusted --bundle-dir ../bundle --ini settings"
+  },
+  {
+   "title": "Teenage Mutant Ninja Turtles Shredders Revenge",
+   "source": "protonfixes:steam/1361510",
+   "appid": 1361510,
+   "dependencies": [
+    "vcrun2017"
+   ]
+  },
+  {
+   "title": "Persona 5 Strikers.",
+   "source": "protonfixes:steam/1382330",
+   "conditional": true,
+   "appid": 1382330
+  },
+  {
+   "title": "Game fix for STORY OF SEASONS: Pioneers of Olive Town",
+   "source": "protonfixes:steam/1392960",
+   "appid": 1392960,
+   "dependencies": [
+    "d3dcompiler_43",
+    "d3dcompiler_47"
+   ]
+  },
+  {
+   "title": "Game fix HighFleet",
+   "source": "protonfixes:steam/1434950",
+   "appid": 1434950,
+   "dependencies": [
+    "d3dx11_43",
+    "d3dcompiler_47"
+   ]
+  },
+  {
+   "title": "Game fix for The Outer Worlds 2",
+   "source": "protonfixes:steam/1449110",
+   "appid": 1449110,
+   "dependencies": [
+    "vcrun2022"
+   ]
+  },
+  {
+   "title": "Game fix for Ghostbusters: The Video Game Remastered (2019)",
+   "source": "protonfixes:steam/1449280",
+   "appid": 1449280,
+   "fixes": [
+    "call:protonprefix"
+   ]
+  },
+  {
+   "title": "Game fix for Gothic 1 Classic",
+   "source": "protonfixes:steam/1467450",
+   "conditional": true,
+   "appid": 1467450,
+   "dependencies": [
+    "directmusic"
+   ],
+   "dll_overrides": {
+    "*dsound": "b",
+    "ddraw": "n,b",
+    "dinput": "n,b"
+   },
+   "fixes": [
+    "ini-options"
+   ]
+  },
+  {
+   "title": "Hardwar",
+   "source": "protonfixes:steam/1500540",
+   "appid": 1500540,
+   "dll_overrides": {
+    "dinput": "n,b",
+    "winmm": "n,b"
+   }
+  },
+  {
+   "title": "Assassin's Creed 1",
+   "source": "protonfixes:steam/15100",
+   "appid": 15100,
+   "fixes": [
+    "cpu-limit"
+   ]
+  },
+  {
+   "title": "Game fix for Beyond Good and Evil",
+   "source": "protonfixes:steam/15130",
+   "appid": 15130,
+   "dependencies": [
+    "dsound",
+    "d3dx9",
+    "arial",
+    "d3dcompiler_47"
+   ],
+   "registry": [
+    {
+     "hive": "HKLM",
+     "key": "Software\\\\Wow6432Node\\\\Ubisoft\\\\Beyond Good & Evil",
+     "name": "InstallLanguage",
+     "type": "REG_DWORD",
+     "value": "1"
+    }
+   ]
+  },
+  {
+   "title": "Game fix for Halo CE mod tools",
+   "source": "protonfixes:steam/1532190",
+   "appid": 1532190,
+   "dependencies": [
+    "vcrun2019",
+    "d3dcompiler_47",
+    "msxml3"
+   ]
+  },
+  {
+   "title": "The Callisto Protocol",
+   "source": "protonfixes:steam/1544020",
+   "appid": 1544020,
+   "dependencies": [
+    "vcrun2022"
+   ]
+  },
+  {
+   "title": "Project MIKHAIL: A Muv-Luv War Story",
+   "source": "protonfixes:steam/1557480",
+   "appid": 1557480,
+   "dependencies": [
+    "d3dcompiler_47"
+   ]
+  },
+  {
+   "title": "Oddworld: Stranger's Wrath HD",
+   "source": "protonfixes:steam/15750",
+   "appid": 15750,
+   "fixes": [
+    "winetricks:mfc90"
+   ]
+  },
+  {
+   "title": "Game fix for Halo 2 mod tools",
+   "source": "protonfixes:steam/1613450",
+   "appid": 1613450,
+   "dependencies": [
+    "vcrun2019",
+    "d3dcompiler_47",
+    "msxml3"
+   ]
+  },
+  {
+   "title": "UNCHARTED: Legacy of Thieves Collection",
+   "source": "protonfixes:steam/1659420",
+   "appid": 1659420,
+   "fixes": [
+    "cpu-limit"
+   ]
+  },
+  {
+   "title": "Game fix for Parquet",
+   "source": "protonfixes:steam/1662840",
+   "appid": 1662840,
+   "launch_arguments": "-vomstyle=layer"
+  },
+  {
+   "title": "Ship Graveyard Simulator Prologue",
+   "source": "protonfixes:steam/1664350",
+   "appid": 1664350,
+   "dll_overrides": {
+    "vulkan-1": "b"
+   }
+  },
+  {
+   "title": "Game fix for Stronghold Crusader Extreme HD",
+   "source": "protonfixes:steam/16700",
+   "appid": 16700,
+   "dependencies": [
+    "directplay"
+   ]
+  },
+  {
+   "title": "Deltarune",
+   "source": "protonfixes:steam/1671210",
+   "appid": 1671210,
+   "fixes": [
+    "import-saves"
+   ]
+  },
+  {
+   "title": "Game fix for Legendary",
+   "source": "protonfixes:steam/16730",
+   "appid": 16730,
+   "windows_version": "winxp"
+  },
+  {
+   "title": "Company Of Heroes 3",
+   "source": "protonfixes:steam/1677280",
+   "appid": 1677280,
+   "dependencies": [
+    "ucrtbase2019"
+   ]
+  },
+  {
+   "title": "Civilization IV: Colonization",
+   "source": "protonfixes:steam/16810",
+   "appid": 16810,
+   "dependencies": [
+    "msxml3",
+    "corefonts"
+   ],
+   "fixes": [
+    "winetricks:oleaut32"
+   ]
+  },
+  {
+   "title": "Game fix for Halo 3 mod tools",
+   "source": "protonfixes:steam/1695791",
+   "appid": 1695791,
+   "dependencies": [
+    "vcrun2019",
+    "d3dcompiler_47",
+    "msxml3"
+   ]
+  },
+  {
+   "title": "Game fix for the Halo Reach mod tools Foundation gamemode.",
+   "source": "protonfixes:steam/1695793",
+   "conditional": true,
+   "appid": 1695793,
+   "dependencies": [
+    "dotnet35",
+    "dotnet45"
+   ]
+  },
+  {
+   "title": "Game fix Halo 3: ODST mod tools",
+   "source": "protonfixes:steam/1695794",
+   "appid": 1695794,
+   "dependencies": [
+    "vcrun2019",
+    "d3dcompiler_47",
+    "msxml3"
+   ]
+  },
+  {
+   "title": "GWENT: Rogue Mage",
+   "source": "protonfixes:steam/1711950",
+   "appid": 1711950,
+   "fixes": [
+    "winetricks:mfc140"
+   ]
+  },
+  {
+   "title": "Crysis Remastered",
+   "source": "protonfixes:steam/1715130",
+   "appid": 1715130,
+   "dependencies": [
+    "vcrun2019",
+    "d3dcompiler_43"
+   ]
+  },
+  {
+   "title": "Mod support for following Bethesda games:",
+   "source": "protonfixes:steam/1716740",
+   "conditional": true,
+   "appid": 1716740
+  },
+  {
+   "title": "Game fix for Carnage Cross",
+   "source": "protonfixes:steam/1795390",
+   "appid": 1795390
+  },
+  {
+   "title": "Cease to Breathe",
+   "source": "protonfixes:steam/1873170",
+   "conditional": true,
+   "appid": 1873170,
+   "fixes": [
+    "call:copytree",
+    "call:get_game_install_path",
+    "call:rmtree"
+   ]
+  },
+  {
+   "title": "PAIcom",
+   "source": "protonfixes:steam/1876280",
+   "conditional": true,
+   "appid": 1876280,
+   "dependencies": [
+    "dotnet48"
+   ]
+  },
+  {
+   "title": "Two Worlds Epic Edition - ID 1930",
+   "source": "protonfixes:steam/1930",
+   "appid": 1930,
+   "dependencies": [
+    "xact",
+    "d3dx9"
+   ]
+  },
+  {
+   "title": "Octopath Traveler 2",
+   "source": "protonfixes:steam/1971650",
+   "appid": 1971650,
+   "fixes": [
+    "call:get_steam_account_id",
+    "import-saves"
+   ]
+  },
+  {
+   "title": "Game fix for Mortal Kombat 1",
+   "source": "protonfixes:steam/1971870",
+   "appid": 1971870
+  },
+  {
+   "title": "Far Cry 2",
+   "source": "protonfixes:steam/19900",
+   "appid": 19900
+  },
+  {
+   "title": "Game fix for Sonic CD",
+   "source": "protonfixes:steam/200940",
+   "appid": 200940,
+   "dependencies": [
+    "d3dcompiler_43",
+    "d3dx9_43"
+   ],
+   "fixes": [
+    "winetricks:mdx"
+   ]
+  },
+  {
+   "title": "Game fix for Serious Sam: The Random Encounter",
+   "source": "protonfixes:steam/201480",
+   "appid": 201480,
+   "dependencies": [
+    "dmime",
+    "dmsynth",
+    "dsound",
+    "dswave",
+    "directplay"
+   ],
+   "dll_overrides": {
+    "streamci": "n"
+   },
+   "fixes": [
+    "winetricks:dmband",
+    "winetricks:dmloader",
+    "winetricks:dmstyle",
+    "winetricks:dmusic"
+   ]
+  },
+  {
+   "title": "The Testament of Sherlock Holmes",
+   "source": "protonfixes:steam/205650",
+   "appid": 205650,
+   "dependencies": [
+    "physx"
+   ]
+  },
+  {
+   "title": "Game fix Dungeons & Dragons Online",
+   "source": "protonfixes:steam/206480",
+   "appid": 206480,
+   "dll_overrides": {
+    "libglesv2": ""
+   }
+  },
+  {
+   "title": "Game fix for AirMech Strike",
+   "source": "protonfixes:steam/206500",
+   "appid": 206500,
+   "launch_arguments": "/dx11"
+  },
+  {
+   "title": "Game fix for The First Descendant",
+   "source": "protonfixes:steam/2074920",
+   "appid": 2074920,
+   "env": {
+    "WINE_BLOCK_HOSTS": "modules-cdn.eac-prod.on.epicgames.com"
+   }
+  },
+  {
+   "title": "Game fix for Batman Arkham Knight",
+   "source": "protonfixes:steam/208650",
+   "appid": 208650,
+   "dependencies": [
+    "physx"
+   ]
+  },
+  {
+   "title": "The Witcher 2: Assassins of Kings Enhanced Edition",
+   "source": "protonfixes:steam/20920",
+   "appid": 20920
+  },
+  {
+   "title": "Game fix for JR East Train Simulator",
+   "source": "protonfixes:steam/2111630",
+   "appid": 2111630,
+   "dependencies": [
+    "d3dcompiler_43",
+    "vcrun2008"
+   ]
+  },
+  {
+   "title": "Game fix The Lord of the Rings Online",
+   "source": "protonfixes:steam/212500",
+   "appid": 212500,
+   "dll_overrides": {
+    "libglesv2": ""
+   }
+  },
+  {
+   "title": "Fix for S\\&box Editor",
+   "source": "protonfixes:steam/2129370",
+   "conditional": true,
+   "appid": 2129370,
+   "fixes": [
+    "winetricks:dotnetdesktop10"
+   ]
+  },
+  {
+   "title": "Game fix for LEGO Batman 2: DC Super Heroes",
+   "source": "protonfixes:steam/213330",
+   "appid": 213330,
+   "fixes": [
+    "winetricks:d3dx9_41"
+   ]
+  },
+  {
+   "title": "Elin",
+   "source": "protonfixes:steam/2135150",
+   "appid": 2135150,
+   "dll_overrides": {
+    "winhttp": "n,b"
+   }
+  },
+  {
+   "title": "Sifu",
+   "source": "protonfixes:steam/2138710",
+   "appid": 2138710,
+   "fixes": [
+    "ini-options"
+   ]
+  },
+  {
+   "title": "Game fix for LEGO The Lord of the Rings",
+   "source": "protonfixes:steam/214510",
+   "appid": 214510,
+   "fixes": [
+    "winetricks:d3dx9_41"
+   ]
+  },
+  {
+   "title": "Game fix for Total War: Rome II",
+   "source": "protonfixes:steam/214950",
+   "appid": 214950,
+   "dependencies": [
+    "d3dcompiler_42",
+    "directplay"
+   ],
+   "fixes": [
+    "disable-esync",
+    "disable-fsync"
+   ]
+  },
+  {
+   "title": "Game fix for Secret World Legends",
+   "source": "protonfixes:steam/215280",
+   "appid": 215280,
+   "dependencies": [
+    "d3dx9_43",
+    "d3dx11_43",
+    "d3dcompiler_43"
+   ]
+  },
+  {
+   "title": "Game fix for MapleStory",
+   "source": "protonfixes:steam/216150",
+   "appid": 216150,
+   "fixes": [
+    "call:protonprefix"
+   ]
+  },
+  {
+   "title": "Persona 3 Reload",
+   "source": "protonfixes:steam/2161700",
+   "appid": 2161700,
+   "fixes": [
+    "call:get_steam_account_id",
+    "import-saves"
+   ]
+  },
+  {
+   "title": "Game fix for Summoners War: Chronicles",
+   "source": "protonfixes:steam/2167580",
+   "appid": 2167580
+  },
+  {
+   "title": "Game fix Summoner's War Chronicles",
+   "source": "protonfixes:steam/2167850",
+   "appid": 2167850
+  },
+  {
+   "title": "Bionic Commander Rearmed",
+   "source": "protonfixes:steam/21680",
+   "appid": 21680,
+   "dependencies": [
+    "physx"
+   ]
+  },
+  {
+   "title": "Game fix for Grim Dawn",
+   "source": "protonfixes:steam/219990",
+   "appid": 219990,
+   "dependencies": [
+    "d3dcompiler_43"
+   ]
+  },
+  {
+   "title": "FarCry 3",
+   "source": "protonfixes:steam/220240",
+   "appid": 220240,
+   "fixes": [
+    "cpu-limit"
+   ]
+  },
+  {
+   "title": "Game fix for Command & Conquer Red Alert™ 2 and Yuri's Revenge™",
+   "source": "protonfixes:steam/2229850",
+   "conditional": true,
+   "appid": 2229850,
+   "fixes": [
+    "winetricks:cnc_ddraw",
+    "winetricks:cncnet_ra2"
+   ]
+  },
+  {
+   "title": "Tom Clancy's Ghost Recon Breakpoint",
+   "source": "protonfixes:steam/2231380",
+   "appid": 2231380,
+   "fixes": [
+    "winetricks:ubisoftconnect"
+   ]
+  },
+  {
+   "title": "Mod support for following Bethesda games:",
+   "source": "protonfixes:steam/22330",
+   "conditional": true,
+   "appid": 22330
+  },
+  {
+   "title": "Mod support for following Bethesda games:",
+   "source": "protonfixes:steam/22370",
+   "conditional": true,
+   "appid": 22370
+  },
+  {
+   "title": "Fixes for DCS World Steam Edition",
+   "source": "protonfixes:steam/223750",
+   "appid": 223750,
+   "dependencies": [
+    "d3dx11_43",
+    "d3dcompiler_43",
+    "d3dcompiler_47"
+   ],
+   "dll_overrides": {
+    "wbemprox": "n"
+   }
+  },
+  {
+   "title": "Mod support for following Bethesda games:",
+   "source": "protonfixes:steam/22380",
+   "conditional": true,
+   "appid": 22380
+  },
+  {
+   "title": "Monster Hunter Wilds",
+   "source": "protonfixes:steam/2246340",
+   "conditional": true,
+   "appid": 2246340,
+   "fixes": [
+    "import-saves"
+   ]
+  },
+  {
+   "title": "Game fix for Tomb Raider I",
+   "source": "protonfixes:steam/224960",
+   "appid": 224960,
+   "launch_arguments": "-conf glide_fix.conf",
+   "fixes": [
+    "dosbox-conf"
+   ]
+  },
+  {
+   "title": "Game fix for Sacred 2 Gold",
+   "source": "protonfixes:steam/225640",
+   "appid": 225640,
+   "dependencies": [
+    "physx"
+   ]
+  },
+  {
+   "title": "Game fix for You Need a Budget 4",
+   "source": "protonfixes:steam/227320",
+   "appid": 227320,
+   "dependencies": [
+    "corefonts"
+   ]
+  },
+  {
+   "title": "Mod support for Wuchang",
+   "source": "protonfixes:steam/2277560",
+   "conditional": true,
+   "appid": 2277560,
+   "dll_overrides": {
+    "dwmapi": "n,b",
+    "dsound": "n,b"
+   },
+   "fixes": [
+    "call:get_game_install_path"
+   ]
+  },
+  {
+   "title": "Game fix for Fallen Enchantress: Legendary Heroes",
+   "source": "protonfixes:steam/228260",
+   "appid": 228260,
+   "dependencies": [
+    "vcrun2008",
+    "vcrun2015",
+    "d3dx9",
+    "d3dcompiler_43",
+    "d3dcompiler_47"
+   ],
+   "dll_overrides": {
+    "sdnxlfonts": ""
+   },
+   "fixes": [
+    "winetricks:usp10"
+   ]
+  },
+  {
+   "title": "Game fix for Warframe",
+   "source": "protonfixes:steam/230410",
+   "appid": 230410
+  },
+  {
+   "title": "Company Of Heroes 2",
+   "source": "protonfixes:steam/231430",
+   "appid": 231430,
+   "dependencies": [
+    "ucrtbase2019"
+   ]
+  },
+  {
+   "title": "Game fix for Spider-Man: Shattered Dimensions",
+   "source": "protonfixes:steam/231990",
+   "appid": 231990,
+   "dependencies": [
+    "d3dx9_43",
+    "xact"
+   ]
+  },
+  {
+   "title": "God of War Ragnarök",
+   "source": "protonfixes:steam/2322010",
+   "appid": 2322010
+  },
+  {
+   "title": "Yosumin",
+   "source": "protonfixes:steam/23300",
+   "appid": 23300,
+   "dependencies": [
+    "d3dx9"
+   ]
+  },
+  {
+   "title": "Far Cry Blood Dragon",
+   "source": "protonfixes:steam/233270",
+   "appid": 233270,
+   "fixes": [
+    "cpu-limit"
+   ]
+  },
+  {
+   "title": "Ceville",
+   "source": "protonfixes:steam/23460",
+   "conditional": true,
+   "appid": 23460,
+   "fixes": [
+    "winetricks:dotnet35sp1"
+   ]
+  },
+  {
+   "title": "Game fix for MotorGP",
+   "source": "protonfixes:steam/240600",
+   "appid": 240600,
+   "dependencies": [
+    "d3dcompiler_43",
+    "d3dx9_43"
+   ]
+  },
+  {
+   "title": "Game fix for Sorcerer King",
+   "source": "protonfixes:steam/241990",
+   "appid": 241990,
+   "dependencies": [
+    "vcrun2008",
+    "vcrun2015",
+    "d3dx9",
+    "d3dcompiler_43",
+    "d3dcompiler_47"
+   ],
+   "dll_overrides": {
+    "sdnxlfonts": ""
+   },
+   "fixes": [
+    "winetricks:usp10"
+   ]
+  },
+  {
+   "title": "Game fix for Summoners War",
+   "source": "protonfixes:steam/2426960",
+   "appid": 2426960
+  },
+  {
+   "title": "Game fix for The Forest",
+   "source": "protonfixes:steam/242760",
+   "appid": 242760,
+   "fixes": [
+    "cpu-nosmt"
+   ]
+  },
+  {
+   "title": "Game fix for Smite 2",
+   "source": "protonfixes:steam/2437170",
+   "appid": 2437170
+  },
+  {
+   "title": "Game fix for Assetto Corsa",
+   "source": "protonfixes:steam/244210",
+   "conditional": true,
+   "appid": 244210,
+   "windows_version": "win10",
+   "dependencies": [
+    "dotnet48",
+    "d3dx11_43",
+    "d3dcompiler_47"
+   ],
+   "dll_overrides": {
+    "dwrite": "n,b"
+   }
+  },
+  {
+   "title": "Game fix for Space Engineers",
+   "source": "protonfixes:steam/244850",
+   "conditional": true,
+   "appid": 244850,
+   "dependencies": [
+    "xaudio29",
+    "dotnet48",
+    "vcrun2019"
+   ],
+   "fixes": [
+    "xml-options"
+   ]
+  },
+  {
+   "title": "Game fix for SpellForce",
+   "source": "protonfixes:steam/245050",
+   "appid": 245050,
+   "dependencies": [
+    "directplay"
+   ]
+  },
+  {
+   "title": "Game fix for Wizardry 8",
+   "source": "protonfixes:steam/245450",
+   "appid": 245450,
+   "dependencies": [
+    "mfc42"
+   ]
+  },
+  {
+   "title": "Cardfight!! Vanguard Dear Days 2",
+   "source": "protonfixes:steam/2457540",
+   "appid": 2457540,
+   "fixes": [
+    "import-saves"
+   ]
+  },
+  {
+   "title": "Gobliiins 5 (and Demo - 2505910)",
+   "source": "protonfixes:steam/2475980",
+   "conditional": true,
+   "appid": 2475980,
+   "fixes": [
+    "ini-options"
+   ]
+  },
+  {
+   "title": "Game fix for Gray Zone Warfare",
+   "source": "protonfixes:steam/2479810",
+   "conditional": true,
+   "appid": 2479810,
+   "fixes": [
+    "call:get_game_install_path"
+   ]
+  },
+  {
+   "title": "Gobliiins 5 (and Demo - 2505910)",
+   "source": "protonfixes:steam/2505910",
+   "conditional": true,
+   "appid": 2505910,
+   "fixes": [
+    "ini-options"
+   ]
+  },
+  {
+   "title": "Game fix for The Legend of Heroes: Trails in the Sky.",
+   "source": "protonfixes:steam/251150",
+   "conditional": true,
+   "appid": 251150,
+   "fixes": [
+    "call:get_game_install_path"
+   ]
+  },
+  {
+   "title": "Game fix for The Legend of Heroes: Trails in the Sky SC.",
+   "source": "protonfixes:steam/251290",
+   "conditional": true,
+   "appid": 251290,
+   "fixes": [
+    "call:protonprefix"
+   ]
+  },
+  {
+   "title": "Game fix for Dusty Revenge: Co-Op Edition",
+   "source": "protonfixes:steam/252430",
+   "appid": 252430,
+   "dependencies": [
+    "vcrun2010",
+    "dsound"
+   ]
+  },
+  {
+   "title": "Rocket League",
+   "source": "protonfixes:steam/252950",
+   "appid": 252950,
+   "fixes": [
+    "winetricks:eossdk"
+   ]
+  },
+  {
+   "title": "CastleMiner Z",
+   "source": "protonfixes:steam/253430",
+   "appid": 253430,
+   "dependencies": [
+    "xna40"
+   ]
+  },
+  {
+   "title": "Game fix for Ground Control 2",
+   "source": "protonfixes:steam/254840",
+   "appid": 254840,
+   "dependencies": [
+    "verdana"
+   ]
+  },
+  {
+   "title": "Game fix for KINGDOM HEARTS -HD 1.5+2.5 ReMIX-",
+   "source": "protonfixes:steam/2552430",
+   "appid": 2552430
+  },
+  {
+   "title": "Horizon Zero Dawn Remastered",
+   "source": "protonfixes:steam/2561580",
+   "appid": 2561580,
+   "fixes": [
+    "import-saves"
+   ]
+  },
+  {
+   "title": "WRC 4",
+   "source": "protonfixes:steam/256330",
+   "appid": 256330,
+   "dependencies": [
+    "d3dx9_43",
+    "xact"
+   ],
+   "fixes": [
+    "winetricks:d3dx9_42"
+   ]
+  },
+  {
+   "title": "Game fix for Serious Sam 4",
+   "source": "protonfixes:steam/257420",
+   "conditional": true,
+   "appid": 257420
+  },
+  {
+   "title": "Game fix for Tesla Effect",
+   "source": "protonfixes:steam/261510",
+   "appid": 261510,
+   "dependencies": [
+    "corefonts"
+   ]
+  },
+  {
+   "title": "Game fix for Borderlands: The Pre-Sequel",
+   "source": "protonfixes:steam/261640",
+   "appid": 261640,
+   "dependencies": [
+    "physx"
+   ],
+   "launch_arguments": "-NoSplash",
+   "fixes": [
+    "disable-esync"
+   ]
+  },
+  {
+   "title": "Game fix for Call of Duty (2003)",
+   "source": "protonfixes:steam/2620",
+   "appid": 2620
+  },
+  {
+   "title": "Mod support for following Bethesda games:",
+   "source": "protonfixes:steam/2623190",
+   "conditional": true,
+   "appid": 2623190
+  },
+  {
+   "title": "Game fix for Age of Mythology: Extended Edition",
+   "source": "protonfixes:steam/266840",
+   "appid": 266840
+  },
+  {
+   "title": "Game fix for Indiana Jones and the Great Circle",
+   "source": "protonfixes:steam/2677660",
+   "appid": 2677660
+  },
+  {
+   "title": "Metaphor ReFantazio",
+   "source": "protonfixes:steam/2679460",
+   "appid": 2679460,
+   "fixes": [
+    "call:get_steam_account_id",
+    "import-saves"
+   ]
+  },
+  {
+   "title": "Game fix for The Evil Within(268050)",
+   "source": "protonfixes:steam/268050",
+   "appid": 268050,
+   "windows_version": "win7"
+  },
+  {
+   "title": "Game fix for Chronology",
+   "source": "protonfixes:steam/269330",
+   "conditional": true,
+   "appid": 269330,
+   "dependencies": [
+    "dotnet20",
+    "dotnet40"
+   ]
+  },
+  {
+   "title": "PowerWash Adventure",
+   "source": "protonfixes:steam/2699660",
+   "appid": 2699660,
+   "dependencies": [
+    "vcrun2022"
+   ]
+  },
+  {
+   "title": "Game fix for GTAV",
+   "source": "protonfixes:steam/271590",
+   "conditional": true,
+   "appid": 271590,
+   "registry": [
+    {
+     "hive": "HKLM",
+     "key": "System\\\\CurrentControlSet\\\\Services\\\\winebus",
+     "name": "DisableHidraw",
+     "type": "REG_DWORD",
+     "value": "1"
+    },
+    {
+     "hive": "HKLM",
+     "key": "System\\\\CurrentControlSet\\\\Services\\\\winebus",
+     "name": "Enable SDL",
+     "type": "REG_DWORD",
+     "value": "1"
+    }
+   ],
+   "env": {
+    "SteamAppId": ""
+   }
+  },
+  {
+   "title": "Game fix for Mashed(281280)",
+   "source": "protonfixes:steam/281280",
+   "appid": 281280,
+   "windows_version": "winxp",
+   "launch_arguments": "-VS0 -CS0"
+  },
+  {
+   "title": "Game fix for SOMA",
+   "source": "protonfixes:steam/282140",
+   "appid": 282140,
+   "fixes": [
+    "disable-ntsync"
+   ]
+  },
+  {
+   "title": "Hyperdimension Neptunia Re;Birth1",
+   "source": "protonfixes:steam/282900",
+   "appid": 282900
+  },
+  {
+   "title": "Game fix for Soulbringer",
+   "source": "protonfixes:steam/283310",
+   "appid": 283310,
+   "dependencies": [
+    "mfc42"
+   ]
+  },
+  {
+   "title": "Game fix for BeamNG.drive",
+   "source": "protonfixes:steam/284160",
+   "appid": 284160,
+   "dependencies": [
+    "d3dx9_43",
+    "d3dcompiler_43",
+    "d3dx11_43",
+    "d3dcompiler_47"
+   ]
+  },
+  {
+   "title": "Shadows on the Vatican - Act I: Greed",
+   "source": "protonfixes:steam/286360",
+   "appid": 286360
+  },
+  {
+   "title": "Game fix for Re-Volt (287310)",
+   "source": "protonfixes:steam/287310",
+   "appid": 287310,
+   "dll_overrides": {
+    "ddraw": "n",
+    "dinput": "n"
+   }
+  },
+  {
+   "title": "Game fix for Rise of Nations: Extended Edition",
+   "source": "protonfixes:steam/287450",
+   "appid": 287450,
+   "dependencies": [
+    "directmusic",
+    "directplay"
+   ],
+   "fixes": [
+    "winetricks:crypt32"
+   ]
+  },
+  {
+   "title": "Game fix for Endless Legend",
+   "source": "protonfixes:steam/289130",
+   "appid": 289130,
+   "launch_arguments": "-useembedded"
+  },
+  {
+   "title": "Final Fantasy VII Rebirth",
+   "source": "protonfixes:steam/2909400",
+   "appid": 2909400,
+   "fixes": [
+    "import-saves"
+   ]
+  },
+  {
+   "title": "Game fix for Pajama Sam 4: Life is Rough When you Lose your Stuff!",
+   "source": "protonfixes:steam/292820",
+   "appid": 292820,
+   "registry": [
+    {
+     "hive": "HKLM",
+     "key": "System\\\\MountedDevices",
+     "name": "\\\\??\\\\Volume{00000000-0000-0000-0000-000000000052}",
+     "type": "REG_BINARY",
+     "value": "2f746d7000"
+    },
+    {
+     "hive": "HKLM",
+     "key": "System\\\\MountedDevices",
+     "name": "\\\\DosDevices\\\\R:",
+     "type": "REG_BINARY",
+     "value": "5c005c002e005c0064003a000000"
+    }
+   ],
+   "fixes": [
+    "dos-device"
+   ]
+  },
+  {
+   "title": "Game fix for Putt-Putt: Pep's Birthday Surprise",
+   "source": "protonfixes:steam/294700",
+   "appid": 294700,
+   "registry": [
+    {
+     "hive": "HKLM",
+     "key": "System\\\\MountedDevices",
+     "name": "\\\\??\\\\Volume{00000000-0000-0000-0000-000000000052}",
+     "type": "REG_BINARY",
+     "value": "2f746d7000"
+    },
+    {
+     "hive": "HKLM",
+     "key": "System\\\\MountedDevices",
+     "name": "\\\\DosDevices\\\\R:",
+     "type": "REG_BINARY",
+     "value": "5c005c002e005c0064003a000000"
+    }
+   ],
+   "fixes": [
+    "dos-device"
+   ]
+  },
+  {
+   "title": "Game fix for Total Annihilation",
+   "source": "protonfixes:steam/298030",
+   "appid": 298030,
+   "dependencies": [
+    "directplay"
+   ]
+  },
+  {
+   "title": "FarCry 4",
+   "source": "protonfixes:steam/298110",
+   "appid": 298110,
+   "dependencies": [
+    "d3dcompiler_43",
+    "d3dcompiler_47"
+   ]
+  },
+  {
+   "title": "Tex Murphy: Overseer.",
+   "source": "protonfixes:steam/302370",
+   "appid": 302370
+  },
+  {
+   "title": "Game fix for Mortal Kombat X",
+   "source": "protonfixes:steam/307780",
+   "appid": 307780,
+   "fixes": [
+    "winetricks:xact_x64"
+   ]
+  },
+  {
+   "title": "Game fix for Black Ops III",
+   "source": "protonfixes:steam/311210",
+   "appid": 311210
+  },
+  {
+   "title": "Game fix for Zero Escape: Zero Time Dilemma",
+   "source": "protonfixes:steam/311240",
+   "appid": 311240,
+   "dll_overrides": {
+    "libglesv2": ""
+   }
+  },
+  {
+   "title": "Game fix for DEAD OR ALIVE 5 Last Round",
+   "source": "protonfixes:steam/311730",
+   "appid": 311730,
+   "fixes": [
+    "disable-esync",
+    "disable-fsync"
+   ]
+  },
+  {
+   "title": "Game fix for FFXIV Demo",
+   "source": "protonfixes:steam/312060",
+   "conditional": true,
+   "appid": 312060,
+   "fixes": [
+    "call:protonprefix"
+   ]
+  },
+  {
+   "title": "Game fix for Order of Battle: World War II",
+   "source": "protonfixes:steam/312450",
+   "appid": 312450,
+   "dependencies": [
+    "corefonts"
+   ]
+  },
+  {
+   "title": "Game fix for Strange Brigade",
+   "source": "protonfixes:steam/312670",
+   "appid": 312670,
+   "launch_arguments": "-skipdrivercheck -noHDR"
+  },
+  {
+   "title": "Game fix for Dirt 3 Complete Edition",
+   "source": "protonfixes:steam/321040",
+   "appid": 321040,
+   "dependencies": [
+    "openal"
+   ]
+  },
+  {
+   "title": "Game fix for Potatoman Seeks the Troof",
+   "source": "protonfixes:steam/328500",
+   "conditional": true,
+   "appid": 328500,
+   "fixes": [
+    "call:protonprefix"
+   ]
+  },
+  {
+   "title": "Game fix Stealth Inc 2: A Game of Clones",
+   "source": "protonfixes:steam/329380",
+   "appid": 329380,
+   "dependencies": [
+    "dsound"
+   ]
+  },
+  {
+   "title": "Game fix for Assassin's Creed 2",
+   "source": "protonfixes:steam/33230",
+   "appid": 33230,
+   "fixes": [
+    "winetricks:ubisoftconnect"
+   ]
+  },
+  {
+   "title": "Zeit²",
+   "source": "protonfixes:steam/33390",
+   "conditional": true,
+   "appid": 33390,
+   "dependencies": [
+    "dotnet48"
+   ]
+  },
+  {
+   "title": "Game fix for Akiba's Trip: Undead & Undressed",
+   "source": "protonfixes:steam/333980",
+   "appid": 333980
+  },
+  {
+   "title": "Game fix for From Dust",
+   "source": "protonfixes:steam/33460",
+   "appid": 33460,
+   "fixes": [
+    "disable-esync",
+    "disable-fsync"
+   ]
+  },
+  {
+   "title": "Total War: Shogun 2",
+   "source": "protonfixes:steam/34330",
+   "appid": 34330,
+   "dependencies": [
+    "d3dcompiler_43"
+   ]
+  },
+  {
+   "title": "Game fix for The Fruit of Grisaia (345610).",
+   "source": "protonfixes:steam/345610",
+   "conditional": true,
+   "appid": 345610
+  },
+  {
+   "title": "Mod support for Stellar Blade",
+   "source": "protonfixes:steam/3489700",
+   "conditional": true,
+   "appid": 3489700,
+   "dll_overrides": {
+    "dwmapi": "n,b"
+   },
+   "fixes": [
+    "call:get_game_install_path"
+   ]
+  },
+  {
+   "title": "Game fix for Mini Ninjas",
+   "source": "protonfixes:steam/35000",
+   "appid": 35000,
+   "dependencies": [
+    "openal"
+   ]
+  },
+  {
+   "title": "Wuthering Waves - ID 3513350",
+   "source": "protonfixes:steam/3513350",
+   "appid": 3513350,
+   "dependencies": [
+    "corefonts"
+   ],
+   "env": {
+    "SteamOS": "",
+    "SteamDeck": ""
+   },
+   "fixes": [
+    "winetricks:fakechinese",
+    "winetricks:sourcehansans"
+   ]
+  },
+  {
+   "title": "Hyperdimension Neptunia Re;Birth2",
+   "source": "protonfixes:steam/351710",
+   "appid": 351710
+  },
+  {
+   "title": "Warhammer 40,000: Dawn of War - Definitive Edition",
+   "source": "protonfixes:steam/3556750",
+   "appid": 3556750,
+   "dependencies": [
+    "ucrtbase2019"
+   ]
+  },
+  {
+   "title": "Game fix for STAR WARS Galactic Battlegrounds Saga",
+   "source": "protonfixes:steam/356500",
+   "appid": 356500,
+   "dependencies": [
+    "icodecs",
+    "directplay"
+   ]
+  },
+  {
+   "title": "Game fix for Plants vs. Zombies: Game of the Year",
+   "source": "protonfixes:steam/3590",
+   "conditional": true,
+   "appid": 3590,
+   "launch_arguments": "-changedir",
+   "fixes": [
+    "call:get_game_install_path",
+    "call:protonprefix"
+   ]
+  },
+  {
+   "title": "Game fix for Rainbow Six Siege",
+   "source": "protonfixes:steam/359550",
+   "appid": 359550,
+   "fixes": [
+    "winetricks:ubisoftconnect"
+   ]
+  },
+  {
+   "title": "Game fix for FFX/X-2 HD Remaster",
+   "source": "protonfixes:steam/359870",
+   "conditional": true,
+   "appid": 359870,
+   "fixes": [
+    "call:protonprefix"
+   ]
+  },
+  {
+   "title": "Metal Slug",
+   "source": "protonfixes:steam/366250",
+   "appid": 366250,
+   "dependencies": [
+    "d3dcompiler_46"
+   ]
+  },
+  {
+   "title": "Game fix for Blade & Soul NEO",
+   "source": "protonfixes:steam/3669060",
+   "conditional": true,
+   "appid": 3669060,
+   "dependencies": [
+    "dotnet48"
+   ]
+  },
+  {
+   "title": "Game fix for Dragon's Dogma: Dark Arisen",
+   "source": "protonfixes:steam/367500",
+   "appid": 367500,
+   "env": {
+    "SDL_JOYSTICK_HIDAPI": "0"
+   }
+  },
+  {
+   "title": "Game fix for Blue Protocol: Star Resonance",
+   "source": "protonfixes:steam/3681810",
+   "appid": 3681810,
+   "windows_version": "win7"
+  },
+  {
+   "title": "Game fix for Assassin's Creed: Syndicate",
+   "source": "protonfixes:steam/368500",
+   "appid": 368500,
+   "fixes": [
+    "disable-nvapi",
+    "winetricks:ubisoftconnect"
+   ]
+  },
+  {
+   "title": "Far Cry Primal",
+   "source": "protonfixes:steam/371660",
+   "appid": 371660,
+   "fixes": [
+    "cpu-limit"
+   ]
+  },
+  {
+   "title": "Game fix Tree Of Savior",
+   "source": "protonfixes:steam/372000",
+   "appid": 372000,
+   "dependencies": [
+    "d3dcompiler_47",
+    "vcrun2013",
+    "vcrun2022"
+   ]
+  },
+  {
+   "title": "Game fix for Trackmania Turbo",
+   "source": "protonfixes:steam/375900",
+   "appid": 375900,
+   "fixes": [
+    "winetricks:ubisoftconnect"
+   ]
+  },
+  {
+   "title": "Mod support for following Bethesda games:",
+   "source": "protonfixes:steam/377160",
+   "conditional": true,
+   "appid": 377160
+  },
+  {
+   "title": "Game fix for FINAL FANTASY IX",
+   "source": "protonfixes:steam/377840",
+   "appid": 377840
+  },
+  {
+   "title": "Shadows on the Vatican - Act II: Wrath",
+   "source": "protonfixes:steam/378630",
+   "appid": 378630
+  },
+  {
+   "title": "Game fix for Doom 2016",
+   "source": "protonfixes:steam/379720",
+   "conditional": true,
+   "appid": 379720,
+   "launch_arguments": "+r_renderAPI 1",
+   "fixes": [
+    "call:move",
+    "winetricks:mfc140"
+   ]
+  },
+  {
+   "title": "Game fix for Smite",
+   "source": "protonfixes:steam/386360",
+   "conditional": true,
+   "appid": 386360,
+   "fixes": [
+    "call:get_game_install_path"
+   ]
+  },
+  {
+   "title": "Game fix for SUGURI 2",
+   "source": "protonfixes:steam/390710",
+   "appid": 390710,
+   "fixes": [
+    "winetricks:d3dxof"
+   ]
+  },
+  {
+   "title": "Game fix for Dungeon Siege",
+   "source": "protonfixes:steam/39190",
+   "appid": 39190,
+   "dependencies": [
+    "directplay"
+   ],
+   "launch_arguments": "Zonematch=true"
+  },
+  {
+   "title": "Game fix for Dungeon Siege II",
+   "source": "protonfixes:steam/39200",
+   "appid": 39200,
+   "dependencies": [
+    "directplay"
+   ]
+  },
+  {
+   "title": "Game fix for FFXIV",
+   "source": "protonfixes:steam/39210",
+   "conditional": true,
+   "appid": 39210,
+   "fixes": [
+    "call:protonprefix"
+   ]
+  },
+  {
+   "title": "Escape From Tarkov",
+   "source": "protonfixes:steam/3932890",
+   "conditional": true,
+   "appid": 3932890,
+   "dependencies": [
+    "dotnet48"
+   ],
+   "registry": [
+    {
+     "hive": "HKLM",
+     "key": "System\\\\CurrentControlSet\\\\Services\\\\BEService",
+     "name": "DisplayName",
+     "type": "REG_SZ",
+     "value": "BattlEye Service"
+    },
+    {
+     "hive": "HKLM",
+     "key": "System\\\\CurrentControlSet\\\\Services\\\\BEService",
+     "name": "ErrorControl",
+     "type": "REG_DWORD",
+     "value": "1"
+    },
+    {
+     "hive": "HKLM",
+     "key": "System\\\\CurrentControlSet\\\\Services\\\\BEService",
+     "name": "ObjectName",
+     "type": "REG_SZ",
+     "value": "LocalSystem"
+    },
+    {
+     "hive": "HKLM",
+     "key": "System\\\\CurrentControlSet\\\\Services\\\\BEService",
+     "name": "ImagePath",
+     "type": "REG_SZ",
+     "value": "C:\\\\Program Files (x86)\\\\Common Files\\\\BattlEye\\\\BEService_x64.exe"
+    },
+    {
+     "hive": "HKLM",
+     "key": "System\\\\CurrentControlSet\\\\Services\\\\BEService",
+     "name": "PreshutdownTimeout",
+     "type": "REG_DWORD",
+     "value": "180000"
+    },
+    {
+     "hive": "HKLM",
+     "key": "System\\\\CurrentControlSet\\\\Services\\\\BEService",
+     "name": "Start",
+     "type": "REG_DWORD",
+     "value": "2"
+    },
+    {
+     "hive": "HKLM",
+     "key": "System\\\\CurrentControlSet\\\\Services\\\\BEService",
+     "name": "Type",
+     "type": "REG_DWORD",
+     "value": "16"
+    },
+    {
+     "hive": "HKLM",
+     "key": "System\\\\CurrentControlSet\\\\Services\\\\BEService",
+     "name": "WOW64",
+     "type": "REG_DWORD",
+     "value": "1"
+    }
+   ],
+   "launch_arguments": "--disable-software-rasterizer",
+   "fixes": [
+    "battleye",
+    "call:copytree",
+    "call:get_game_install_path",
+    "call:protonprefix"
+   ]
+  },
+  {
+   "title": "Game fix for Gothic 3 (and Forsaken Gods Enhanced Edition)",
+   "source": "protonfixes:steam/39500",
+   "appid": 39500,
+   "fixes": [
+    "ini-options"
+   ]
+  },
+  {
+   "title": "Game fix for Duet Night Abyss",
+   "source": "protonfixes:steam/3950020",
+   "conditional": true,
+   "appid": 3950020,
+   "dll_overrides": {
+    "dcomp": "",
+    "libglesv2": ""
+   }
+  },
+  {
+   "title": "Game fix for Gothic 1 Classic",
+   "source": "protonfixes:steam/39510",
+   "conditional": true,
+   "appid": 39510,
+   "dependencies": [
+    "directmusic"
+   ],
+   "dll_overrides": {
+    "*dsound": "b",
+    "ddraw": "n,b",
+    "dinput": "n,b"
+   },
+   "fixes": [
+    "ini-options"
+   ]
+  },
+  {
+   "title": "Game fix for SpellForce",
+   "source": "protonfixes:steam/39540",
+   "appid": 39540,
+   "dependencies": [
+    "directplay"
+   ]
+  },
+  {
+   "title": "Game fix for SpellForce",
+   "source": "protonfixes:steam/39550",
+   "appid": 39550,
+   "dependencies": [
+    "directplay"
+   ]
+  },
+  {
+   "title": "Game fix for Borderlands 3",
+   "source": "protonfixes:steam/397540",
+   "appid": 397540,
+   "dependencies": [
+    "d3dcompiler_47",
+    "vcrun2022"
+   ]
+  },
+  {
+   "title": "Game fix for Super Meat Boy",
+   "source": "protonfixes:steam/40800",
+   "appid": 40800,
+   "dependencies": [
+    "d3dcompiler_47",
+    "xact"
+   ]
+  },
+  {
+   "title": "The Big Secret of a Small Town",
+   "source": "protonfixes:steam/409090",
+   "conditional": true,
+   "appid": 409090,
+   "dependencies": [
+    "dgvoodoo2"
+   ],
+   "fixes": [
+    "call:copy",
+    "call:protonprefix"
+   ]
+  },
+  {
+   "title": "Game fix for Stronghold HD",
+   "source": "protonfixes:steam/40950",
+   "appid": 40950,
+   "dependencies": [
+    "directplay"
+   ]
+  },
+  {
+   "title": "Game fix for Stronghold Crusader HD",
+   "source": "protonfixes:steam/40970",
+   "appid": 40970,
+   "dependencies": [
+    "directplay"
+   ]
+  },
+  {
+   "title": "Game fix for BioShock 2 Remastered",
+   "source": "protonfixes:steam/409710",
+   "appid": 409710,
+   "registry": [
+    {
+     "hive": "HKLM",
+     "key": "System\\\\CurrentControlSet\\\\Services\\\\winebus",
+     "name": "DisableHidraw",
+     "type": "REG_DWORD",
+     "value": "1"
+    }
+   ],
+   "fixes": [
+    "disable-esync",
+    "disable-fsync"
+   ]
+  },
+  {
+   "title": "Game fix for BioShock 2 Remastered",
+   "source": "protonfixes:steam/409720",
+   "appid": 409720,
+   "registry": [
+    {
+     "hive": "HKLM",
+     "key": "System\\\\CurrentControlSet\\\\Services\\\\winebus",
+     "name": "DisableHidraw",
+     "type": "REG_DWORD",
+     "value": "1"
+    }
+   ],
+   "fixes": [
+    "disable-esync",
+    "disable-fsync"
+   ]
+  },
+  {
+   "title": "Game fix for Forts",
+   "source": "protonfixes:steam/410900",
+   "appid": 410900,
+   "fixes": [
+    "winetricks:ole32"
+   ]
+  },
+  {
+   "title": "Game fix for Little Nightmares",
+   "source": "protonfixes:steam/424840",
+   "appid": 424840,
+   "launch_arguments": "-onethread"
+  },
+  {
+   "title": "Deliver us the Moon fix",
+   "source": "protonfixes:steam/428660",
+   "appid": 428660
+  },
+  {
+   "title": "Game fix for Sword of the Stars",
+   "source": "protonfixes:steam/42890",
+   "appid": 42890,
+   "dependencies": [
+    "d3dcompiler_42"
+   ],
+   "fixes": [
+    "winetricks:d3dx9_31",
+    "winetricks:d3dx9_42"
+   ]
+  },
+  {
+   "title": "Game fix for IMSCARED",
+   "source": "protonfixes:steam/429720",
+   "conditional": true,
+   "appid": 429720,
+   "fixes": [
+    "call:protonprefix"
+   ]
+  },
+  {
+   "title": "Game fix for Metro 2033",
+   "source": "protonfixes:steam/43110",
+   "appid": 43110,
+   "dependencies": [
+    "d3dcompiler_42"
+   ]
+  },
+  {
+   "title": "Game fix for The Legend of Heroes: Trails in the Sky the 3rd.",
+   "source": "protonfixes:steam/436670",
+   "conditional": true,
+   "appid": 436670,
+   "fixes": [
+    "call:protonprefix"
+   ]
+  },
+  {
+   "title": "Game fix for VRChat.",
+   "source": "protonfixes:steam/438100",
+   "conditional": true,
+   "appid": 438100,
+   "fixes": [
+    "call:protonprefix"
+   ]
+  },
+  {
+   "title": "Game fix for Conan Exiles",
+   "source": "protonfixes:steam/440900",
+   "appid": 440900,
+   "launch_arguments": "-BattlEye",
+   "fixes": [
+    "battleye"
+   ]
+  },
+  {
+   "title": "Game fix for GT Legends",
+   "source": "protonfixes:steam/44690",
+   "appid": 44690,
+   "dependencies": [
+    "mfc42"
+   ]
+  },
+  {
+   "title": "Game fix for Watch_Dogs 2",
+   "source": "protonfixes:steam/447040",
+   "appid": 447040,
+   "launch_arguments": "-eac_launcher -nosplash"
+  },
+  {
+   "title": "Game fix for Flowers - Le Volume Sur Printemps",
+   "source": "protonfixes:steam/452440",
+   "conditional": true,
+   "appid": 452440,
+   "fixes": [
+    "call:get_game_install_path",
+    "call:protondir",
+    "call:protonprefix"
+   ]
+  },
+  {
+   "title": "Game fix for Transformers: War for Cybertron",
+   "source": "protonfixes:steam/4560",
+   "appid": 4560,
+   "dependencies": [
+    "physx"
+   ]
+  },
+  {
+   "title": "Game fix for Lost Planet 2 (2010)",
+   "source": "protonfixes:steam/45750",
+   "appid": 45750,
+   "fixes": [
+    "cpu-limit",
+    "winetricks:xliveless"
+   ]
+  },
+  {
+   "title": "Game fix for Ghost Recon WIldlands",
+   "source": "protonfixes:steam/460930",
+   "appid": 460930,
+   "fixes": [
+    "winetricks:ubisoftconnect"
+   ]
+  },
+  {
+   "title": "Game fix for Syberia",
+   "source": "protonfixes:steam/46500",
+   "conditional": true,
+   "appid": 46500
+  },
+  {
+   "title": "Game fix for Yesterday Origins",
+   "source": "protonfixes:steam/465280",
+   "appid": 465280,
+   "windows_version": "win7"
+  },
+  {
+   "title": "The Last Blade",
+   "source": "protonfixes:steam/465840",
+   "appid": 465840,
+   "dependencies": [
+    "d3dcompiler_46"
+   ]
+  },
+  {
+   "title": "Outrun 2006: Coast 2 Coast",
+   "source": "protonfixes:steam/4730",
+   "appid": 4730,
+   "dependencies": [
+    "d3dx9"
+   ]
+  },
+  {
+   "title": "Game fix for Assassin's Creed: Brotherhood",
+   "source": "protonfixes:steam/48190",
+   "appid": 48190,
+   "launch_arguments": "-playoffline"
+  },
+  {
+   "title": "Mod support for following Bethesda games:",
+   "source": "protonfixes:steam/489830",
+   "conditional": true,
+   "appid": 489830
+  },
+  {
+   "title": "Game fix for Borderlands 2",
+   "source": "protonfixes:steam/49520",
+   "appid": 49520,
+   "dependencies": [
+    "physx"
+   ],
+   "launch_arguments": "-NoSplash",
+   "fixes": [
+    "disable-esync"
+   ]
+  },
+  {
+   "title": "Game fix for State of Decay 2",
+   "source": "protonfixes:steam/495420",
+   "appid": 495420,
+   "windows_version": "win7",
+   "dependencies": [
+    "d3dcompiler_47"
+   ]
+  },
+  {
+   "title": "Gabriel Knight 3: Blood of the Sacred, Blood of the Damned",
+   "source": "protonfixes:steam/497360",
+   "conditional": true,
+   "appid": 497360,
+   "registry": [
+    {
+     "hive": "HKCU",
+     "key": "Software\\\\Sierra On-Line\\\\Gabriel Knight 3\\\\App",
+     "name": "Run Count",
+     "type": "REG_DWORD",
+     "value": "0x1"
+    },
+    {
+     "hive": "HKCU",
+     "key": "Software\\\\Sierra On-Line\\\\Gabriel Knight 3\\\\Engine",
+     "name": "Full Screen",
+     "type": "REG_DWORD",
+     "value": "0x1"
+    },
+    {
+     "hive": "HKCU",
+     "key": "Software\\\\Sierra On-Line\\\\Gabriel Knight 3\\\\Engine",
+     "name": "Monitor",
+     "type": "REG_DWORD",
+     "value": "0x0"
+    },
+    {
+     "hive": "HKCU",
+     "key": "Software\\\\Sierra On-Line\\\\Gabriel Knight 3\\\\Engine",
+     "name": "Rasterizer",
+     "type": "REG_SZ",
+     "value": "detect"
+    },
+    {
+     "hive": "HKCU",
+     "key": "Software\\\\Sierra On-Line\\\\Gabriel Knight 3\\\\Engine",
+     "name": "Rasterizer GUID",
+     "type": "REG_SZ",
+     "value": "{00000000-0000-0000-0000-000000000000}"
+    },
+    {
+     "hive": "HKCU",
+     "key": "Software\\\\Sierra On-Line\\\\Gabriel Knight 3\\\\Engine",
+     "name": "Screen Height",
+     "type": "REG_DWORD",
+     "value": "0x300"
+    },
+    {
+     "hive": "HKCU",
+     "key": "Software\\\\Sierra On-Line\\\\Gabriel Knight 3\\\\Engine\\\\Hardware",
+     "name": "Gamma",
+     "type": "REG_SZ",
+     "value": "1.5"
+    },
+    {
+     "hive": "HKCU",
+     "key": "Software\\\\Sierra On-Line\\\\Gabriel Knight 3\\\\Engine\\\\Hardware",
+     "name": "Surface Quality",
+     "type": "REG_SZ",
+     "value": "High"
+    }
+   ],
+   "fixes": [
+    "dos-device"
+   ]
+  },
+  {
+   "title": "Game fix for Plain Sight",
+   "source": "protonfixes:steam/49900",
+   "appid": 49900,
+   "dependencies": [
+    "xna31"
+   ]
+  },
+  {
+   "title": "Game fix for Darksiders",
+   "source": "protonfixes:steam/50620",
+   "appid": 50620,
+   "dependencies": [
+    "d3dcompiler_42",
+    "d3dcompiler_43",
+    "d3dcompiler_46",
+    "d3dcompiler_47"
+   ]
+  },
+  {
+   "title": "Shadows of Adam",
+   "source": "protonfixes:steam/506510",
+   "appid": 506510,
+   "dll_overrides": {
+    "dcomp": ""
+   }
+  },
+  {
+   "title": "Game fix for Crashday Redline Edition",
+   "source": "protonfixes:steam/508980",
+   "conditional": true,
+   "appid": 508980,
+   "fixes": [
+    "call:protonprefix"
+   ]
+  },
+  {
+   "title": "The Hunter: Call of the Wild",
+   "source": "protonfixes:steam/518790",
+   "appid": 518790,
+   "fixes": [
+    "disable-nvapi"
+   ]
+  },
+  {
+   "title": "Game fix for Outlaws + A Handful of Missions",
+   "source": "protonfixes:steam/559620",
+   "appid": 559620,
+   "dll_overrides": {
+    "ddraw": "n,b",
+    "winmm": "n,b"
+   }
+  },
+  {
+   "title": "Game fix Dark Souls Remastered",
+   "source": "protonfixes:steam/570940",
+   "appid": 570940,
+   "dependencies": [
+    "vcrun2017"
+   ]
+  },
+  {
+   "title": "Game fix for Black Desert Online",
+   "source": "protonfixes:steam/582660",
+   "conditional": true,
+   "appid": 582660,
+   "env": {
+    "WINE_DISABLE_KERNEL_WRITEWATCH": "1"
+   },
+   "fixes": [
+    "call:protonprefix"
+   ]
+  },
+  {
+   "title": "Game fix for PixARK",
+   "source": "protonfixes:steam/593600",
+   "appid": 593600,
+   "dll_overrides": {
+    "mprapi": "n"
+   }
+  },
+  {
+   "title": "Yu-Gi-Oh Duel Links needs vcrun2019",
+   "source": "protonfixes:steam/601510",
+   "appid": 601510,
+   "dependencies": [
+    "vcrun2019"
+   ]
+  },
+  {
+   "title": "Game fix for Star Wars Jedi Knight: Jedi Academy",
+   "source": "protonfixes:steam/6020",
+   "appid": 6020
+  },
+  {
+   "title": "Game fix for Star Wars Jedi Knight II: Jedi Outcast",
+   "source": "protonfixes:steam/6030",
+   "appid": 6030
+  },
+  {
+   "title": "Game fix for Age of Wonders",
+   "source": "protonfixes:steam/61500",
+   "appid": 61500,
+   "dependencies": [
+    "icodecs"
+   ]
+  },
+  {
+   "title": "Ducati World Championship",
+   "source": "protonfixes:steam/6270",
+   "appid": 6270,
+   "dependencies": [
+    "icodecs"
+   ]
+  },
+  {
+   "title": "Game fix Injustice 2",
+   "source": "protonfixes:steam/627270",
+   "appid": 627270,
+   "dependencies": [
+    "vcrun2019"
+   ]
+  },
+  {
+   "title": "Alter Ego",
+   "source": "protonfixes:steam/63110",
+   "appid": 63110,
+   "env": {
+    "SDL_VIDEO_MINIMIZE_ON_FOCUS_LOSS": "0"
+   },
+   "launch_arguments": "AlterEgo.ebr"
+  },
+  {
+   "title": "Game fix for Naruto To Boruto",
+   "source": "protonfixes:steam/633230",
+   "appid": 633230,
+   "launch_arguments": "-eac-nop-loaded"
+  },
+  {
+   "title": "Game fix for BIT.TRIP BEAT",
+   "source": "protonfixes:steam/63700",
+   "appid": 63700,
+   "dependencies": [
+    "d3dcompiler_43",
+    "d3dx9_43"
+   ]
+  },
+  {
+   "title": "Game fix for BIT.TRIP RUNNER",
+   "source": "protonfixes:steam/63710",
+   "appid": 63710,
+   "dependencies": [
+    "openal",
+    "d3dcompiler_43",
+    "d3dx9_43"
+   ],
+   "dll_overrides": {
+    "d3dx9_43": "n",
+    "d3dcompiler_43": "n"
+   }
+  },
+  {
+   "title": "Game fix for Yakuza 0",
+   "source": "protonfixes:steam/638970",
+   "appid": 638970,
+   "fixes": [
+    "disable-fsync"
+   ]
+  },
+  {
+   "title": "They Are Billions",
+   "source": "protonfixes:steam/644930",
+   "appid": 644930,
+   "dependencies": [
+    "gdiplus"
+   ],
+   "env": {
+    "WINE_MONO_HIDETYPES": "1"
+   }
+  },
+  {
+   "title": "LEGO® Marvel Super Heroes 2",
+   "source": "protonfixes:steam/647830",
+   "appid": 647830,
+   "fixes": [
+    "cpu-limit"
+   ]
+  },
+  {
+   "title": "Game fix for SpellForce",
+   "source": "protonfixes:steam/65530",
+   "appid": 65530,
+   "dependencies": [
+    "directplay"
+   ]
+  },
+  {
+   "title": "Game fix for Gothic 1 Classic",
+   "source": "protonfixes:steam/65540",
+   "conditional": true,
+   "appid": 65540,
+   "dependencies": [
+    "directmusic"
+   ],
+   "dll_overrides": {
+    "*dsound": "b",
+    "ddraw": "n,b",
+    "dinput": "n,b"
+   },
+   "fixes": [
+    "ini-options"
+   ]
+  },
+  {
+   "title": "Game fix for Gothic 3 (and Forsaken Gods Enhanced Edition)",
+   "source": "protonfixes:steam/65600",
+   "appid": 65600,
+   "fixes": [
+    "ini-options"
+   ]
+  },
+  {
+   "title": "Skeleton Boomerang",
+   "source": "protonfixes:steam/658150",
+   "appid": 658150,
+   "dependencies": [
+    "d3dcompiler_43"
+   ]
+  },
+  {
+   "title": "Game fix for The Bureau: XCOM Declassified",
+   "source": "protonfixes:steam/65930",
+   "appid": 65930,
+   "fixes": [
+    "disable-esync",
+    "disable-fsync"
+   ]
+  },
+  {
+   "title": "Game fix for DRAGON BALL FighterZ",
+   "source": "protonfixes:steam/678950",
+   "appid": 678950,
+   "launch_arguments": "-eac-nop-loaded"
+  },
+  {
+   "title": "Deus Ex: Invisible War",
+   "source": "protonfixes:steam/6920",
+   "appid": 6920,
+   "dependencies": [
+    "dsound"
+   ]
+  },
+  {
+   "title": "Game fix for Evil Genius 2",
+   "source": "protonfixes:steam/700600",
+   "appid": 700600
+  },
+  {
+   "title": "Game fix for Recettear: An Item Shop's Tale",
+   "source": "protonfixes:steam/70400",
+   "appid": 70400,
+   "dependencies": [
+    "dmime",
+    "dmsynth",
+    "dsound",
+    "dswave"
+   ],
+   "dll_overrides": {
+    "streamci": "n"
+   },
+   "fixes": [
+    "winetricks:dmloader",
+    "winetricks:dmusic"
+   ]
+  },
+  {
+   "title": "Game fix for Chantelise - A Tale of Two Sisters",
+   "source": "protonfixes:steam/70420",
+   "appid": 70420,
+   "dependencies": [
+    "dmime",
+    "dmsynth",
+    "dsound",
+    "dswave"
+   ],
+   "dll_overrides": {
+    "streamci": "n"
+   },
+   "fixes": [
+    "winetricks:dmloader",
+    "winetricks:dmusic"
+   ]
+  },
+  {
+   "title": "Game fix for Worms: Blast",
+   "source": "protonfixes:steam/70650",
+   "appid": 70650,
+   "dependencies": [
+    "directmusic"
+   ]
+  },
+  {
+   "title": "Mod support for following Bethesda games:",
+   "source": "protonfixes:steam/72850",
+   "conditional": true,
+   "appid": 72850
+  },
+  {
+   "title": "Borderlands GOTY",
+   "source": "protonfixes:steam/729040",
+   "appid": 729040
+  },
+  {
+   "title": "Escape From Monkey Island",
+   "source": "protonfixes:steam/730830",
+   "appid": 730830,
+   "dependencies": [
+    "dgvoodoo2"
+   ]
+  },
+  {
+   "title": "Shadow of the Tomb Raider",
+   "source": "protonfixes:steam/750920",
+   "appid": 750920,
+   "dependencies": [
+    "d3dcompiler_47"
+   ]
+  },
+  {
+   "title": "X-Blades",
+   "source": "protonfixes:steam/7510",
+   "appid": 7510
+  },
+  {
+   "title": "Game fix for BioShock 2 Remastered",
+   "source": "protonfixes:steam/7670",
+   "appid": 7670,
+   "registry": [
+    {
+     "hive": "HKLM",
+     "key": "System\\\\CurrentControlSet\\\\Services\\\\winebus",
+     "name": "DisableHidraw",
+     "type": "REG_DWORD",
+     "value": "1"
+    }
+   ],
+   "fixes": [
+    "disable-esync",
+    "disable-fsync"
+   ]
+  },
+  {
+   "title": "Exo One",
+   "source": "protonfixes:steam/773370",
+   "appid": 773370,
+   "dependencies": [
+    "d3dcompiler_47"
+   ]
+  },
+  {
+   "title": "Game fix for Bejeweled 3",
+   "source": "protonfixes:steam/78000",
+   "appid": 78000
+  },
+  {
+   "title": "DOOM Eternal",
+   "source": "protonfixes:steam/782330",
+   "appid": 782330,
+   "launch_arguments": "+com_skipSignInManager 1"
+  },
+  {
+   "title": "Game fix for Cryostasis",
+   "source": "protonfixes:steam/7850",
+   "appid": 7850,
+   "dependencies": [
+    "physx"
+   ]
+  },
+  {
+   "title": "Game fix Age of Empires II: DE",
+   "source": "protonfixes:steam/813780",
+   "appid": 813780,
+   "dependencies": [
+    "vcrun2019"
+   ]
+  },
+  {
+   "title": "Game fix for JUMP FORCE",
+   "source": "protonfixes:steam/816020",
+   "appid": 816020,
+   "launch_arguments": "-eac-nop-loaded"
+  },
+  {
+   "title": "Just Cause 2",
+   "source": "protonfixes:steam/8190",
+   "appid": 8190,
+   "dependencies": [
+    "d3dcompiler_43",
+    "d3dcompiler_47"
+   ],
+   "launch_arguments": "-borderless",
+   "fixes": [
+    "winetricks:d3dx10"
+   ]
+  },
+  {
+   "title": "Game fix for Yakuza Kiwami",
+   "source": "protonfixes:steam/834530",
+   "appid": 834530,
+   "fixes": [
+    "disable-fsync"
+   ]
+  },
+  {
+   "title": "Game fix for BioShock 2 Remastered",
+   "source": "protonfixes:steam/8850",
+   "appid": 8850,
+   "registry": [
+    {
+     "hive": "HKLM",
+     "key": "System\\\\CurrentControlSet\\\\Services\\\\winebus",
+     "name": "DisableHidraw",
+     "type": "REG_DWORD",
+     "value": "1"
+    }
+   ],
+   "fixes": [
+    "disable-esync",
+    "disable-fsync"
+   ]
+  },
+  {
+   "title": "Game fix Catherine Classic",
+   "source": "protonfixes:steam/893180",
+   "appid": 893180,
+   "dependencies": [
+    "d3dcompiler_43",
+    "d3dcompiler_47"
+   ]
+  },
+  {
+   "title": "Project Wingman",
+   "source": "protonfixes:steam/895870",
+   "appid": 895870,
+   "dependencies": [
+    "d3dcompiler_47"
+   ]
+  },
+  {
+   "title": "Game fix for Return to Castle Wolfenstein",
+   "source": "protonfixes:steam/9010",
+   "appid": 9010
+  },
+  {
+   "title": "Game fix for Conception PLUS: Maidens of the Twelve Stars",
+   "source": "protonfixes:steam/906510",
+   "appid": 906510,
+   "dependencies": [
+    "d3dcompiler_47"
+   ]
+  },
+  {
+   "title": "Game fix for Rebel Galaxy Outlaw",
+   "source": "protonfixes:steam/910830",
+   "appid": 910830,
+   "dependencies": [
+    "mfc42"
+   ]
+  },
+  {
+   "title": "Game fix for WORLD OF HORROR",
+   "source": "protonfixes:steam/913740",
+   "appid": 913740,
+   "fixes": [
+    "disable-esync"
+   ]
+  },
+  {
+   "title": "Anno 1800",
+   "source": "protonfixes:steam/916440",
+   "appid": 916440,
+   "fixes": [
+    "winetricks:ubisoftconnect"
+   ]
+  },
+  {
+   "title": "Game fix for Supreme Commander",
+   "source": "protonfixes:steam/9350",
+   "appid": 9350,
+   "fixes": [
+    "disable-esync",
+    "disable-fsync"
+   ]
+  },
+  {
+   "title": "Game fix for Supreme Commander",
+   "source": "protonfixes:steam/9420",
+   "appid": 9420,
+   "fixes": [
+    "disable-esync",
+    "disable-fsync"
+   ]
+  },
+  {
+   "title": "Game fix for Gothic Playable Teaser",
+   "source": "protonfixes:steam/950670",
+   "conditional": true,
+   "appid": 950670,
+   "fixes": [
+    "ini-options"
+   ]
+  },
+  {
+   "title": "Bright Memory",
+   "source": "protonfixes:steam/955050",
+   "appid": 955050,
+   "fixes": [
+    "disable-nvapi"
+   ]
+  },
+  {
+   "title": "Game fix for Dungeon Town.",
+   "source": "protonfixes:steam/959880",
+   "appid": 959880,
+   "env": {
+    "LC_ALL": "C.UTF-8"
+   }
+  },
+  {
+   "title": "Contractors VR",
+   "source": "protonfixes:steam/963930",
+   "appid": 963930,
+   "dependencies": [
+    "vcrun2022"
+   ]
+  },
+  {
+   "title": "The Blind Prophet",
+   "source": "protonfixes:steam/968370",
+   "appid": 968370,
+   "dependencies": [
+    "segoe_script"
+   ],
+   "dll_overrides": {
+    "d3d9": ""
+   }
+  },
+  {
+   "title": "Game fix Mortal Kombat 11",
+   "source": "protonfixes:steam/976310",
+   "appid": 976310,
+   "dependencies": [
+    "vcrun2019"
+   ]
+  },
+  {
+   "title": "Game fix Halo:MCC",
+   "source": "protonfixes:steam/976730",
+   "appid": 976730,
+   "dependencies": [
+    "vcrun2019"
+   ]
+  },
+  {
+   "title": "Game fix for Star Trek Online launcher",
+   "source": "protonfixes:steam/9900",
+   "appid": 9900,
+   "dependencies": [
+    "d3dcompiler_47"
+   ]
+  },
+  {
+   "title": "Death end re;Quest",
+   "source": "protonfixes:steam/990050",
+   "appid": 990050,
+   "fixes": [
+    "cpu-limit"
+   ]
+  },
+  {
+   "title": "Game fix Marvel's Avengers",
+   "source": "protonfixes:steam/997070",
+   "appid": 997070,
+   "dependencies": [
+    "vcrun2019",
+    "d3dcompiler_47"
+   ]
+  }
+ ]
+}

@@ -1,0 +1,1317 @@
+{
+  "schema": 1,
+  "updated": "2026-10-01",
+  "_comment": "Madeira dependency catalogue. Each entry says what a Windows component is, how it can be satisfied on Madeira's iOS/Wine stack, and the exact Wine-side action that satisfies it. 'support' is about Madeira, not about upstream Wine: builtin = Wine/DXMT already provides it; override = only DLL overrides / registry / environment / Windows version are needed; payload = needs native DLL files (bundled or dropped in Documents/madeira-compat/dlls); manual = needs running a separate Windows installer, not attempted yet; partial = some titles work; unsupported = cannot work on iOS. Sources: Winetricks verbs, Bottles dependencies, Protonfixes game scripts.",
+  "dependencies": {
+    "vcrun6": {
+      "title": "Visual C++ 6 runtime",
+      "kind": "vcredist",
+      "support": "payload",
+      "summary": "Visual C++ 6 SP4 libraries (msvcrt, mfc42, msvcp60).",
+      "imports": [
+        "msvcrt",
+        "msvcp60",
+        "mfc42"
+      ],
+      "dlls": [
+        "mfc42.dll",
+        "msvcrt.dll",
+        "msvcp60.dll"
+      ],
+      "dll_overrides": {
+        "mfc42": "n,b",
+        "msvcp60": "n,b"
+      },
+      "notes": "Wine ships msvcrt and a partial mfc42; games that ship their own mfc42 in the install folder load it first anyway.",
+      "source": "winetricks:vcrun6"
+    },
+    "vcrun2005": {
+      "title": "Visual C++ 2005 runtime",
+      "kind": "vcredist",
+      "support": "payload",
+      "summary": "Visual C++ 2005 libraries (mfc80, msvcp80, msvcr80).",
+      "imports": [
+        "msvcr80",
+        "msvcp80",
+        "mfc80"
+      ],
+      "dlls": [
+        "msvcr80.dll",
+        "msvcp80.dll",
+        "mfc80.dll"
+      ],
+      "dll_overrides": {
+        "msvcr80": "n,b",
+        "msvcp80": "n,b",
+        "mfc80": "n,b"
+      },
+      "notes": "Wine has no msvcr80/msvcp80 builtin; native DLLs are needed.",
+      "source": "winetricks:vcrun2005"
+    },
+    "vcrun2008": {
+      "title": "Visual C++ 2008 runtime",
+      "kind": "vcredist",
+      "support": "payload",
+      "summary": "Visual C++ 2008 libraries (mfc90, msvcp90, msvcr90).",
+      "imports": [
+        "msvcr90",
+        "msvcp90",
+        "mfc90"
+      ],
+      "dlls": [
+        "msvcr90.dll",
+        "msvcp90.dll",
+        "mfc90.dll"
+      ],
+      "dll_overrides": {
+        "msvcr90": "n,b",
+        "msvcp90": "n,b",
+        "mfc90": "n,b"
+      },
+      "source": "winetricks:vcrun2008"
+    },
+    "vcrun2010": {
+      "title": "Visual C++ 2010 runtime",
+      "kind": "vcredist",
+      "support": "payload",
+      "summary": "Visual C++ 2010 libraries (atl100, mfc100, msvcp100, msvcr100, vcomp100).",
+      "imports": [
+        "msvcr100",
+        "msvcp100",
+        "mfc100",
+        "vcomp100",
+        "atl100"
+      ],
+      "dlls": [
+        "msvcr100.dll",
+        "msvcp100.dll",
+        "mfc100.dll",
+        "vcomp100.dll"
+      ],
+      "dll_overrides": {
+        "msvcr100": "n,b",
+        "msvcp100": "n,b",
+        "mfc100": "n,b",
+        "vcomp100": "n,b",
+        "atl100": "n,b"
+      },
+      "source": "winetricks:vcrun2010"
+    },
+    "vcrun2012": {
+      "title": "Visual C++ 2012 runtime",
+      "kind": "vcredist",
+      "support": "payload",
+      "summary": "Visual C++ 2012 libraries (atl110, mfc110, msvcp110, msvcr110, vcomp110).",
+      "imports": [
+        "msvcr110",
+        "msvcp110",
+        "mfc110",
+        "vcomp110",
+        "atl110"
+      ],
+      "dlls": [
+        "msvcr110.dll",
+        "msvcp110.dll",
+        "mfc110.dll",
+        "vcomp110.dll"
+      ],
+      "dll_overrides": {
+        "msvcr110": "n,b",
+        "msvcp110": "n,b",
+        "mfc110": "n,b",
+        "vcomp110": "n,b",
+        "atl110": "n,b"
+      },
+      "source": "winetricks:vcrun2012"
+    },
+    "vcrun2013": {
+      "title": "Visual C++ 2013 runtime",
+      "kind": "vcredist",
+      "support": "payload",
+      "summary": "Visual C++ 2013 libraries (atl120, mfc120, msvcp120, msvcr120, vcomp120).",
+      "imports": [
+        "msvcr120",
+        "msvcp120",
+        "mfc120",
+        "vcomp120",
+        "atl120"
+      ],
+      "dlls": [
+        "msvcr120.dll",
+        "msvcp120.dll",
+        "mfc120.dll",
+        "vcomp120.dll"
+      ],
+      "dll_overrides": {
+        "msvcr120": "n,b",
+        "msvcp120": "n,b",
+        "mfc120": "n,b",
+        "vcomp120": "n,b",
+        "atl120": "n,b"
+      },
+      "source": "winetricks:vcrun2013"
+    },
+    "vcrun2015": {
+      "title": "Visual C++ 2015 runtime",
+      "kind": "vcredist",
+      "support": "payload",
+      "summary": "Visual C++ 2015 (14.0) libraries: msvcp140, vcruntime140, vccorlib140, concrt140.",
+      "imports": [
+        "msvcp140",
+        "vcruntime140",
+        "concrt140",
+        "vccorlib140",
+        "vcamp140",
+        "vcomp140"
+      ],
+      "dlls": [
+        "msvcp140.dll",
+        "vcruntime140.dll",
+        "concrt140.dll",
+        "vccorlib140.dll",
+        "vcamp140.dll",
+        "vcomp140.dll"
+      ],
+      "dll_overrides": {
+        "msvcp140": "n,b",
+        "vcruntime140": "n,b",
+        "concrt140": "n,b",
+        "vccorlib140": "n,b"
+      },
+      "notes": "Madeira ships the x86_64 Microsoft VC++ 2015-2022 runtime DLLs in the app bundle (x86_64-vcruntime/), so 64-bit games are covered without any download.",
+      "source": "winetricks:vcrun2015"
+    },
+    "vcrun2017": {
+      "title": "Visual C++ 2017 runtime",
+      "kind": "vcredist",
+      "support": "payload",
+      "summary": "Visual C++ 2017 (14.1) libraries.",
+      "imports": [
+        "vcruntime140_1"
+      ],
+      "dlls": [
+        "msvcp140.dll",
+        "vcruntime140.dll",
+        "vcruntime140_1.dll",
+        "concrt140.dll"
+      ],
+      "dll_overrides": {
+        "msvcp140": "n,b",
+        "vcruntime140": "n,b",
+        "vcruntime140_1": "n,b",
+        "concrt140": "n,b"
+      },
+      "requires": [
+        "vcrun2015"
+      ],
+      "source": "winetricks:vcrun2017"
+    },
+    "vcrun2019": {
+      "title": "Visual C++ 2015-2019 runtime",
+      "kind": "vcredist",
+      "support": "payload",
+      "summary": "Visual C++ 2015-2019 (14.2) libraries.",
+      "imports": [
+        "msvcp140_1",
+        "msvcp140_2"
+      ],
+      "dlls": [
+        "msvcp140.dll",
+        "msvcp140_1.dll",
+        "msvcp140_2.dll",
+        "vcruntime140.dll",
+        "vcruntime140_1.dll",
+        "concrt140.dll"
+      ],
+      "dll_overrides": {
+        "msvcp140": "n,b",
+        "vcruntime140": "n,b",
+        "vcruntime140_1": "n,b",
+        "concrt140": "n,b"
+      },
+      "requires": [
+        "vcrun2015"
+      ],
+      "notes": "64-bit is bundled; a 32-bit (WoW64) title needs the i386 DLLs under Documents/madeira-compat/dlls/i386/.",
+      "source": "winetricks:vcrun2019"
+    },
+    "vcrun2022": {
+      "title": "Visual C++ 2015-2022 runtime",
+      "kind": "vcredist",
+      "support": "payload",
+      "summary": "Visual C++ 2015-2022 (14.3) libraries, superset of vcrun2019.",
+      "imports": [
+        "msvcp140_atomic_wait",
+        "msvcp140_codecvt_ids"
+      ],
+      "dlls": [
+        "msvcp140.dll",
+        "msvcp140_1.dll",
+        "msvcp140_2.dll",
+        "msvcp140_atomic_wait.dll",
+        "msvcp140_codecvt_ids.dll",
+        "vcruntime140.dll",
+        "vcruntime140_1.dll",
+        "concrt140.dll"
+      ],
+      "dll_overrides": {
+        "msvcp140": "n,b",
+        "vcruntime140": "n,b",
+        "vcruntime140_1": "n,b",
+        "concrt140": "n,b"
+      },
+      "requires": [
+        "vcrun2015"
+      ],
+      "source": "winetricks:vcrun2022"
+    },
+    "ucrtbase2019": {
+      "title": "Universal C Runtime (2019)",
+      "kind": "runtime",
+      "support": "builtin",
+      "summary": "api-ms-win-crt-* / ucrtbase, provided by Wine's builtin ucrtbase.",
+      "imports": [
+        "ucrtbase",
+        "api-ms-win-crt-runtime-l1-1-0"
+      ],
+      "dll_overrides": {
+        "ucrtbase": "b"
+      },
+      "source": "winetricks:ucrtbase2019"
+    },
+    "mfc42": {
+      "title": "Microsoft Foundation Classes 4.2",
+      "kind": "framework",
+      "support": "payload",
+      "summary": "mfc42.dll / mfc42u.dll used by pre-2005 Visual C++ programs.",
+      "imports": [
+        "mfc42",
+        "mfc42u"
+      ],
+      "dlls": [
+        "mfc42.dll",
+        "mfc42u.dll"
+      ],
+      "dll_overrides": {
+        "mfc42": "n,b",
+        "mfc42u": "n,b"
+      },
+      "source": "winetricks:mfc42"
+    },
+    "mfc40": {
+      "title": "Microsoft Foundation Classes 4.0",
+      "kind": "framework",
+      "support": "payload",
+      "summary": "mfc40.dll used by very old Visual C++ 4.x programs.",
+      "imports": [
+        "mfc40"
+      ],
+      "dlls": [
+        "mfc40.dll"
+      ],
+      "dll_overrides": {
+        "mfc40": "n,b"
+      },
+      "source": "winetricks:mfc40"
+    },
+    "d3dx9": {
+      "title": "DirectX 9 d3dx9 helper libraries",
+      "kind": "directx",
+      "support": "payload",
+      "summary": "d3dx9_24..d3dx9_43 (D3DX math, shader and texture helpers). Wine implements none of these natively.",
+      "imports": [
+        "d3dx9_24",
+        "d3dx9_25",
+        "d3dx9_26",
+        "d3dx9_27",
+        "d3dx9_28",
+        "d3dx9_29",
+        "d3dx9_30",
+        "d3dx9_31",
+        "d3dx9_32",
+        "d3dx9_33",
+        "d3dx9_34",
+        "d3dx9_35",
+        "d3dx9_36",
+        "d3dx9_37",
+        "d3dx9_38",
+        "d3dx9_39",
+        "d3dx9_40",
+        "d3dx9_41",
+        "d3dx9_42",
+        "d3dx9_43"
+      ],
+      "dlls": [
+        "d3dx9_43.dll"
+      ],
+      "dll_overrides": {
+        "d3dx9_24": "n,b",
+        "d3dx9_25": "n,b",
+        "d3dx9_26": "n,b",
+        "d3dx9_27": "n,b",
+        "d3dx9_28": "n,b",
+        "d3dx9_29": "n,b",
+        "d3dx9_30": "n,b",
+        "d3dx9_31": "n,b",
+        "d3dx9_32": "n,b",
+        "d3dx9_33": "n,b",
+        "d3dx9_34": "n,b",
+        "d3dx9_35": "n,b",
+        "d3dx9_36": "n,b",
+        "d3dx9_37": "n,b",
+        "d3dx9_38": "n,b",
+        "d3dx9_39": "n,b",
+        "d3dx9_40": "n,b",
+        "d3dx9_41": "n,b",
+        "d3dx9_42": "n,b",
+        "d3dx9_43": "n,b"
+      },
+      "notes": "Most D3D9 titles only need d3dx9_43; a game that also imports an older d3dx9_NN will need that DLL too.",
+      "source": "winetricks:d3dx9"
+    },
+    "d3dx9_43": {
+      "title": "DirectX 9 d3dx9_43.dll",
+      "kind": "directx",
+      "support": "payload",
+      "summary": "The single d3dx9 DLL most D3D9 games import.",
+      "dlls": [
+        "d3dx9_43.dll"
+      ],
+      "dll_overrides": {
+        "d3dx9_43": "n,b"
+      },
+      "source": "winetricks:d3dx9_43"
+    },
+    "d3dx11_43": {
+      "title": "DirectX 11 d3dx11_43.dll",
+      "kind": "directx",
+      "support": "payload",
+      "summary": "D3DX11 helpers for D3D11 games (D3DX11CompileFromFile and friends).",
+      "imports": [
+        "d3dx11_43"
+      ],
+      "dlls": [
+        "d3dx11_43.dll"
+      ],
+      "dll_overrides": {
+        "d3dx11_43": "n,b"
+      },
+      "source": "winetricks:d3dx11_43"
+    },
+    "d3dcompiler_42": {
+      "title": "DirectX d3dcompiler_42.dll",
+      "kind": "directx",
+      "support": "payload",
+      "summary": "D3D shader compiler, June 2010 (42).",
+      "dlls": [
+        "d3dcompiler_42.dll"
+      ],
+      "dll_overrides": {
+        "d3dcompiler_42": "n,b"
+      },
+      "source": "winetricks:d3dcompiler_42"
+    },
+    "d3dcompiler_43": {
+      "title": "DirectX d3dcompiler_43.dll",
+      "kind": "directx",
+      "support": "builtin",
+      "summary": "D3D shader compiler 43. Wine ships a complete builtin implementation.",
+      "imports": [
+        "d3dcompiler_43"
+      ],
+      "dll_overrides": {
+        "d3dcompiler_43": "b"
+      },
+      "source": "winetricks:d3dcompiler_43"
+    },
+    "d3dcompiler_46": {
+      "title": "DirectX d3dcompiler_46.dll",
+      "kind": "directx",
+      "support": "payload",
+      "summary": "D3D shader compiler 46.",
+      "dlls": [
+        "d3dcompiler_46.dll"
+      ],
+      "dll_overrides": {
+        "d3dcompiler_46": "n,b"
+      },
+      "source": "winetricks:d3dcompiler_46"
+    },
+    "d3dcompiler_47": {
+      "title": "DirectX d3dcompiler_47.dll",
+      "kind": "directx",
+      "support": "builtin",
+      "summary": "D3D shader compiler 47. Wine ships a complete builtin implementation, which is what DXMT's d3d11 uses.",
+      "imports": [
+        "d3dcompiler_47"
+      ],
+      "dll_overrides": {
+        "d3dcompiler_47": "b"
+      },
+      "requires": [
+        "d3dcompiler_47"
+      ],
+      "source": "winetricks:d3dcompiler_47"
+    },
+    "directx9": {
+      "title": "DirectX 9 runtime (June 2010)",
+      "kind": "directx",
+      "support": "manual",
+      "summary": "The DirectX 9.0c redistributable installs d3dx9/d3dx11/xact/xinput/dsound/directplay at once. Winetricks treats the all-in-one verb as deprecated.",
+      "notes": "Prefer the individual dependencies (d3dx9, d3dcompiler_*, xact, xinput, directplay, directmusic).",
+      "source": "winetricks:directx9"
+    },
+    "xinput": {
+      "title": "Microsoft XInput (Xbox controller)",
+      "kind": "directx",
+      "support": "builtin",
+      "summary": "xinput1_1..1_4 / xinput9_1_0. Madeira's Winios implements XInput over the host gamepad, so the builtin is used.",
+      "imports": [
+        "xinput1_1",
+        "xinput1_2",
+        "xinput1_3",
+        "xinput1_4",
+        "xinput9_1_0"
+      ],
+      "dll_overrides": {
+        "xinput1_1": "b",
+        "xinput1_2": "b",
+        "xinput1_3": "b",
+        "xinput1_4": "b",
+        "xinput9_1_0": "b"
+      },
+      "notes": "Gamepad support itself is a Madeira runtime feature (WiniosGamepad); the override just keeps games on the builtin.",
+      "source": "winetricks:xinput"
+    },
+    "dinput8": {
+      "title": "DirectInput 8",
+      "kind": "directx",
+      "support": "builtin",
+      "summary": "Wine's builtin dinput8 talks to Madeira's DirectInput bridge.",
+      "imports": [
+        "dinput8"
+      ],
+      "dll_overrides": {
+        "dinput8": "b"
+      },
+      "notes": "Some games ship a native dinput8 proxy (e.g. DSfix); if one sits next to the exe it is loaded first regardless, so this override is builtin by default.",
+      "source": "protonfixes"
+    },
+    "directplay": {
+      "title": "Microsoft DirectPlay",
+      "kind": "directx",
+      "support": "payload",
+      "summary": "dplayx.dll and friends, from the DirectX 9 user redistributable.",
+      "imports": [
+        "dplayx",
+        "dpnet",
+        "dplay"
+      ],
+      "dlls": [
+        "dplayx.dll",
+        "dpnet.dll",
+        "dplay.dll"
+      ],
+      "dll_overrides": {
+        "dplayx": "n,b",
+        "dpnet": "n,b"
+      },
+      "notes": "Only needed by games using the obsolete DirectPlay networking API.",
+      "source": "winetricks:directplay"
+    },
+    "directmusic": {
+      "title": "Microsoft DirectMusic",
+      "kind": "audio",
+      "support": "payload",
+      "summary": "dmband/dmcompos/dmime/dmloader/dmscript/dmstyle/dmsynth/dswave/dswave, the DirectX 9 DirectMusic set.",
+      "imports": [
+        "dmusic",
+        "dmime",
+        "dmsynth",
+        "dswave",
+        "dmloader"
+      ],
+      "dlls": [
+        "dmusic.dll",
+        "dmime.dll",
+        "dmsynth.dll",
+        "dswave.dll"
+      ],
+      "dll_overrides": {
+        "dmusic": "n,b",
+        "dmime": "n,b",
+        "dmsynth": "n,b",
+        "dmloader": "n,b"
+      },
+      "notes": "Provides the legacy MIDI/DLS synthesis path for older games.",
+      "source": "winetricks:directmusic"
+    },
+    "dmime": {
+      "title": "DirectMusic dmime.dll",
+      "kind": "audio",
+      "support": "payload",
+      "summary": "DirectMusic segment engine.",
+      "dlls": [
+        "dmime.dll"
+      ],
+      "dll_overrides": {
+        "dmime": "n,b"
+      },
+      "source": "winetricks:dmime"
+    },
+    "dmsynth": {
+      "title": "DirectMusic dmsynth.dll",
+      "kind": "audio",
+      "support": "payload",
+      "summary": "DirectMusic software synthesizer.",
+      "dlls": [
+        "dmsynth.dll"
+      ],
+      "dll_overrides": {
+        "dmsynth": "n,b"
+      },
+      "source": "winetricks:dmsynth"
+    },
+    "dswave": {
+      "title": "DirectMusic dswave.dll",
+      "kind": "audio",
+      "support": "payload",
+      "summary": "DirectMusic wave playback.",
+      "dlls": [
+        "dswave.dll"
+      ],
+      "dll_overrides": {
+        "dswave": "n,b"
+      },
+      "source": "winetricks:dswave"
+    },
+    "xact": {
+      "title": "Microsoft XACT Engine",
+      "kind": "audio",
+      "support": "payload",
+      "summary": "xactengine2_0..3_7 plus X3DAudio and XAPOFX: the DirectX audio engine many D3D9/D3D10 era games use for sound effects.",
+      "imports": [
+        "xactengine2_0",
+        "xactengine2_4",
+        "xactengine2_7",
+        "xactengine2_9",
+        "xactengine3_0",
+        "xactengine3_1",
+        "xactengine3_2",
+        "xactengine3_3",
+        "xactengine3_4",
+        "xactengine3_5",
+        "xactengine3_6",
+        "xactengine3_7",
+        "x3daudio1_1",
+        "x3daudio1_2",
+        "x3daudio1_3",
+        "x3daudio1_4",
+        "x3daudio1_5",
+        "x3daudio1_6",
+        "x3daudio1_7",
+        "xapofx1_1",
+        "xapofx1_2",
+        "xapofx1_3",
+        "xapofx1_4",
+        "xapofx1_5"
+      ],
+      "dlls": [
+        "xactengine3_7.dll",
+        "x3daudio1_7.dll",
+        "xapofx1_5.dll"
+      ],
+      "dll_overrides": {
+        "xactengine2_0": "n,b",
+        "xactengine2_4": "n,b",
+        "xactengine2_7": "n,b",
+        "xactengine2_9": "n,b",
+        "xactengine3_0": "n,b",
+        "xactengine3_1": "n,b",
+        "xactengine3_2": "n,b",
+        "xactengine3_3": "n,b",
+        "xactengine3_4": "n,b",
+        "xactengine3_5": "n,b",
+        "xactengine3_6": "n,b",
+        "xactengine3_7": "n,b",
+        "x3daudio1_1": "n,b",
+        "x3daudio1_2": "n,b",
+        "x3daudio1_3": "n,b",
+        "x3daudio1_4": "n,b",
+        "x3daudio1_5": "n,b",
+        "x3daudio1_6": "n,b",
+        "x3daudio1_7": "n,b",
+        "xapofx1_1": "n,b",
+        "xapofx1_2": "n,b",
+        "xapofx1_3": "n,b",
+        "xapofx1_4": "n,b",
+        "xapofx1_5": "n,b"
+      },
+      "source": "winetricks:xact"
+    },
+    "xaudio29": {
+      "title": "XAudio 2.9",
+      "kind": "audio",
+      "support": "payload",
+      "summary": "xaudio2_9.dll used by DirectX 11/12 era games; Wine has xaudio2_7 but not 2_8/2_9.",
+      "imports": [
+        "xaudio2_8",
+        "xaudio2_9"
+      ],
+      "dlls": [
+        "xaudio2_8.dll",
+        "xaudio2_9.dll"
+      ],
+      "dll_overrides": {
+        "xaudio2_8": "n,b",
+        "xaudio2_9": "n,b"
+      },
+      "source": "winetricks:xaudio29"
+    },
+    "openal": {
+      "title": "OpenAL 1.1",
+      "kind": "audio",
+      "support": "payload",
+      "summary": "OpenAL32.dll / wrap_oal.dll, used by id Tech and many 2000s games.",
+      "imports": [
+        "openal32",
+        "wrap_oal"
+      ],
+      "dlls": [
+        "OpenAL32.dll",
+        "wrap_oal.dll"
+      ],
+      "dll_overrides": {
+        "openal32": "n,b"
+      },
+      "notes": "Native OpenAL is only needed by games that load it directly; games using FAudio/XAudio are unaffected.",
+      "source": "winetricks:openal"
+    },
+    "dsound": {
+      "title": "DirectSound",
+      "kind": "audio",
+      "support": "builtin",
+      "summary": "Wine's builtin dsound on FAudio, routed to Madeira's AudioToolbox backend.",
+      "imports": [
+        "dsound"
+      ],
+      "dll_overrides": {
+        "dsound": "b"
+      },
+      "source": "winetricks:dsound"
+    },
+    "physx": {
+      "title": "NVIDIA PhysX (legacy runtime)",
+      "kind": "physx",
+      "support": "payload",
+      "summary": "PhysXLoader.dll / PhysXCore.dll / NxCharacter.dll, the pre-2.8 PhysX runtime many 2005-2010 games link.",
+      "imports": [
+        "physxloader",
+        "physxcoredll",
+        "nxcharacter"
+      ],
+      "dlls": [
+        "PhysXLoader.dll",
+        "PhysXCore.dll",
+        "NxCharacter.dll"
+      ],
+      "dll_overrides": {
+        "physxloader": "n,b",
+        "physxcore": "n,b"
+      },
+      "notes": "Games that bundle newer PhysX DLLs next to the exe load those first; this only covers titles that expect it in system32. GPU PhysX is not available through Metal.",
+      "source": "winetricks:physx"
+    },
+    "dotnet20": {
+      "title": ".NET Framework 2.0",
+      "kind": "dotnet",
+      "support": "manual",
+      "summary": "Microsoft .NET Framework 2.0. Madeira ships wine-mono, which runs many .NET 2.0-era managed games without the Microsoft runtime.",
+      "notes": "Installing the Microsoft .NET installer is not attempted automatically on iOS; wine-mono is the default and usually enough for XNA/Unity-ish managed titles.",
+      "source": "winetricks:dotnet20"
+    },
+    "dotnet35": {
+      "title": ".NET Framework 3.5",
+      "kind": "dotnet",
+      "support": "manual",
+      "summary": ".NET 3.5 including WPF and LINQ, on top of 2.0. wine-mono covers much of it.",
+      "requires": [
+        "dotnet20"
+      ],
+      "source": "winetricks:dotnet35"
+    },
+    "dotnet40": {
+      "title": ".NET Framework 4.0",
+      "kind": "dotnet",
+      "support": "partial",
+      "summary": ".NET 4.0. wine-mono implements a large part of the 4.x BCL.",
+      "notes": "Managed games that work under wine-mono need no action; ones that do not are reported as needing the Microsoft runtime, which is not installed automatically.",
+      "source": "winetricks:dotnet40"
+    },
+    "dotnet45": {
+      "title": ".NET Framework 4.5",
+      "kind": "dotnet",
+      "support": "partial",
+      "summary": ".NET 4.5 on top of 4.0.",
+      "requires": [
+        "dotnet40"
+      ],
+      "source": "winetricks:dotnet45"
+    },
+    "dotnet452": {
+      "title": ".NET Framework 4.5.2",
+      "kind": "dotnet",
+      "support": "partial",
+      "summary": ".NET 4.5.2.",
+      "requires": [
+        "dotnet45"
+      ],
+      "source": "winetricks:dotnet452"
+    },
+    "dotnet46": {
+      "title": ".NET Framework 4.6",
+      "kind": "dotnet",
+      "support": "partial",
+      "summary": ".NET 4.6.",
+      "requires": [
+        "dotnet40"
+      ],
+      "source": "winetricks:dotnet46"
+    },
+    "dotnet461": {
+      "title": ".NET Framework 4.6.1",
+      "kind": "dotnet",
+      "support": "partial",
+      "summary": ".NET 4.6.1.",
+      "requires": [
+        "dotnet46"
+      ],
+      "source": "winetricks:dotnet461"
+    },
+    "dotnet462": {
+      "title": ".NET Framework 4.6.2",
+      "kind": "dotnet",
+      "support": "partial",
+      "summary": ".NET 4.6.2.",
+      "requires": [
+        "dotnet461"
+      ],
+      "source": "winetricks:dotnet462"
+    },
+    "dotnet472": {
+      "title": ".NET Framework 4.7.2",
+      "kind": "dotnet",
+      "support": "partial",
+      "summary": ".NET 4.7.2.",
+      "requires": [
+        "dotnet462"
+      ],
+      "source": "winetricks:dotnet472"
+    },
+    "dotnet48": {
+      "title": ".NET Framework 4.8",
+      "kind": "dotnet",
+      "support": "partial",
+      "summary": ".NET 4.8, the last 4.x Framework. wine-mono handles a good share of 4.x titles.",
+      "requires": [
+        "dotnet40"
+      ],
+      "source": "winetricks:dotnet48"
+    },
+    "dotnet481": {
+      "title": ".NET Framework 4.8.1",
+      "kind": "dotnet",
+      "support": "partial",
+      "summary": ".NET 4.8.1.",
+      "requires": [
+        "dotnet48"
+      ],
+      "source": "winetricks:dotnet481"
+    },
+    "quartz": {
+      "title": "DirectShow quartz.dll",
+      "kind": "media",
+      "support": "payload",
+      "summary": "Native quartz.dll DirectShow filter graph manager. Wine's builtin quartz has no working video decoders on iOS.",
+      "imports": [
+        "quartz"
+      ],
+      "dlls": [
+        "quartz.dll"
+      ],
+      "dll_overrides": {
+        "quartz": "n,b"
+      },
+      "notes": "Madeira's winegstreamer supplies the WMA/MP3/WAV/MP4 decode path; a game that only needs those plays without native quartz.",
+      "source": "winetricks:quartz"
+    },
+    "qasf": {
+      "title": "DirectShow ASF reader (qasf.dll)",
+      "kind": "media",
+      "support": "payload",
+      "summary": "ASF/WMV splitter used by DirectShow.",
+      "imports": [
+        "qasf"
+      ],
+      "dlls": [
+        "qasf.dll"
+      ],
+      "dll_overrides": {
+        "qasf": "n,b"
+      },
+      "source": "winetricks:qasf"
+    },
+    "qcap": {
+      "title": "DirectShow capture filters (qcap.dll)",
+      "kind": "media",
+      "support": "payload",
+      "summary": "DirectShow capture/encoder filters.",
+      "imports": [
+        "qcap"
+      ],
+      "dlls": [
+        "qcap.dll"
+      ],
+      "dll_overrides": {
+        "qcap": "n,b"
+      },
+      "source": "winetricks:qcap"
+    },
+    "qedit": {
+      "title": "DirectShow Editing Services (qedit.dll)",
+      "kind": "media",
+      "support": "payload",
+      "summary": "DirectShow sample grabber and editing services.",
+      "imports": [
+        "qedit"
+      ],
+      "dlls": [
+        "qedit.dll"
+      ],
+      "dll_overrides": {
+        "qedit": "n,b"
+      },
+      "source": "winetricks:qedit"
+    },
+    "devenum": {
+      "title": "DirectShow device enumerator (devenum.dll)",
+      "kind": "media",
+      "support": "payload",
+      "summary": "Enumerates DirectShow filters for games that build their own graph.",
+      "imports": [
+        "devenum"
+      ],
+      "dlls": [
+        "devenum.dll"
+      ],
+      "dll_overrides": {
+        "devenum": "n,b"
+      },
+      "source": "winetricks:devenum"
+    },
+    "amstream": {
+      "title": "DirectShow multimedia stream (amstream.dll)",
+      "kind": "media",
+      "support": "payload",
+      "summary": "Media stream filter used by some video-playback code paths.",
+      "imports": [
+        "amstream"
+      ],
+      "dlls": [
+        "amstream.dll"
+      ],
+      "dll_overrides": {
+        "amstream": "n,b"
+      },
+      "source": "winetricks:amstream"
+    },
+    "icodecs": {
+      "title": "Indeo codecs",
+      "kind": "media",
+      "support": "payload",
+      "summary": "Indeo 4/5 video decoder, used by FMV in 1990s titles.",
+      "imports": [
+        "ir50_32",
+        "ir41_32"
+      ],
+      "dlls": [
+        "ir50_32.dll",
+        "ir41_32.dll"
+      ],
+      "dll_overrides": {
+        "ir50_32": "n,b"
+      },
+      "source": "winetricks:icodecs"
+    },
+    "l3codecx": {
+      "title": "MPEG Layer-3 codec",
+      "kind": "media",
+      "support": "builtin",
+      "summary": "Wine's builtin MP3 codec, used by the winegstreamer decoder.",
+      "imports": [
+        "l3codecx"
+      ],
+      "dll_overrides": {
+        "l3codecx": "b"
+      },
+      "source": "winetricks:l3codecx"
+    },
+    "mediafoundation": {
+      "title": "Media Foundation",
+      "kind": "media",
+      "support": "partial",
+      "summary": "mfplat/mf/mfreadwrite. Madeira's winegstreamer supplies the unix media source; DXMT/Wine provide the PE side.",
+      "imports": [
+        "mfplat",
+        "mfreadwrite",
+        "mf"
+      ],
+      "notes": "64-bit processes only get the real Media Foundation unix side with MADEIRA_WG_64BIT=1; 32-bit (WoW64) processes get it by default.",
+      "source": "winetricks:mediafoundation"
+    },
+    "mf": {
+      "title": "Media Foundation video playback",
+      "kind": "media",
+      "support": "partial",
+      "summary": "Alias for mediafoundation used by some game fixes; selects the winegstreamer Media Foundation source.",
+      "notes": "For a game whose intro video shows a black screen, MADEIRA_WG_64BIT=1 plus the mfplat/mf/mfreadwrite overrides is the usual fix.",
+      "source": "protonfixes"
+    },
+    "wmp9": {
+      "title": "Windows Media Player 9",
+      "kind": "media",
+      "support": "manual",
+      "summary": "WMP9 runtime used by games that embed the WMP ActiveX control.",
+      "source": "winetricks:wmp9"
+    },
+    "wmp10": {
+      "title": "Windows Media Player 10",
+      "kind": "media",
+      "support": "manual",
+      "summary": "WMP10 runtime (l3codecp.acm).",
+      "source": "winetricks:wmp10"
+    },
+    "wmp11": {
+      "title": "Windows Media Player 11",
+      "kind": "media",
+      "support": "manual",
+      "summary": "WMP11 runtime.",
+      "source": "winetricks:wmp11"
+    },
+    "corefonts": {
+      "title": "Microsoft core fonts",
+      "kind": "font",
+      "support": "payload",
+      "summary": "Arial, Courier New, Times New Roman, Comic Sans, Andale, Impact, Trebuchet, Verdana, Webdings.",
+      "dlls": [
+        "arial.ttf",
+        "times.ttf",
+        "cour.ttf"
+      ],
+      "registry": [
+        {
+          "hive": "HKCU",
+          "key": "Software\\Wine\\Fonts\\Replacements",
+          "name": "Arial",
+          "type": "REG_SZ",
+          "value": "Arial"
+        },
+        {
+          "hive": "HKCU",
+          "key": "Software\\Wine\\Fonts\\Replacements",
+          "name": "Courier New",
+          "type": "REG_SZ",
+          "value": "Courier New"
+        },
+        {
+          "hive": "HKCU",
+          "key": "Software\\Wine\\Fonts\\Replacements",
+          "name": "Times New Roman",
+          "type": "REG_SZ",
+          "value": "Times New Roman"
+        }
+      ],
+      "notes": "Drop the .ttf files in Documents/madeira-compat/fonts/ to install them.",
+      "source": "winetricks:corefonts"
+    },
+    "arial": {
+      "title": "Arial font",
+      "kind": "font",
+      "support": "payload",
+      "summary": "Arial required by a game's UI.",
+      "dlls": [
+        "arial.ttf"
+      ],
+      "source": "winetricks:arial"
+    },
+    "verdana": {
+      "title": "Verdana font",
+      "kind": "font",
+      "support": "payload",
+      "summary": "Verdana required by a game's UI.",
+      "dlls": [
+        "verdana.ttf"
+      ],
+      "source": "winetricks:verdana"
+    },
+    "tahoma": {
+      "title": "Tahoma font",
+      "kind": "font",
+      "support": "payload",
+      "summary": "Tahoma required by a game's UI.",
+      "dlls": [
+        "tahoma.ttf"
+      ],
+      "source": "winetricks:tahoma"
+    },
+    "courier": {
+      "title": "Courier New font",
+      "kind": "font",
+      "support": "payload",
+      "summary": "Courier New required by a game's console or UI.",
+      "dlls": [
+        "cour.ttf"
+      ],
+      "source": "winetricks:courier"
+    },
+    "trebuchet": {
+      "title": "Trebuchet MS font",
+      "kind": "font",
+      "support": "payload",
+      "summary": "Trebuchet MS required by a game's UI.",
+      "dlls": [
+        "trebuc.ttf"
+      ],
+      "source": "winetricks:trebuchet"
+    },
+    "lucida": {
+      "title": "Lucida fonts",
+      "kind": "font",
+      "support": "payload",
+      "summary": "Lucida Console / Lucida Sans, used by a few console fontsets.",
+      "dlls": [
+        "lucon.ttf",
+        "lsans.ttf"
+      ],
+      "source": "winetricks:lucida"
+    },
+    "segoe_script": {
+      "title": "Segoe Script font",
+      "kind": "font",
+      "support": "payload",
+      "summary": "Segoe Script, required by some modern UI.",
+      "dlls": [
+        "segoesc.ttf"
+      ],
+      "source": "protonfixes:segoe_script"
+    },
+    "msxml3": {
+      "title": "MSXML 3.0",
+      "kind": "framework",
+      "support": "payload",
+      "summary": "msxml3.dll XML parser used by older installers and games.",
+      "imports": [
+        "msxml3"
+      ],
+      "dlls": [
+        "msxml3.dll"
+      ],
+      "dll_overrides": {
+        "msxml3": "n,b"
+      },
+      "source": "winetricks:msxml3"
+    },
+    "msxml6": {
+      "title": "MSXML 6.0",
+      "kind": "framework",
+      "support": "payload",
+      "summary": "msxml6.dll XML parser used by modern launchers and games.",
+      "imports": [
+        "msxml6"
+      ],
+      "dlls": [
+        "msxml6.dll"
+      ],
+      "dll_overrides": {
+        "msxml6": "n,b"
+      },
+      "source": "winetricks:msxml6"
+    },
+    "gdiplus": {
+      "title": "GDI+",
+      "kind": "framework",
+      "support": "builtin",
+      "summary": "Wine's builtin gdiplus is complete enough for games and launchers.",
+      "imports": [
+        "gdiplus"
+      ],
+      "dll_overrides": {
+        "gdiplus": "b"
+      },
+      "source": "winetricks:gdiplus"
+    },
+    "riched20": {
+      "title": "RichEdit 2.0",
+      "kind": "framework",
+      "support": "payload",
+      "summary": "riched20.dll used for in-game text input and help.",
+      "imports": [
+        "riched20"
+      ],
+      "dlls": [
+        "riched20.dll"
+      ],
+      "dll_overrides": {
+        "riched20": "n,b"
+      },
+      "source": "winetricks:riched20"
+    },
+    "msftedit": {
+      "title": "RichEdit 4.1 (msftedit.dll)",
+      "kind": "framework",
+      "support": "payload",
+      "summary": "msftedit.dll used by newer text controls.",
+      "imports": [
+        "msftedit"
+      ],
+      "dlls": [
+        "msftedit.dll"
+      ],
+      "dll_overrides": {
+        "msftedit": "n,b"
+      },
+      "source": "bottles:msftedit"
+    },
+    "wsh57": {
+      "title": "Windows Script Host 5.7",
+      "kind": "framework",
+      "support": "payload",
+      "summary": "jscript/scrrun/vbscript/cscript used by some launchers and installers.",
+      "imports": [
+        "scrrun",
+        "jscript",
+        "vbscript"
+      ],
+      "dlls": [
+        "scrrun.dll",
+        "jscript.dll",
+        "vbscript.dll"
+      ],
+      "dll_overrides": {
+        "jscript": "n,b",
+        "scrrun": "n,b",
+        "vbscript": "n,b"
+      },
+      "source": "winetricks:wsh57"
+    },
+    "jet40": {
+      "title": "Microsoft Jet 4.0 (Access database)",
+      "kind": "framework",
+      "support": "manual",
+      "summary": "Jet 4.0 database engine, needed by games with Access-based data.",
+      "source": "winetricks:jet40"
+    },
+    "mdac28": {
+      "title": "MDAC 2.8 (ODBC/ADO)",
+      "kind": "framework",
+      "support": "manual",
+      "summary": "Microsoft Data Access Components.",
+      "source": "winetricks:mdac28"
+    },
+    "xna31": {
+      "title": "XNA Framework 3.1",
+      "kind": "framework",
+      "support": "partial",
+      "summary": "XNA 3.1 managed framework for XNA games.",
+      "notes": "XNA is a managed framework; wine-mono plus the XNA redistributable is the usual path.",
+      "source": "winetricks:xna31"
+    },
+    "xna40": {
+      "title": "XNA Framework 4.0",
+      "kind": "framework",
+      "support": "partial",
+      "summary": "XNA 4.0 managed framework for XNA games.",
+      "requires": [
+        "dotnet40"
+      ],
+      "source": "winetricks:xna40"
+    },
+    "gfw": {
+      "title": "Games for Windows LIVE",
+      "kind": "framework",
+      "support": "unsupported",
+      "summary": "Games for Windows LIVE (GFWL) client, required by a handful of GFWL-era titles.",
+      "notes": "GFWL needs a live Microsoft online service that no longer exists for most titles.",
+      "source": "winetricks:gfw"
+    },
+    "cnc-ddraw": {
+      "title": "cnc-ddraw",
+      "kind": "utility",
+      "support": "payload",
+      "summary": "Community DirectDraw wrapper that fixes old 2D RTS/DirectDraw games.",
+      "dlls": [
+        "ddraw.dll",
+        "cnc-ddraw.dll"
+      ],
+      "dll_overrides": {
+        "ddraw": "n,b"
+      },
+      "source": "lutris/bottles:cnc-ddraw"
+    },
+    "dgvoodoo2": {
+      "title": "dgVoodoo2",
+      "kind": "utility",
+      "support": "unsupported",
+      "summary": "DirectDraw/Direct3D 8/9 to Direct3D 11 wrapper. Converts to D3D11, which DXMT then maps to Metal, but dgVoodoo2 needs a full D3D11 feature set that is not available here.",
+      "notes": "Not useful on Madeira; the DXMT path already covers D3D11 games.",
+      "source": "protonfixes:dgvoodoo2"
+    },
+    "eac": {
+      "title": "Easy Anti-Cheat",
+      "kind": "anticheat",
+      "support": "unsupported",
+      "summary": "Easy Anti-Cheat kernel/user-mode service.",
+      "notes": "Anti-cheat needs a kernel driver and deep process integrity that iOS does not permit. Online anti-cheat titles cannot be supported; single-player games that merely bundle EAC often run without it.",
+      "source": "protonfixes:install_eac_runtime"
+    },
+    "battleye": {
+      "title": "BattlEye",
+      "kind": "anticheat",
+      "support": "unsupported",
+      "summary": "BattlEye anti-cheat runtime.",
+      "notes": "Same constraint as Easy Anti-Cheat; single-player/offline content is unaffected.",
+      "source": "protonfixes:install_battleye_runtime"
+    },
+    "denuvo": {
+      "title": "Denuvo DRM",
+      "kind": "anticheat",
+      "support": "unsupported",
+      "summary": "Denuvo anti-tamper DRM.",
+      "notes": "DRM layers that rely on tight Windows/hypervisor integration cannot be supported. Prefer DRM-free (GOG) builds of the same game.",
+      "source": "madeira"
+    },
+    "winhttp": {
+      "title": "Windows HTTP Services",
+      "kind": "runtime",
+      "support": "builtin",
+      "summary": "Wine's builtin winhttp/wininet, used for online checks and launchers.",
+      "imports": [
+        "winhttp",
+        "wininet"
+      ],
+      "dll_overrides": {
+        "winhttp": "b",
+        "wininet": "b"
+      },
+      "source": "winetricks:winhttp"
+    },
+    "devenum-winrt": {
+      "title": "Windows Runtime activation (WinRT)",
+      "kind": "runtime",
+      "support": "partial",
+      "summary": "Windows Runtime activation factories used by a few UWP-derived engines (e.g. Unity's WinRT video path).",
+      "notes": "Madeira's wine build handles the common activation-factory fallbacks; RoInitialize is available.",
+      "source": "madeira"
+    }
+  }
+}

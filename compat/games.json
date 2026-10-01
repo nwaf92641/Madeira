@@ -1,0 +1,135 @@
+{
+  "schema": 1,
+  "updated": "2026-10-01",
+  "_comment": "Curated per-title profiles for Madeira. Entries here win over an imported Protonfixes profile with the same App ID or executable. A profile may be matched by Steam App ID ('appid'), by executable base name ('executables', case-insensitive), or by a fragment of the install path ('path_contains'). Everything is optional; a title with no profile simply launches as it always did.",
+  "games": [
+    {
+      "title": "Thumper",
+      "appid": 356400,
+      "executables": [
+        "THUMPER_win10.exe",
+        "THUMPER.exe"
+      ],
+      "engine": "Unity",
+      "rating": "playable",
+      "dependencies": [
+        "vcrun2015",
+        "d3dcompiler_47"
+      ],
+      "windows_version": "win10",
+      "notes": "Reference title for Madeira. Starts as its own program (no Steam client needed) and reaches gameplay.",
+      "source": "madeira"
+    },
+    {
+      "title": "ULTRAKILL",
+      "appid": 1229490,
+      "executables": [
+        "ULTRAKILL.exe"
+      ],
+      "engine": "Unity",
+      "rating": "playable",
+      "dependencies": [
+        "vcrun2019",
+        "d3dcompiler_47"
+      ],
+      "windows_version": "win10",
+      "notes": "Reference title for Madeira; D3D11 through DXMT.",
+      "source": "madeira"
+    },
+    {
+      "title": "Stray",
+      "appid": 1332010,
+      "executables": [
+        "Stray.exe",
+        "Stray-Win64-Shipping.exe"
+      ],
+      "engine": "Unreal Engine 4",
+      "rating": "runnable",
+      "dependencies": [
+        "vcrun2019",
+        "d3dcompiler_47"
+      ],
+      "launch_arguments": "-dx11",
+      "windows_version": "win10",
+      "notes": "The Stray.exe launcher builds its child's command line itself and drops the RHI switch, so Madeira can start Stray-Win64-Shipping.exe directly with -dx11.",
+      "issues": [
+        "The launcher must be bypassed for the D3D11 renderer to be selected."
+      ],
+      "source": "madeira"
+    },
+    {
+      "title": "Marvel Cosmic Invasion",
+      "engine": "FNA / MonoGame",
+      "rating": "runnable",
+      "executables": [
+        "MarvelCosmicInvasion.exe"
+      ],
+      "dependencies": [
+        "dotnet40",
+        "xna40"
+      ],
+      "env": {
+        "FNA3D_FORCE_DRIVER": "D3D11"
+      },
+      "notes": "FNA has no OpenGL backend on iOS; Madeira selects the D3D11 backend so the game routes through DXMT.",
+      "issues": [
+        "Controls are not reliable yet."
+      ],
+      "source": "madeira"
+    },
+    {
+      "title": "Dark Souls: Prepare to Die Edition",
+      "appid": 211420,
+      "executables": [
+        "DARKSOULS.exe"
+      ],
+      "dependencies": [
+        "directx9",
+        "d3dx9",
+        "d3dcompiler_43"
+      ],
+      "dll_overrides": {
+        "dinput8": "n,b"
+      },
+      "notes": "dinput8 prefers a native DLL so the optional DSfix proxy (DATA/dinput8.dll) loads, and falls back to the builtin otherwise.",
+      "issues": [
+        "Requires a DirectX 9 path; see the d3dx9 and d3dcompiler dependencies."
+      ],
+      "source": "protonfixes"
+    },
+    {
+      "title": "Grand Theft Auto IV",
+      "appid": 12210,
+      "executables": [
+        "GTAIV.exe"
+      ],
+      "dependencies": [
+        "directx9",
+        "d3dx9",
+        "vcrun2008",
+        "gfw"
+      ],
+      "notes": "GFWL sign-in is unavailable; offline content only.",
+      "issues": [
+        "Games for Windows LIVE online services are gone."
+      ],
+      "source": "protonfixes"
+    },
+    {
+      "title": "Fallout 3",
+      "appid": 22300,
+      "executables": [
+        "Fallout3.exe",
+        "FalloutLauncher.exe"
+      ],
+      "dependencies": [
+        "directx9",
+        "d3dx9",
+        "vcrun2005",
+        "gfw"
+      ],
+      "notes": "GFWL is unavailable; the game runs offline.",
+      "source": "protonfixes"
+    }
+  ]
+}

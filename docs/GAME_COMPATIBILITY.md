@@ -88,6 +88,20 @@ it needs, and how Madeira can satisfy it:
 A dependency can require others (`requires`), which are resolved first. The
 user can add extras or exclude any component for one game.
 
+The catalogue is also what makes a title work with no profile at all: every
+entry lists the DLL names it answers for, so a game nobody has written a
+profile for is still recognised from what its executable imports, and the
+components behind it are set up or reported. The lists come from the upstream
+projects rather than from guessing at DLL names — Winetricks' verbs for the
+run times, DirectX, media, audio and font components, Bottles for the files each
+one provides, and Winlator's Windows components for the DLL sets a full
+DirectX, DirectMusic, DirectShow, DirectPlay, XACT or XAudio install contains,
+which is how the gaps between the families (`d3dx10_33` to `d3dx10_41`,
+`d3dcsx_42`, the DirectPlay providers, the older XACT engines) are covered.
+Wine's own addons are entries too: `wine-mono` and `wine-gecko` are `manual`,
+so a managed or browser-based title is reported as needing them instead of
+being handed a Microsoft installer it cannot use.
+
 ## Reusable fixes (recipes)
 
 Most Wine fixes are a small combination: override these DLLs, set this variable,
@@ -109,7 +123,16 @@ from a dependency or a profile:
 A recipe is applied at most once, after the components it belongs to. This is
 what keeps the database from repeating the same override in hundreds of
 profiles, and it is the seam through which an upstream fix (Protonfixes,
-Winetricks, Bottles) becomes a Madeira fix without being rewritten per game.
+Winetricks, Bottles, Winlator) becomes a Madeira fix without being rewritten
+per game.
+
+A recipe can also express a setting for one program rather than a whole prefix:
+`{app}` in a registry key or value is replaced by the launched executable's
+name, which is how `no-3d-for-helper` and `legacy-d3d-tuning` write Wine's own
+per-application `Direct3D` key. Wine reads `renderer`, `csmt`,
+`VideoMemorySize`, `VideoPciVendorID` and `VideoPciDeviceID` from exactly that
+key, so a helper process, a launcher and the game itself can each see a
+different device without a global setting.
 
 ## Fallbacks: a second and third attempt
 
@@ -268,8 +291,9 @@ fixes it cannot express as data (recorded as notes). Every store-specific
 directory is imported, not only Steam — `gamefixes-gog`, `gamefixes-egs`,
 `gamefixes-umu` and the rest — because they key their fixes by the same App ID.
 Curated entries always win over an imported profile with the same key.
-`--winetricks DIR` widens the dependency catalogue from the verb metadata, and
-`--bottles DIR` from the Bottles dependency definitions.
+`--winetricks DIR` widens the dependency catalogue from the verb metadata,
+`--bottles DIR` from the Bottles dependency definitions, and `--winlator DIR`
+from a Winlator checkout.
 
 Adding a dependency is the same idea in `compat/dependencies.json`; set
 `imports` so the import table can select it, `dlls` for the files a payload
@@ -310,6 +334,25 @@ re-deriving it per game:
   format, DLL behaviour, and which DLL names a builtin module serves under
   (the source of the version families such as `d3dcompiler_*` and
   `xaudio2_*`).
+- **Winlator** — the closest project to Madeira: Wine on Android, so its fixes
+  are aimed at a Wine that is *not* Proton's, with no Linux, no Vulkan
+  requirement and no root. Its per-executable loader configuration
+  (`assets/box64/default.box64rc`) supplied the per-title overrides that are
+  not in Protonfixes (a native `winmm`, DirectDraw and Direct3D 8 set to
+  builtin, launched with the Windows XP version), its `wincomponents.json`
+  supplied the DLL lists behind the DirectX, DirectMusic, DirectShow,
+  DirectPlay, XACT, XAudio and Visual C++ components, and its container
+  settings supplied the services and Direct3D registry values. Each of those
+  is translated: the box64 memory-ordering switch becomes FEX's
+  `FEX_TSOENABLED`, the Winlator-only `WINE_D3D_CONFIG` and `WINVERSION`
+  variables become Wine's own `Direct3D` registry key and `windows_version`,
+  and the Vulkan, Mesa and Zink settings are recorded as unavailable fixes on
+  the title rather than imported.
+- **DXMT** — Madeira's own Direct3D 11 implementation, and the source of the
+  per-title rendering switches that are already applied inside it
+  (`dxgi.customVendorId`, `d3d11.defuseFma`, `dxgi.forceSDR` and the rest).
+  They are recipes here so that a profile can apply the same switch to a title
+  DXMT does not know, and so the reasoning is visible in the database.
 - **Apple Game Porting Toolkit** — the reference for a Wine-adjacent stack on
   Apple silicon; Madeira's stack is its own (FEX, DXMT, Metal), so this informed
   direction rather than code.
@@ -324,6 +367,20 @@ dropped), and anything needing root, a kernel module or a Linux service
 (anti-cheat, some DRM), which is represented as an explicitly unsupported
 compatibility case instead.
 
+The same rule applies to Winlator, which is a source rather than a base for the
+same reason Proton is: its Wine is patched and its graphics stack is its own.
+The variables that only exist there are not imported as if they existed here —
+`WINEVMEMMAXSIZE` (its Wine patch for a large address space) and
+`WINE_DO_NOT_OPEN_SC_MANAGER` (its patch to stop a title opening the service
+control manager, a race Madeira fixes in `patches/wine-rpcss-scm-bootstrap.patch`
+instead) are recorded on the title with the Madeira reason. Its loader switches
+without a FEX counterpart (`BOX64_DYNAREC_WEAKBARRIER`, `BOX64_DYNAREC_DIRTY`,
+`BOX64_SKIPCPU`, `BOX64_DYNAREC_BIGBLOCK`, `BOX64_EXIT`) are recorded the same
+way, as are the Mesa, Zink and Vulkan settings its containers use. What is left
+is what transfers: overrides by DLL name, the Windows version, launch
+arguments, the loader's memory-ordering mode, registry values Wine itself
+defines, and the DLL lists of its Windows components.
+
 One import is adapted rather than copied, because it would have been a bug: a
 Protonfixes fix is a fix *on Proton*, and Proton renders through Vulkan. An
 appended `-vulkan` or an id Tech `+r_renderAPI 1` selects a device Madeira
@@ -332,6 +389,14 @@ title, leaving the rest of the command alone. Red Dead Redemption 2 is the
 worked example: upstream appends `-fullscreen -vulkan`, and Madeira keeps
 `-fullscreen`, replaces the renderer with the game's Direct3D 12 path and says
 so in the profile's notes.
+
+A second import is adapted for the same reason in the other direction:
+Winlator's fix for some titles is to *disable* Wine's built-in streaming
+decoder, which is right there because its prefixes carry native codecs. On
+Madeira `winegstreamer` is the decoder itself, so importing the override would
+have removed a title's video instead of repairing it. The recipe exists
+(`winegstreamer-off`) but the title carries it as a fallback attempt instead of
+as its default, with the reason in its notes.
 
 ## Testing
 

@@ -96,7 +96,6 @@ UNAVAILABLE_FIXES = {
     'set_xml_options': 'edits a game XML file',
     'install_eac_runtime': 'Easy Anti-Cheat runtime (unsupported on iOS)',
     'install_battleye_runtime': 'BattlEye runtime (unsupported on iOS)',
-    'replace_command': 'rewrites the launch command',
     'install_from_zip': 'runs an installer',
     'install_all_from_tgz': 'runs an installer',
     'copytree': 'copies files into the prefix',
@@ -389,6 +388,36 @@ SET_ENV = re.compile(r'set_environment\(\s*[\'"]([^\'"]+)[\'"]\s*,\s*[\'"]([^\'"
 DEL_ENV = re.compile(r'del_environment\(\s*[\'"]([^\'"]+)')
 APPEND_ARG = re.compile(r'append_argument\(\s*[\'"]([^\'"]+)[\'"]')
 REGEDIT_START = re.compile(r'regedit_add\(')
+# replace_command(a, b): run b instead of a, or drop the argument a when b is
+# empty. Forty-odd scripts switch a broken launcher for the game itself this
+# way, which is exactly what a profile's "run" and "remove_arguments" express.
+REPLACE_COMMAND = re.compile(r'replace_command\(\s*[\'"]([^\'"]+)[\'"]\s*,\s*[\'"]([^\'"]*)[\'"]')
+# os.rename('a', 'b') and os.replace('a', 'b') with two literals: a file the
+# title must not load (an old ddraw.dll beside the executable).
+OS_RENAME = re.compile(r'os\.(?:rename|replace)\(\s*[\'"]([^\'"$*]+)[\'"]\s*,\s*[\'"]([^\'"$*]+)[\'"]')
+
+
+def launch_rewrite(from_text: str, to_text: str) -> tuple[str | None, str | None]:
+    """(run, removed argument) for one replace_command call.
+
+    The upstream helper rewrites the command line: the first argument is what
+    to look for, the second what to put in its place. A flag (leading "-") that
+    is replaced with nothing is an argument the game must not receive; anything
+    that names a Windows program is the program the profile should start
+    instead of the launcher.
+    """
+    if to_text:
+        # A replacement that names a program (an .exe, or a path) is a launch
+        # target; a replacement of some other kind cannot be expressed.
+        if to_text.lower().endswith('.exe') or '/' in to_text or '\\' in to_text:
+            return to_text, None
+        return None, None
+    if from_text.startswith('-') or from_text.startswith('--'):
+        return None, from_text
+    if from_text.lower().endswith('.exe'):
+        # "run this launcher" with no replacement: nothing to do.
+        return None, None
+    return None, from_text
 
 
 def split_arguments(body: str) -> list[str]:
@@ -577,6 +606,9 @@ def import_protonfixes(path: Path, dependencies: dict, recipes: dict, absorb: di
             overrides: dict[str, str] = {}
             registry: list[dict] = []
             arguments: list[str] = []
+            removed: list[str] = []
+            files: list[dict] = []
+            run_target: str | None = None
             fixes: list[str] = []
             unavailable: list[str] = []
 
@@ -607,11 +639,22 @@ def import_protonfixes(path: Path, dependencies: dict, recipes: dict, absorb: di
             registry, computed_registry = parse_registry(text)
             if computed_registry:
                 unavailable.append(f'{computed_registry} registry value(s) computed at runtime')
+            for from_text, to_text in REPLACE_COMMAND.findall(text):
+                target, dropped = launch_rewrite(from_text, to_text)
+                if target and run_target is None:
+                    run_target = target
+                elif dropped:
+                    removed.append(dropped)
+                elif target is None and dropped is None:
+                    unavailable.append(f'launch command rewrite ({from_text})')
+            for source, destination in OS_RENAME.findall(text):
+                files.append({'action': 'rename', 'path': source, 'to': destination})
             for call in sorted(set(UTIL_CALL.findall(text))):
                 if call in UNAVAILABLE_FIXES:
                     unavailable.append(UNAVAILABLE_FIXES[call])
                 elif call in {'main', 'protontricks', 'winedll_override', 'wineexe_override',
                               'set_environment', 'del_environment', 'append_argument', 'regedit_add',
+                              'replace_command',
                               'set_app_winver', 'set_winver', 'checkinstalled', 'is_custom_verb',
                               'protonprefix', 'protondir', 'once', 'log', 'get_game_install_path'}:
                     continue
@@ -632,6 +675,13 @@ def import_protonfixes(path: Path, dependencies: dict, recipes: dict, absorb: di
                 entry['env'] = env
             if arguments:
                 entry['launch_arguments'] = ' '.join(arguments)
+            if run_target:
+                entry['run'] = run_target
+            if removed:
+                entry['remove_arguments'] = sorted(set(removed))
+            if files:
+                deduped = {json.dumps(item, sort_keys=True): item for item in files}
+                entry['files'] = [deduped[key] for key in sorted(deduped)]
             if recipe_refs:
                 entry['recipes'] = sorted(set(recipe_refs))
             if fixes:
@@ -644,12 +694,20 @@ def import_protonfixes(path: Path, dependencies: dict, recipes: dict, absorb: di
                 entry['source'] = 'protonfixes:' + ','.join(sources)
                 games[key] = entry
             else:
-                for field in ('dependencies', 'fixes', 'unavailable_fixes', 'recipes'):
+                for field in ('dependencies', 'fixes', 'unavailable_fixes', 'recipes', 'remove_arguments'):
                     if field in entry:
                         previous[field] = sorted(set(previous.get(field, []) + entry[field]))
+                for field in ('files',):
+                    if field in entry:
+                        merged = previous.get(field, []) + entry[field]
+                        deduped = {json.dumps(item, sort_keys=True): item for item in merged}
+                        previous[field] = [deduped[key] for key in sorted(deduped)]
                 for field in ('dll_overrides', 'env'):
                     if field in entry:
                         previous.setdefault(field, {}).update(entry[field])
+                for field in ('run', 'launch_arguments', 'windows_version'):
+                    if field in entry and field not in previous:
+                        previous[field] = entry[field]
                 previous.setdefault('registry', []).extend(entry.get('registry', []))
                 if 'registry' in previous and not previous['registry']:
                     del previous['registry']
@@ -660,12 +718,308 @@ def import_protonfixes(path: Path, dependencies: dict, recipes: dict, absorb: di
 
 
 # ---------------------------------------------------------------------------
+# Winlator import
+#
+# Winlator (github.com/brunodev85/winlator) ships its compatibility knowledge
+# as data rather than as code: a per-executable configuration file for its
+# x86 emulator (box64/default.box64rc), Windows component definitions with the
+# DLLs each one owns (wincomponents/wincomponents.json) and the list of Wine
+# debug channels the build knows. Most of the configuration is Android
+# specific -- box64 tuning, Vulkan drivers (Turnip, Vortek), the X server, the
+# touch input overlay, its own patched Wine -- and none of that can be ported.
+# What is portable is the part that reaches Windows and means the same thing
+# under Wine anywhere: DLL overrides, launch arguments, environment variables,
+# the Windows version a title expects, and the mapping from a component (XAudio,
+# DirectPlay, the WMA/WMV decoders) to the DLLs that belong to it. Those are
+# imported here; everything else is recorded per title so the report is honest.
+
+BOX64RC_SECTION = re.compile(r'^\[([^\]]+)\]\s*$')
+# A section named for a variable or a pattern targets the Android loader.
+WINLATOR_PATTERN_SECTION = re.compile(r'^[*/]')
+# Executable names that belong to no particular title.
+WINLATOR_GENERIC_EXES = {'launcher.exe', 'start.exe', 'game.exe', 'setup.exe',
+                         'launcher64.exe', 'unins000.exe'}
+# Box64/Android settings with no Windows-side meaning.
+WINLATOR_UNAVAILABLE = {
+    'MESA_EXTENSION_MAX_YEAR': 'limits Mesa (OpenGL) extensions; Madeira renders through Metal',
+    'ZINK_CONTEXT_THREADED': 'a Zink (Vulkan/OpenGL) setting',
+    'BOX64_SKIPCPU': 'box64 CPU skip (Android)',
+    'BOX64_SSE42': 'box64 SSE4.2 emulation (Android; FEX decides feature exposure itself)',
+    'BOX64_EXIT': 'box64 exits before the installer runs (Android)',
+    'BOX64_DYNAREC_DIRTY': 'box64 write-tracking (Android)',
+    'WINEVMEMMAXSIZE': "Winlator's own Wine patch; Madeira's Wine has no such variable",
+    'WINE_DO_NOT_OPEN_SC_MANAGER': "Winlator's own Wine patch; Madeira keeps the service control "
+                                   "manager and fixes its bootstrap race instead "
+                                   "(patches/wine-rpcss-scm-bootstrap.patch)",
+    'WINPREEXEC': "Winlator's pre-exec hook; Madeira applies file fixes through a profile's \"files\"",
+    'WINEOVERRIDEAFFINITYMASK': "Winlator's own Wine patch",
+}
+# box64's dynamic recompiler settings, which are FEX's on Madeira.
+WINLATOR_BOX64_DYNAREC = re.compile(r'^BOX64_DYNAREC_([A-Z0-9_]+)$')
+# A Windows version Winlator sets through its Wine patch; Madeira writes the
+# same version into Wine's own AppDefaults key.
+WINLATOR_WINDOWS_VERSIONS = {
+    'winxp': 'winxp', 'winxp64': 'winxp64', 'win2003': 'win2003',
+    'vista': 'vista', 'win7': 'win7', 'win8': 'win8', 'win10': 'win10', 'win11': 'win11',
+}
+# Which catalogue entries own the DLLs of a Winlator component. A name an
+# entry already claims (as its id or in its imports) is left alone; a name
+# nothing claims goes to the entry for its family, which is how the list
+# closes the gaps a Winlator prefix fills with files.
+WINLATOR_DLL_FAMILIES = (
+    ('d3dcsx_', 'd3dcsx'),
+    ('d3dcompiler_', 'd3dcompiler-legacy'),
+    ('d3dx9_', 'd3dx9'),
+    ('d3dx11_', 'd3dx11_43'),
+    ('d3dx10', 'd3dx10'),
+    ('dswave', 'directmusic'),
+    ('dm', 'directmusic'),
+    ('dplay', 'directplay'),
+    ('dp', 'directplay'),
+    ('q', 'quartz'),
+    ('xactengine', 'xact'),
+    ('x3daudio', 'xact'),
+    ('xapofx', 'xact'),
+    ('xaudio2', 'xaudio2-legacy'),
+    ('wmadmod', 'wmv9vcm'),
+    ('wmasf', 'wmv9vcm'),
+    ('wmv', 'wmv9vcm'),
+    ('msvcm', 'vcrun2005'),
+    ('vcomp', 'vcrun2005'),
+    ('atl', 'vcrun2005'),
+)
+
+
+def winlator_dll_owner(name: str, dependencies: dict, claimed: dict[str, str]) -> str | None:
+    """The entry that should own one of a component's DLLs, if any.
+
+    A name an entry already owns is never moved: the catalogue's own choice of
+    which component answers for a DLL outranks this list.
+    """
+    if name in claimed:
+        return None
+    if name in dependencies:
+        return name
+    for prefix, owner in WINLATOR_DLL_FAMILIES:
+        if name.startswith(prefix) and owner in dependencies:
+            return owner
+    return None
+
+
+def parse_box64rc(path: Path) -> dict[str, dict[str, list[str]]]:
+    """{executable: {setting: [values]}} for Winlator's per-executable config."""
+    sections: dict[str, dict[str, list[str]]] = {}
+    current: str | None = None
+    for raw in path.read_text(encoding='utf-8', errors='replace').split('\n'):
+        line = raw.strip()
+        if not line or line.startswith('#'):
+            continue
+        header = BOX64RC_SECTION.match(line)
+        if header:
+            name = header.group(1).strip()
+            current = None if WINLATOR_PATTERN_SECTION.match(name) else name
+            continue
+        if current is None or '=' not in line:
+            continue
+        key, _, value = line.partition('=')
+        sections.setdefault(current, {}).setdefault(key.strip(), []).append(value.strip())
+    return sections
+
+
+def parse_winlator_env(setting: str) -> tuple[str, str] | None:
+    """(name, value) from "WINEENV=NAME=value" or "NAME=value"."""
+    body = setting
+    for prefix in ('WINEENV=', 'WINEARGS=', 'WINEDLLOVERRIDES='):
+        if body.startswith(prefix):
+            body = body[len(prefix):]
+            break
+    name, separator, value = body.partition('=')
+    if not separator:
+        return None
+    return name.strip(), value.strip()
+
+
+# Wine's own WINEDLLOVERRIDES syntax: "dll=n", "dll=b", "dll=d" (disabled),
+# and "a.dll,b.dll=d" for a group. Madeira spells "disabled" as an empty order.
+WINLATOR_OVERRIDE_ORDERS = {
+    'd': '', 'disabled': '', '': '',
+    'n': 'n', 'native': 'n',
+    'b': 'b', 'builtin': 'b',
+    'n,b': 'n,b', 'native,builtin': 'n,b',
+    'b,n': 'b,n', 'builtin,native': 'b,n',
+}
+
+
+def parse_winlator_overrides(text: str) -> dict[str, str]:
+    """{dll: order} from one WINEDLLOVERRIDES value.
+
+    A name that carries no order, and an order Madeira cannot express, are
+    dropped rather than guessed at.
+    """
+    overrides: dict[str, str] = {}
+    for group in text.split(';'):
+        group = group.strip()
+        if not group:
+            continue
+        names, separator, order = group.rpartition('=')
+        if not separator:
+            continue
+        token = WINLATOR_OVERRIDE_ORDERS.get(order.strip().lower())
+        if token is None:
+            continue
+        for name in names.split(','):
+            name = Path(name.strip()).stem.lower()
+            if name:
+                overrides[name] = token
+    return overrides
+
+
+def import_winlator(assets: Path, dependencies: dict, recipes: dict) -> tuple[list[dict], int]:
+    """(profiles, skipped generic sections) from Winlator's data files.
+
+    Only the Windows-side part is taken: DLL overrides, launch arguments,
+    environment variables, the Windows version, and the DLLs each Windows
+    component owns. Anything box64-, Android- or Winlator-Wine-specific is
+    recorded per title as an unavailable fix rather than dropped.
+    """
+    games: list[dict] = []
+    skipped = 0
+    box64rc = assets / 'box64/default.box64rc'
+    if box64rc.exists():
+        for executable, settings in sorted(parse_box64rc(box64rc).items()):
+            if executable.lower() in WINLATOR_GENERIC_EXES:
+                # "Launcher.exe" belongs to no one title; a profile keyed by it
+                # would match every launcher in the library.
+                skipped += 1
+                continue
+            entry: dict = {'title': executable, 'executables': [executable],
+                           'source': 'winlator:box64/default.box64rc'}
+            overrides: dict[str, str] = {}
+            env: dict[str, str] = {}
+            arguments: list[str] = []
+            recipes_used: list[str] = []
+            unavailable: list[str] = []
+            for setting, values in settings.items():
+                # A setting the loader itself acts on is named by the key, not
+                # by a value ("BOX64_SKIPCPU=4").
+                if setting in WINLATOR_UNAVAILABLE:
+                    unavailable.append(f'{setting} ({WINLATOR_UNAVAILABLE[setting]})')
+                for value in values:
+                    if value.startswith('WINEARGS='):
+                        for token in filter_arguments(value[len('WINEARGS='):], unavailable):
+                            if token not in arguments:
+                                arguments.append(token)
+                        continue
+                    if value.startswith('WINEDLLOVERRIDES='):
+                        overrides.update(parse_winlator_overrides(value[len('WINEDLLOVERRIDES='):]))
+                        continue
+                    parsed = parse_winlator_env(value)
+                    if parsed is None:
+                        continue
+                    name, setting_value = parsed
+                    if name in WINLATOR_UNAVAILABLE:
+                        unavailable.append(f'{name} ({WINLATOR_UNAVAILABLE[name]})')
+                    elif name == 'WINVERSION':
+                        version = WINLATOR_WINDOWS_VERSIONS.get(setting_value.lower())
+                        if version:
+                            entry['windows_version'] = version
+                        else:
+                            unavailable.append(f'Windows version {setting_value}')
+                    elif name:
+                        env[name] = setting_value
+                # A dynamic recompiler setting is FEX's here. The one that
+                # matters is the strong memory model: titles that hang or
+                # corrupt state under a relaxed one need FEX's TSO emulation.
+                if WINLATOR_BOX64_DYNAREC.match(setting):
+                    if setting == 'BOX64_DYNAREC_STRONGMEM' and any(int(v or 0) > 0 for v in values):
+                        if 'fex-strong-memory' in recipes:
+                            recipes_used.append('fex-strong-memory')
+                        else:
+                            unavailable.append('BOX64_DYNAREC_STRONGMEM (no equivalent recipe)')
+                    else:
+                        unavailable.append(f'{setting} (box64 tuning; FEX has its own knobs)')
+            if overrides:
+                entry['dll_overrides'] = overrides
+            if env:
+                entry['env'] = env
+            if arguments:
+                entry['launch_arguments'] = ' '.join(arguments)
+            if recipes_used:
+                entry['recipes'] = sorted(set(recipes_used))
+            if unavailable:
+                entry['unavailable_fixes'] = sorted(set(unavailable))
+            games.append(entry)
+
+    wincomponents = assets / 'wincomponents/wincomponents.json'
+    if wincomponents.exists():
+        components = load(wincomponents)
+        # What every entry already answers for, so a name is never taken from
+        # one component and given to another.
+        claimed = {dep_id.lower(): dep_id for dep_id in dependencies}
+        for dep_id, dependency in dependencies.items():
+            for name in dependency.get('imports', []) or []:
+                claimed.setdefault(str(name).lower(), dep_id)
+        component_sources: dict[str, set] = {}
+        for component, definition in sorted(components.items()):
+            for raw_name in definition.get('dlnames', []):
+                name = Path(str(raw_name)).stem.lower()
+                owner = winlator_dll_owner(name, dependencies, claimed)
+                if owner is None:
+                    continue
+                dependency = dependencies[owner]
+                imports = list(dependency.get('imports', []))
+                if name not in imports:
+                    imports.append(name)
+                dependency['imports'] = sorted(imports)
+                # A component Madeira has to be given files for keeps the file
+                # list complete: Winlator ships a whole Windows component and a
+                # game may load any DLL of it.
+                if dependency.get('support') == 'payload':
+                    payload = list(dependency.get('dlls', []))
+                    filename = str(raw_name) if '.' in str(raw_name) else str(raw_name) + '.dll'
+                    if filename.lower() not in [item.lower() for item in payload]:
+                        payload.append(filename)
+                    dependency['dlls'] = sorted(payload, key=str.lower)
+                claimed[name] = owner
+                component_sources.setdefault(owner, set()).add(component)
+        for owner, used in component_sources.items():
+            dependency = dependencies[owner]
+            existing = [part for part in str(dependency.get('source', '')).split(',') if part]
+            for component in sorted(used):
+                tag = f'winlator:{component}'
+                if tag not in existing:
+                    existing.append(tag)
+            dependency['source'] = ','.join(existing)
+    return games, skipped
+
+
+# ---------------------------------------------------------------------------
 # Validation and output
 
 VALID_SUPPORT = {'builtin', 'override', 'payload', 'manual', 'unsupported', 'partial'}
 VALID_OVERRIDE = {'', 'n', 'b', 'n,b', 'b,n'}
 VALID_CATEGORY = {'dependency', 'dll', 'registry', 'dx9', 'dx11', 'dx12', 'media', 'audio',
                   'input', 'wine_fex', 'drm', 'anticheat', 'save_path', 'launch', 'other'}
+
+
+VALID_FILE_ACTIONS = {'rename', 'delete', 'mkdir'}
+VALID_FILE_LOCATIONS = {'game', 'prefix'}
+
+
+def check_file_actions(actions, owner: str) -> None:
+    """A file action must be one Madeira can perform and complete."""
+    for action in actions or []:
+        kind = str(action.get('action', '')).lower()
+        if kind not in VALID_FILE_ACTIONS:
+            fail(f'{owner}: bad file action {action.get("action")!r}')
+            continue
+        if not action.get('path'):
+            fail(f'{owner}: {kind} without a path')
+        if kind == 'rename' and not action.get('to'):
+            fail(f'{owner}: rename of {action.get("path")!r} without a destination')
+        location = str(action.get('in', 'game')).lower()
+        if location not in VALID_FILE_LOCATIONS:
+            fail(f'{owner}: bad file location {action.get("in")!r}')
 
 
 def validate(database: dict) -> None:
@@ -706,6 +1060,10 @@ def validate(database: dict) -> None:
         for token in (recipe.get('dll_overrides') or {}).values():
             if token not in VALID_OVERRIDE:
                 fail(f'recipe {recipe_id}: bad override token {token!r}')
+        check_file_actions(recipe.get('files'), f'recipe {recipe_id}')
+        for token in recipe.get('remove_arguments') or []:
+            if not isinstance(token, str) or not token:
+                fail(f'recipe {recipe_id}: bad remove_arguments entry {token!r}')
 
     seen: set[str] = set()
     for game in database.get('games', []):
@@ -724,7 +1082,16 @@ def validate(database: dict) -> None:
         for token in (game.get('dll_overrides') or {}).values():
             if token not in VALID_OVERRIDE:
                 fail(f'game {game.get("title")}: bad override token {token!r}')
+        if 'run' in game:
+            target = game['run']
+            if not isinstance(target, str) or not target:
+                fail(f'game {game.get("title")}: bad run target {target!r}')
+            elif not (target.lower().endswith('.exe') or '\\' in target or '/' in target
+                      or (len(target) > 1 and target[1] == ':')):
+                fail(f'game {game.get("title")}: run target {target!r} is not a program')
+        check_file_actions(game.get('files'), f'game {game.get("title")}')
         for fallback in game.get('fallbacks', []):
+            check_file_actions(fallback.get('files'), f'game {game.get("title")} fallback')
             for recipe in fallback.get('recipes', []):
                 if recipe not in recipes:
                     fail(f'game {game.get("title")}: unknown fallback recipe {recipe!r}')
@@ -735,7 +1102,8 @@ def validate(database: dict) -> None:
             fail(f'game {game.get("title")}: bad rating {game["rating"]!r}')
 
 
-def build(protonfixes: Path | None, winetricks: Path | None, bottles: Path | None) -> dict:
+def build(protonfixes: Path | None, winetricks: Path | None, bottles: Path | None,
+          winlator: Path | None = None) -> dict:
     hand = load(COMPAT / 'dependencies.json')
     dependencies = dict(hand.get('dependencies', {}))
     if not dependencies:
@@ -770,6 +1138,7 @@ def build(protonfixes: Path | None, winetricks: Path | None, bottles: Path | Non
             'winetricks': winetricks.name if winetricks else None,
             'bottles': bottles.name if bottles else None,
             'protonfixes': protonfixes.name if protonfixes else None,
+            'winlator': winlator.name if winlator else None,
         },
         'dependencies': dependencies,
         'recipes': load(COMPAT / 'recipes.json').get('recipes', {}),
@@ -783,13 +1152,29 @@ def build(protonfixes: Path | None, winetricks: Path | None, bottles: Path | Non
         absorb = override_only_recipes(recipes)
         imported = import_protonfixes(protonfixes, dependencies, recipes, absorb)
         curated = {str(game.get('appid')) for game in database['games'] if game.get('appid')}
-        curated |= {(game.get('executables') or [''])[0].lower() for game in database['games']}
+        curated |= {exe.lower() for game in database['games'] for exe in (game.get('executables') or [])}
         for game in imported:
             key = str(game.get('appid')) if game.get('appid') else (game.get('gog_slug') or '').lower()
-            exe = (game.get('executables') or [''])[0].lower()
-            if key in curated or (exe and exe in curated):
+            executables = [exe.lower() for exe in game.get('executables') or []]
+            if key in curated or any(exe in curated for exe in executables):
                 continue
             database['games'].append(game)
+
+    if winlator:
+        imported, skipped = import_winlator(winlator, dependencies, recipes)
+        # A curated profile, or one from another source with the same title,
+        # keeps its place; Winlator fills in what nothing else knows.
+        taken = {exe.lower() for game in database['games'] for exe in (game.get('executables') or [])}
+        taken |= {(game.get('title') or '').lower() for game in database['games']}
+        for game in imported:
+            executables = [exe.lower() for exe in game.get('executables') or []]
+            title = (game.get('title') or '').lower()
+            if title in taken or any(exe in taken for exe in executables):
+                continue
+            taken.add(title)
+            taken.update(executables)
+            database['games'].append(game)
+        database['winlator_skipped_generic_sections'] = skipped
 
     validate(database)
     return database
@@ -800,13 +1185,23 @@ def main() -> int:
     parser.add_argument('--protonfixes', type=Path, help='Protonfixes checkout to import game fixes from')
     parser.add_argument('--winetricks', type=Path, help='Winetricks checkout (the directory with src/winetricks)')
     parser.add_argument('--bottles', type=Path, help='Bottles dependencies checkout (the directory of .yml files)')
+    parser.add_argument('--winlator', type=Path,
+                        help='Winlator assets directory (winlator-app/app/src/main/assets) or a checkout of either repository')
     parser.add_argument('--check', action='store_true', help='validate and compare without writing')
     args = parser.parse_args()
 
     winetricks = args.winetricks
     if winetricks and (winetricks / 'src/winetricks').exists():
         winetricks = winetricks / 'src/winetricks'
-    database = build(args.protonfixes, winetricks, args.bottles)
+    winlator = args.winlator
+    if winlator:
+        # Accept the repository root, the app repository root, or the assets
+        # directory itself.
+        for candidate in (winlator / 'app/src/main/assets', winlator / 'assets', winlator):
+            if (candidate / 'box64/default.box64rc').exists() or (candidate / 'wincomponents/wincomponents.json').exists():
+                winlator = candidate
+                break
+    database = build(args.protonfixes, winetricks, args.bottles, winlator)
     text = json.dumps(database, indent=1, sort_keys=False, ensure_ascii=False) + '\n'
     if args.check:
         if OUT.exists() and OUT.read_text(encoding='utf-8') == text:
@@ -820,6 +1215,8 @@ def main() -> int:
         print('FAIL: ' + failure, file=sys.stderr)
     print(f'wrote {OUT.relative_to(ROOT)}: {len(database["dependencies"])} dependencies, '
           f'{len(database["recipes"])} recipes, {len(database["games"])} games, {len(text)} bytes')
+    if winlator:
+        print(f'winlator: {database.get("winlator_skipped_generic_sections", 0)} generic section(s) skipped')
     return 1 if failures else 0
 
 

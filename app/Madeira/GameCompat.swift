@@ -45,6 +45,43 @@ struct CompatRegistryValue: Codable, Equatable {
     var valueText: String { value ?? "" }
 }
 
+/// One file operation a profile performs before the game starts.
+///
+/// A title sometimes has to be given a different file than it ships: an old
+/// `ddraw.dll` beside the executable that must not be loaded (Command &
+/// Conquer, Red Alert 2), a `.SkuDef` that makes the patcher pick the wrong
+/// branch (Command & Conquer 3), a config the game rewrites into a broken one
+/// (Doom). Upstream fixes rename or delete those files; this is the same
+/// remedy as data, applied to the install folder or the prefix before launch.
+struct CompatFileAction: Codable, Equatable {
+    /// rename | delete | mkdir.
+    var action: String?
+    /// Path below the base, with either separator.
+    var path: String?
+    /// Destination for `rename`, below the same base.
+    var to: String?
+    /// "game" (the launched executable's folder, the default) or "prefix"
+    /// (the prefix's drive_c).
+    var location: String?
+
+    enum CodingKeys: String, CodingKey {
+        case action, path, to
+        case location = "in"
+    }
+
+    var actionName: String { (action ?? "").lowercased() }
+    var locationName: String { (location ?? "game").lowercased() }
+    /// Description for the log and the compatibility section.
+    var summaryText: String {
+        switch actionName {
+        case "rename": return "rename \(path ?? "?") to \(to ?? "?")"
+        case "delete": return "delete \(path ?? "?")"
+        case "mkdir": return "create \(path ?? "?")"
+        default: return "\(actionName) \(path ?? "?")"
+        }
+    }
+}
+
 /// A reusable fix: a named bundle of environment, overrides, registry,
 /// arguments and dependencies that many games or components share. A recipe is
 /// applied wherever it is referenced, so the same fix is written once; the
@@ -64,14 +101,19 @@ struct CompatRecipe: Codable, Equatable {
     var env: [String: String]?
     var launchArguments: String?
     var windowsVersion: String?
+    /// Arguments to drop from the command line (a launcher's own `--steam`).
+    var removeArguments: [String]?
+    /// Files to move aside or remove before the game starts.
+    var files: [CompatFileAction]?
     var notes: String?
     var source: String?
     var id: String = ""
 
     enum CodingKeys: String, CodingKey {
-        case title, category, summary, dependencies, requires, registry, env, notes, source
+        case title, category, summary, dependencies, requires, registry, env, notes, source, files
         case dllOverrides = "dll_overrides"
         case launchArguments = "launch_arguments"
+        case removeArguments = "remove_arguments"
         case windowsVersion = "windows_version"
     }
 }
@@ -88,13 +130,20 @@ struct CompatFallback: Codable, Equatable {
     var env: [String: String]?
     var launchArguments: String?
     var windowsVersion: String?
+    /// Registry values this attempt writes.
+    var registry: [CompatRegistryValue]?
     /// Recipes or dependency ids this attempt must not apply.
     var disable: [String]?
+    /// Arguments to drop for this attempt.
+    var removeArguments: [String]?
+    /// Files to move aside or remove for this attempt.
+    var files: [CompatFileAction]?
 
     enum CodingKeys: String, CodingKey {
-        case name, note, dependencies, recipes, env, disable
+        case name, note, dependencies, recipes, env, disable, files, registry
         case dllOverrides = "dll_overrides"
         case launchArguments = "launch_arguments"
+        case removeArguments = "remove_arguments"
         case windowsVersion = "windows_version"
     }
 }
@@ -152,6 +201,15 @@ struct CompatGame: Codable, Equatable {
     var env: [String: String]?
     var launchArguments: String?
     var windowsVersion: String?
+    /// The program to start instead of the one the entry picked: a launcher
+    /// that does not run under Wine (`Launcher.exe` → `Borderlands2.exe`,
+    /// `launcher.exe` → `binaries/Darktide.exe`), relative to the picked
+    /// program's folder or to drive_c ("C:\...").
+    var run: String?
+    /// Arguments to drop from the command line before the game sees them.
+    var removeArguments: [String]?
+    /// Files to move aside or remove before the game starts.
+    var files: [CompatFileAction]?
     var fixes: [String]?
     /// Fixes a Protonfixes script applies that have no equivalent on Madeira's
     /// stack (Vulkan, esync/fsync, NVIDIA, Linux paths), kept so the report is
@@ -168,12 +226,13 @@ struct CompatGame: Codable, Equatable {
 
     enum CodingKeys: String, CodingKey {
         case title, appid, executables, engine, rating, dependencies, registry, env
-        case fixes, issues, notes, conditional, recipes, fallbacks, source
+        case fixes, issues, notes, conditional, recipes, fallbacks, source, run, files
         case unavailableFixes = "unavailable_fixes"
         case gogSlug = "gog_slug"
         case pathContains = "path_contains"
         case dllOverrides = "dll_overrides"
         case launchArguments = "launch_arguments"
+        case removeArguments = "remove_arguments"
         case windowsVersion = "windows_version"
     }
 
@@ -308,6 +367,12 @@ struct CompatPlan {
     var unsetEnvironment: [String] = []
     var dllOverrides: [String: String] = [:]
     var launchArguments: [String] = []
+    /// Tokens the profile wants gone from the command line.
+    var removeArguments: [String] = []
+    /// The program to start instead of the entry's own, as a Windows path.
+    var launchExecutable: String?
+    /// File operations to perform before the session starts.
+    var files: [CompatFileAction] = []
     var windowsVersion: String?
     var registry: [CompatRegistryValue] = []
     var unsatisfied: [CompatUnsatisfied] = []
@@ -322,6 +387,7 @@ struct CompatPlan {
     var isEmpty: Bool {
         matched.isEmpty && environment.isEmpty && unsetEnvironment.isEmpty && dllOverrides.isEmpty
             && launchArguments.isEmpty && windowsVersion == nil && registry.isEmpty
+            && launchExecutable == nil && removeArguments.isEmpty && files.isEmpty
     }
     var titles: [String] { matched.compactMap { $0.title } }
     var dependencyTitles: [String] { dependencies.compactMap { $0.title } }
@@ -552,6 +618,11 @@ enum GameCompatibility {
             for (dll, order) in game.dllOverrides ?? [:] { plan.dllOverrides[dll.lowercased()] = order }
             plan.registry.append(contentsOf: game.registry ?? [])
             if let version = game.windowsVersion { plan.windowsVersion = version }
+            if let run = game.run, !run.isEmpty, let resolved = windowsPath(for: run, launch: launch) {
+                plan.launchExecutable = resolved
+            }
+            plan.removeArguments.append(contentsOf: game.removeArguments ?? [])
+            plan.files.append(contentsOf: game.files ?? [])
             plan.launchArguments.append(contentsOf: game.launchArgumentTokens)
             for fix in game.fixes ?? [] { plan.notes.append("\(game.titleText): \(fix)") }
             for fix in game.unavailableFixes ?? [] { plan.notes.append("\(game.titleText): \(fix) is not available on Madeira") }
@@ -589,9 +660,41 @@ enum GameCompatibility {
             plan.environment["WINEDLLOVERRIDES"] = merged
         }
 
+        // DXMT reads its options from DXMT_CONFIG, which madeira.cfg also uses.
+        // A per-game option therefore appends to the launch's own list instead
+        // of replacing the player's settings.
+        if let ours = plan.environment["DXMT_CONFIG"], let existing = launch.environment["DXMT_CONFIG"] {
+            let parts = existing.split(separator: ";").map(String.init) + ours.split(separator: ";").map(String.init)
+            var seen = Set<String>()
+            let merged = parts.filter { !$0.isEmpty && seen.insert($0).inserted }
+            plan.environment["DXMT_CONFIG"] = merged.joined(separator: ";")
+        }
+
+        // The same token or operation named by a component and by the profile
+        // is applied once.
+        plan.removeArguments = plan.removeArguments.reduce(into: [String]()) { result, token in
+            if !token.isEmpty, !result.contains(token) { result.append(token) }
+        }
+        var seenActions = Set<String>()
+        plan.files = plan.files.filter { action in
+            seenActions.insert("\(action.actionName)|\(action.locationName)|\(action.path ?? "")|\(action.to ?? "")").inserted
+        }
+
         // Per-application registry: version and DLL overrides keyed by the
         // executable, so two games in the one shared prefix cannot collide.
         let app = appDefaultsKey(launch.executable)
+        // A component cannot know which program will use it, so "{app}" in a
+        // registry key or value name stands for this launch's AppDefaults key.
+        // That is how a recipe carries per-application settings, such as Wine's
+        // own Direct3D configuration.
+        for index in plan.registry.indices {
+            guard (plan.registry[index].key?.contains("{app}") ?? false)
+                    || (plan.registry[index].name?.contains("{app}") ?? false) else { continue }
+            plan.registry[index].key = plan.registry[index].key?
+                .replacingOccurrences(of: "{app}", with: app)
+            plan.registry[index].name = plan.registry[index].name?
+                .replacingOccurrences(of: "{app}", with: app)
+        }
         if let version = plan.windowsVersion {
             plan.registry.append(CompatRegistryValue(hive: "HKCU", key: "Software\\Wine\\AppDefaults\\\(app)",
                                                      name: "Version", type: "REG_SZ", value: version))
@@ -644,6 +747,87 @@ enum GameCompatibility {
         return base.isEmpty ? "madeira.exe" : base
     }
 
+    /// Turn a profile's `run` target into the Windows path the session starts.
+    ///
+    /// "Launcher.exe" and "../bin/game.exe" resolve against the folder of the
+    /// program the entry picked, which is how upstream fixes name them; an
+    /// absolute Windows path ("C:\Games\Foo\foo.exe") is taken as written.
+    /// Returns nil when the target escapes drive_c.
+    static func windowsPath(for run: String, launch: CompatLaunch) -> String? {
+        let trimmed = run.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return nil }
+        if trimmed.count > 1, trimmed.dropFirst().first == ":", trimmed.first?.isLetter == true {
+            return trimmed
+        }
+        guard let relative = launch.relativePath, !relative.isEmpty else { return nil }
+        let folder = (relative as NSString).deletingLastPathComponent
+        var parts = folder.isEmpty ? [] : folder.components(separatedBy: "/").filter { !$0.isEmpty }
+        for component in trimmed.replacingOccurrences(of: "\\", with: "/").components(separatedBy: "/") {
+            switch component {
+            case "", ".": continue
+            case "..":
+                // Above drive_c is not addressable as a Windows path here.
+                guard !parts.isEmpty else { return nil }
+                parts.removeLast()
+            default: parts.append(component)
+            }
+        }
+        guard !parts.isEmpty else { return nil }
+        return "C:\\" + parts.joined(separator: "\\")
+    }
+
+    /// Apply a plan's file actions: run before the session starts, against the
+    /// folder of the program being started (`gameDirectory`, a Unix path) or
+    /// the prefix's drive_c. Idempotent: a source that is already gone, or a
+    /// rename whose destination already exists, is a no-op, so a title that
+    /// starts twice does not accumulate copies.
+    static func applyFiles(_ plan: CompatPlan, gameDirectory: String, prefix: String,
+                           fileManager: FileManager = .default) -> (applied: Int, failures: [String]) {
+        var applied = 0
+        var failures: [String] = []
+        for action in plan.files {
+            let base = action.locationName == "prefix"
+                ? prefix + "/drive_c" : gameDirectory
+            guard let path = action.path, !path.isEmpty else { continue }
+            let source = base + "/" + path.replacingOccurrences(of: "\\", with: "/")
+            switch action.actionName {
+            case "rename":
+                guard let to = action.to, !to.isEmpty else {
+                    failures.append("rename \(path): no destination"); continue
+                }
+                let destination = base + "/" + to.replacingOccurrences(of: "\\", with: "/")
+                if fileManager.fileExists(atPath: destination) { continue }
+                guard fileManager.fileExists(atPath: source) else { continue }
+                do {
+                    try fileManager.moveItem(atPath: source, toPath: destination)
+                    applied += 1
+                } catch {
+                    failures.append("rename \(path): \(error.localizedDescription)")
+                }
+            case "delete":
+                guard fileManager.fileExists(atPath: source) else { continue }
+                do {
+                    try fileManager.removeItem(atPath: source)
+                    applied += 1
+                } catch {
+                    failures.append("delete \(path): \(error.localizedDescription)")
+                }
+            case "mkdir":
+                var isDirectory: ObjCBool = false
+                if fileManager.fileExists(atPath: source, isDirectory: &isDirectory), isDirectory.boolValue { continue }
+                do {
+                    try fileManager.createDirectory(atPath: source, withIntermediateDirectories: true)
+                    applied += 1
+                } catch {
+                    failures.append("create \(path): \(error.localizedDescription)")
+                }
+            default:
+                failures.append("\(action.summaryText): unsupported action")
+            }
+        }
+        return (applied, failures)
+    }
+
     /// "n,b" -> "native,builtin".
     static func registryOrder(_ order: String) -> String {
         order.split(separator: ",").map { token -> String in
@@ -676,6 +860,8 @@ enum GameCompatibility {
         plan.registry.append(contentsOf: recipe.registry ?? [])
         if let version = recipe.windowsVersion { plan.windowsVersion = version }
         plan.launchArguments.append(contentsOf: CompatGame.splitArguments(recipe.launchArguments ?? ""))
+        plan.removeArguments.append(contentsOf: recipe.removeArguments ?? [])
+        plan.files.append(contentsOf: recipe.files ?? [])
         if let note = recipe.notes, !note.isEmpty {
             plan.notes.append("\(recipe.title ?? recipe.id): \(note)")
         }
@@ -684,8 +870,11 @@ enum GameCompatibility {
     private static func merge(_ fallback: CompatFallback, into plan: inout CompatPlan) {
         for (key, value) in fallback.env ?? [:] { plan.environment[key] = value }
         for (dll, order) in fallback.dllOverrides ?? [:] { plan.dllOverrides[dll.lowercased()] = order }
+        plan.registry.append(contentsOf: fallback.registry ?? [])
         if let version = fallback.windowsVersion { plan.windowsVersion = version }
         plan.launchArguments.append(contentsOf: CompatGame.splitArguments(fallback.launchArguments ?? ""))
+        plan.removeArguments.append(contentsOf: fallback.removeArguments ?? [])
+        plan.files.append(contentsOf: fallback.files ?? [])
     }
 
     /// Which of a dependency's required files are absent from every payload
@@ -719,6 +908,9 @@ enum GameCompatibility {
         if !plan.environment.isEmpty { lines.append("environment: " + plan.environment.keys.sorted().joined(separator: ", ")) }
         if !plan.unsetEnvironment.isEmpty { lines.append("unset: " + plan.unsetEnvironment.sorted().joined(separator: ", ")) }
         if !plan.launchArguments.isEmpty { lines.append("arguments: " + plan.launchArguments.joined(separator: " ")) }
+        if !plan.removeArguments.isEmpty { lines.append("dropped arguments: " + plan.removeArguments.joined(separator: " ")) }
+        if let run = plan.launchExecutable { lines.append("runs instead: \(run)") }
+        for action in plan.files { lines.append("file: \(action.summaryText)") }
         for item in plan.unsatisfied {
             lines.append("unsatisfied: \(item.title) — \(item.reason)")
         }

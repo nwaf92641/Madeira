@@ -2312,6 +2312,54 @@
     "vccorlib140_app.dll"
    ],
    "source": "madeira:import-coverage"
+  },
+  "wine-mono": {
+   "title": "Wine Mono (.NET runtime)",
+   "kind": "runtime",
+   "category": "dependency",
+   "support": "manual",
+   "summary": "Wine's own .NET implementation, the MSI Wine installs into a prefix so managed programs run without Microsoft's .NET installers. Titles built with .NET need it, and Wine stops a program the first time one starts to ask for it.",
+   "imports": [
+    "mscoree"
+   ],
+   "dlls": [
+    "wine-mono-10.1.0-x86.msi",
+    "wine-mono-10.1.0-x86_64.msi"
+   ],
+   "notes": "Wine installs the MSI from share/wine/mono of the runtime at prefix creation; the engine can only report that it is needed. Winlator ships these two files with its prefixes (winlator:wine_addons) and blocks Microsoft's .NET installers, which Madeira's Wine does not need.",
+   "source": "winlator:wine_addons,wine"
+  },
+  "wine-gecko": {
+   "title": "Wine Gecko (HTML engine)",
+   "kind": "runtime",
+   "category": "dependency",
+   "support": "manual",
+   "summary": "Wine's HTML engine, the MSI Wine installs into a prefix for programs that embed a browser control or show an HTML page. Without it the first such program stops to ask for it, or shows an empty page.",
+   "imports": [
+    "mshtml"
+   ],
+   "dlls": [
+    "wine-gecko-2.47.4-x86.msi",
+    "wine-gecko-2.47.4-x86_64.msi"
+   ],
+   "notes": "Installed by Wine from share/wine/gecko of the runtime at prefix creation. Launchers that embed a browser control want it; a browser-based launcher that fails without it can also be skipped with the launcher-webview recipe.",
+   "source": "winlator:wine_addons,wine"
+  },
+  "d3dcsx": {
+   "title": "Direct3D CSX (compute shader extensions)",
+   "kind": "directx",
+   "category": "dependency",
+   "support": "payload",
+   "summary": "The d3dcsx helpers (scan, sort, prefix sum) that Direct3D 10 and 11 titles link against for GPU sorting and particle work. Winlator installs them with its Direct3D component.",
+   "imports": [
+    "d3dcsx_42",
+    "d3dcsx_43"
+   ],
+   "dlls": [
+    "d3dcsx_42.dll",
+    "d3dcsx_43.dll"
+   ],
+   "source": "winlator:direct3d"
   }
  }
 }

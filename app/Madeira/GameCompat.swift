@@ -349,6 +349,10 @@ struct CompatDatabase: Codable {
     var wineNotIn64BitFarm: [String]?
     /// Prefixes of the API set contract names (`api-ms-win-*`, `ext-ms-win-*`).
     var apiSetPrefixes: [String]?
+    /// Wine's API set schema: contract (without its last version number, see
+    /// `apiSetKey`) -> host module, "" when Wine defines the contract with no
+    /// host. Nil in an old overlay, which keeps the prefix-only behaviour.
+    var wineAPISets: [String: String]?
 
     enum CodingKeys: String, CodingKey {
         case schema, updated, dependencies, recipes, games, baseline, rules, remedies
@@ -357,6 +361,7 @@ struct CompatDatabase: Codable {
         case wineModules64 = "wine_modules_64"
         case wineNotIn64BitFarm = "wine_not_in_64bit_farm"
         case apiSetPrefixes = "api_set_prefixes"
+        case wineAPISets = "wine_api_sets"
     }
 
     var dependencyTable: [String: CompatDependency] {
@@ -413,6 +418,31 @@ struct CompatDatabase: Codable {
     func isAPISet(_ name: String) -> Bool {
         let lower = name.lowercased()
         return (apiSetPrefixes ?? []).contains { lower.hasPrefix($0) }
+    }
+
+    /// The part of an API set name the loader looks up: lowercase, no ".dll",
+    /// and without the last "-<n>" (Wine's ntdll get_apiset_entry hashes the
+    /// name up to its last hyphen, as Windows does, so
+    /// api-ms-win-core-file-l1-2-4 is the schema's api-ms-win-core-file-l1-2).
+    static func apiSetKey(_ name: String) -> String {
+        let base = GameCompatibility.importName(name)
+        guard let dash = base.lastIndex(of: "-") else { return base }
+        return String(base[..<dash])
+    }
+
+    /// Why an imported API set does not resolve for a program of `bits`, or
+    /// nil when it does (or when the database carries no schema). The loader
+    /// maps the contract to its host module; a contract Wine does not define,
+    /// one it defines without a host, and one whose host is not in the
+    /// program's farm all end in "Library ... not found" at load time.
+    func apiSetProblem(_ name: String, bits: Int?) -> String? {
+        guard isAPISet(name), let sets = wineAPISets, !sets.isEmpty else { return nil }
+        guard let host = sets[CompatDatabase.apiSetKey(name)] else { return "not in Wine's API set schema" }
+        if host.isEmpty { return "Wine defines it without an implementing module" }
+        if !providedModules(bits: bits).contains(GameCompatibility.importName(host)) {
+            return "its host " + host + " is not in " + (bits == 32 ? "the runtime" : "the 64-bit farm")
+        }
+        return nil
     }
 }
 
@@ -986,12 +1016,20 @@ enum GameCompatibility {
             }
             let farmGaps = importedDLLs.intersection(absent.subtracting(database.absentModules))
                 .subtracting(brought).filter { !database.isAPISet($0) }
-            plan.unavailableModules = unaccounted.intersection(absent).union(farmGaps).sorted()
+            // An API set is answered by the loader only when the schema has the
+            // contract and its host is a module of this program's farm.
+            let apiSetGaps = Set(importedDLLs.filter { database.apiSetProblem($0, bits: launch.bits) != nil })
+            plan.unavailableModules = unaccounted.intersection(absent).union(farmGaps).union(apiSetGaps).sorted()
             plan.unaccountedImports = unaccounted.subtracting(absent).sorted()
             if !plan.unavailableModules.isEmpty {
                 let runtime = launch.bits == 64 ? "the 64-bit runtime" : "the runtime"
                 plan.notes.append(runtime + " does not ship " + summarise(plan.unavailableModules)
                                   + "; a title that needs it must bring its own copy")
+            }
+            for name in apiSetGaps.sorted() {
+                if let why = database.apiSetProblem(name, bits: launch.bits) {
+                    plan.notes.append("API set " + name + ": " + why)
+                }
             }
             if !plan.unaccountedImports.isEmpty {
                 plan.notes.append("no component or rule accounts for " + summarise(plan.unaccountedImports)

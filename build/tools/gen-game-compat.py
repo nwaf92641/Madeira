@@ -1132,6 +1132,15 @@ def validate_universal(database: dict) -> None:
         for name in database.get('wine_not_in_64bit_farm') or []:
             if name in modules_64:
                 fail(f'wine_not_in_64bit_farm: {name!r} is also listed in wine_modules_64')
+    schema = database.get('wine_api_sets')
+    if not isinstance(schema, dict) or len(schema) < 200:
+        fail('wine_api_sets: missing or too short; regenerate compat/wine-modules.json '
+             '(build/tools/gen-wine-modules.py --wine wine)')
+    else:
+        for contract, host in schema.items():
+            if contract != contract.lower() or contract.endswith('.dll') or (host and host not in modules):
+                fail(f'wine_api_sets: {contract!r} -> {host!r} is not a lowercase contract with a provided host')
+                break
     api_sets = database.get('api_set_prefixes') or []
     if not api_sets:
         fail('api_set_prefixes: a Wine module list without the API set prefixes '
@@ -1281,6 +1290,7 @@ def build(protonfixes: Path | None, winetricks: Path | None, bottles: Path | Non
         'wine_modules_64': load(COMPAT / 'wine-modules.json').get('modules_64', []),
         'wine_not_in_64bit_farm': load(COMPAT / 'wine-modules.json').get('not_in_64bit_farm', []),
         'api_set_prefixes': load(COMPAT / 'wine-modules.json').get('api_set_prefixes', []),
+        'wine_api_sets': load(COMPAT / 'wine-modules.json').get('api_sets', {}),
     }
     recipes = database['recipes']
     for dep in database['dependencies'].values():
@@ -1318,6 +1328,34 @@ def build(protonfixes: Path | None, winetricks: Path | None, bottles: Path | Non
     return database
 
 
+def update_local(names: list[str]) -> int:
+    """Re-apply the named hand-written dependencies and the Wine module fields
+    to the committed database. Hand-written entries win over the Winetricks and
+    Bottles ones in build() too ("if name not in dependencies"), so for an entry
+    no later import widens, the result is what a full run would produce."""
+    database = json.loads(OUT.read_text(encoding='utf-8'))
+    hand = load(COMPAT / 'dependencies.json').get('dependencies', {})
+    for name in names:
+        if name not in hand:
+            fail(f'--update-local: {name} is not in compat/dependencies.json')
+            continue
+        entry = dict(hand[name])
+        slot(entry, 'category', entry.get('category') or category_for('', entry), after='kind')
+        database['dependencies'][name] = entry
+    modules = load(COMPAT / 'wine-modules.json')
+    database['wine_modules'] = modules.get('modules', [])
+    database['wine_not_shipped'] = modules.get('not_shipped', [])
+    database['wine_modules_64'] = modules.get('modules_64', [])
+    database['wine_not_in_64bit_farm'] = modules.get('not_in_64bit_farm', [])
+    database['api_set_prefixes'] = modules.get('api_set_prefixes', [])
+    database['wine_api_sets'] = modules.get('api_sets', {})
+    validate(database)
+    OUT.write_text(json.dumps(database, indent=1, sort_keys=False, ensure_ascii=False) + '\n', encoding='utf-8')
+    print(f'updated {OUT.relative_to(ROOT)} in place: {len(database["dependencies"])} dependencies, '
+          f'{len(database["recipes"])} recipes, {len(database["games"])} games')
+    return 1 if failures else 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--protonfixes', type=Path, help='Protonfixes checkout to import game fixes from')
@@ -1326,7 +1364,17 @@ def main() -> int:
     parser.add_argument('--winlator', type=Path,
                         help='Winlator assets directory (winlator-app/app/src/main/assets) or a checkout of either repository')
     parser.add_argument('--check', action='store_true', help='validate and compare without writing')
+    parser.add_argument('--update-local', metavar='DEP[,DEP...]', default=None,
+                        help='refresh, inside the existing compat.json, only the named compat/dependencies.json '
+                             'entries and the compat/wine-modules.json fields, keeping everything imported from '
+                             'Winetricks / Bottles / Protonfixes / Winlator as it is ("-" for no entries); for a '
+                             'change to the hand-written data when the source checkouts are not at hand. An entry '
+                             'the Winlator import widens (vcrun2005, directplay, xact, ...) must not be named: '
+                             'its widened form only exists after a full run')
     args = parser.parse_args()
+    if args.update_local is not None:
+        names = [n for n in args.update_local.split(',') if n and n != '-']
+        return update_local(names)
 
     winetricks = args.winetricks
     if winetricks and (winetricks / 'src/winetricks').exists():

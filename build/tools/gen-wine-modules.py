@@ -44,6 +44,13 @@ list is therefore read from that directory, not assumed:
     not_in_64bit_farm   `modules` minus `modules_64`: real Wine modules a
                         64-bit program cannot load here today.
 
+    api_sets            Wine's API set schema (dlls/apisetschema/apisetschema.spec):
+                        contract name, without its last version number (the
+                        loader ignores it, see apiset_key()), -> host module,
+                        "" when Wine defines the contract with no host. An
+                        API set import is only resolved when its contract is
+                        here and the host is a module of the program's farm.
+
 `--farm64` names another farm directory; the list is regenerated whenever a
 group is added to the farm, and `--check` fails while it is out of date.
 """
@@ -78,6 +85,32 @@ DXMT_OWNED = {'d3d9', 'd3d10core', 'd3d11', 'dxgi', 'winemetal',
 # them. Kept as prefixes: they are not files in any Wine tree, and there are
 # hundreds of them.
 API_SET_PREFIXES = ['api-ms-win-', 'ext-ms-win-']
+APISET_LINE = re.compile(r'^apiset[ \t]+(\S+)[ \t]*=[ \t]*(\S*)', re.M)
+
+
+def apiset_key(name: str) -> str:
+    """The part of an API set name the loader compares: lowercase, without
+    '.dll' and without the last '-<n>' (Wine's ntdll and Windows both match
+    'api-ms-win-core-file-l1-2-4' against the schema's 'api-ms-win-core-file-l1-2')."""
+    lower = name.lower()
+    if lower.endswith('.dll'):
+        lower = lower[:-4]
+    return lower.rsplit('-', 1)[0]
+
+
+def api_sets_from_schema(path: Path) -> dict[str, str]:
+    """{contract key: host module name ('' when the schema gives no host)}."""
+    if not path.exists():
+        return {}
+    sets: dict[str, str] = {}
+    for name, host in APISET_LINE.findall(path.read_text(encoding='utf-8')):
+        host = host.lower()
+        if host.endswith('.dll'):
+            host = host[:-4]
+        sets[apiset_key(name)] = host
+    return dict(sorted(sets.items()))
+
+
 MODULE_DIR = re.compile(r'dlls/([A-Za-z0-9_.+-]+)(?:/[A-Za-z0-9_.+-]+)*')
 
 
@@ -175,6 +208,10 @@ def main() -> int:
     arguments = parser.parse_args()
 
     configure = arguments.configure or configure_from_checkout(arguments.wine)
+    schema = (arguments.wine or configure.parent) / 'dlls' / 'apisetschema' / 'apisetschema.spec'
+    api_sets = api_sets_from_schema(schema)
+    if len(api_sets) < 200:
+        raise SystemExit(f'{schema}: only {len(api_sets)} API sets; pass --wine with a Wine checkout')
     upstream, version = modules_from_configure(configure)
     not_shipped = not_shipped_from_build(arguments.skip_from)
     dropped = set(not_shipped)
@@ -197,6 +234,7 @@ def main() -> int:
         'modules_64': modules_64,
         'not_in_64bit_farm': not_in_64,
         'api_set_prefixes': list(API_SET_PREFIXES),
+        'api_sets': api_sets,
     }
     text = json.dumps(document, indent=2, sort_keys=False) + '\n'
 

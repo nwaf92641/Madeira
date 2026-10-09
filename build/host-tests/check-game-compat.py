@@ -504,6 +504,26 @@ if CommandLine.arguments.count > 1, let data = try? Data(contentsOf: URL(fileURL
         importedDLLs: ["api-ms-win-core-synch-l1-1-0.dll", "api-ms-win-core-file-l1-2-0.dll"]), database: real)
     check(modern.unaccountedImports.isEmpty && modern.unavailableModules.isEmpty,
           "a modern program whose extra imports are all API sets is reported clean")
+    // REGRESSION (API sets): an API set import resolves only when Wine's
+    // schema has the contract and its host is in the program's farm.
+    check((real.wineAPISets ?? [:]).count >= 600, "the bundled database carries Wine's API set schema")
+    let laterPatch = GameCompatibility.plan(CompatLaunch(executable: "x64.exe",
+        importedDLLs: ["api-ms-win-core-file-l1-2-4.dll", "api-ms-win-crt-runtime-l1-1-0.dll"], bits: 64), database: real)
+    check(laterPatch.unavailableModules.isEmpty,
+          "a contract is matched without its last version number, as the loader does")
+    let shell64 = GameCompatibility.plan(CompatLaunch(executable: "x64.exe",
+        importedDLLs: ["api-ms-win-shell-namespace-l1-1-0.dll"], bits: 64), database: real)
+    check(shell64.unavailableModules == ["api-ms-win-shell-namespace-l1-1-0"]
+          && shell64.notes.contains { $0.contains("windows.storage") },
+          "a 64-bit import whose host (windows.storage) is not in the ARM64EC farm is unavailable, with the host named")
+    let shell32 = GameCompatibility.plan(CompatLaunch(executable: "x86.exe",
+        importedDLLs: ["api-ms-win-shell-namespace-l1-1-0.dll"], bits: 32), database: real)
+    check(shell32.unavailableModules.isEmpty, "the same contract resolves for a 32-bit program (the i386 farm has the host)")
+    let invented = GameCompatibility.plan(CompatLaunch(executable: "x64.exe",
+        importedDLLs: ["api-ms-win-madeira-invented-l1-1-0.dll", "api-ms-win-deprecated-apis-legacy-l1-1-0.dll"], bits: 64),
+        database: real)
+    check(invented.unavailableModules == ["api-ms-win-deprecated-apis-legacy-l1-1-0", "api-ms-win-madeira-invented-l1-1-0"],
+          "a contract Wine lacks, or defines without a host, is reported instead of passing as an API set")
     // REGRESSION (64-bit farm): every module the ARM64EC farm lacks is either
     // answered by a catalogue component or rule, or named as unavailable for a
     // 64-bit program. None may pass as provided.

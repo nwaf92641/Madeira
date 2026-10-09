@@ -735,6 +735,21 @@ static int winios_game_windows_enabled(void) {
     return !(e && *e == '0');
 }
 
+/* MADEIRA_GAME_GDI_FULLSCREEN=1 (opt-in, default off): in game mode, also draw
+ * a window that covers the whole guest desktop as long as it does not present
+ * through Metal. That is how a DirectDraw game's picture reaches the screen:
+ * Wine's ddraw has no 3D backend here and falls back to WINED3D_NO3D, which
+ * blits the primary surface to the window with GDI, and the rule below hid
+ * exactly that window. Off by default because a Direct3D game's full-desktop
+ * window can paint GDI bits before its swapchain registers
+ * (winios_note_game_metal_hwnd), which would cover the picture until then;
+ * the registration still removes the layer. Read every time, like
+ * MADEIRA_DESKTOP. docs/DIRECTDRAW.md. */
+static int winios_game_gdi_fullscreen(void) {
+    const char *e = getenv("MADEIRA_GAME_GDI_FULLSCREEN");
+    return e && *e == '1';
+}
+
 /* A window whose rect covers the whole guest desktop: a game's own window. */
 static BOOL winios_covers_desktop(CGRect px) {
     int dw = 0, dh = 0;
@@ -772,6 +787,16 @@ static BOOL winios_game_window_shown(NSNumber *key) {
     NSValue *rv = g_px_rects[key];
     BOOL metal = [g_game_metal containsObject:key];
     if (!metal && rv && !winios_covers_desktop(rv.CGRectValue)) return YES;
+    if (!metal && rv && winios_game_gdi_fullscreen()) {
+        static BOOL said;
+        if (!said) {
+            said = YES;
+            fprintf(stderr, "[winios] game window hwnd=0x%llx covers the guest desktop and draws with GDI; "
+                    "drawn (MADEIRA_GAME_GDI_FULLSCREEN=1)\n", key.unsignedLongLongValue);
+            fflush(stderr);
+        }
+        return YES;
+    }
     CALayer *l = g_layers[key];
     if (l) {
         [l removeFromSuperlayer];

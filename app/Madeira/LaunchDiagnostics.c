@@ -72,7 +72,8 @@ static const char *const md_cat_hints[MD_CAT_COUNT] = {
     "can leave the frame black or incomplete.",
     "Frames were rendered but Metal did not hand out a drawable or did not show it.",
     "The window exists but is not drawn in a game session. A full-screen window that does not present "
-    "through Direct3D (GDI, DirectDraw, OpenGL) has no Metal output here; try the desktop session.",
+    "through Direct3D (GDI, DirectDraw, OpenGL) has no Metal output here. A GDI or DirectDraw (2D) game: "
+    "set MADEIRA_GAME_GDI_FULLSCREEN=1 for it, or use the desktop session (docs/DIRECTDRAW.md).",
     "A video or media component is missing or failed. A game that waits for an intro video can stay black "
     "(with or without sound).",
     "A DLL loaded, but a function the program calls is only a stub in this Wine build, or is not exported by "

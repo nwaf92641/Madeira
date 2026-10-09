@@ -10775,9 +10775,48 @@ static void mad_swap_release_buffers(struct mad_swapchain *s) {
     s->nbuf = 0;
 }
 
+/* In game mode every swapchain gets the SAME CAMetalLayer (the fullscreen
+ * singleton, IOSDisplayShim.m my_view_create_metal_view), whatever its HWND.
+ * A probe swapchain on a temporary window (GTA V Enhanced's Social Club
+ * renderer: 124x73, destroyed unpresented) set the shared layer to its size,
+ * and the game's 1920x1080 swapchain kept presenting into it. The swapchain
+ * that last configured the layer is remembered (pointer compare only, never
+ * dereferenced); a Present on a swapchain whose layer another one
+ * reconfigured applies its own drawable size and format again first. Distinct
+ * layers (desktop mode) never trigger it. Backported from upstream Madeira
+ * (willfaust/Madeira, madeira-d3d12 mad_swap_apply_layer). */
+static obj_handle_t g_layer_cfg_layer;
+static const void *g_layer_cfg_owner;
+static void mad_swap_apply_layer(struct mad_swapchain *s) {
+    struct WMTLayerProps props, got;
+    memset(&props, 0, sizeof props);
+    MetalLayer_getProps(s->layer, &props);
+    props.device = s->dev->mtl_device;
+    props.drawable_width = s->desc.Width;
+    props.drawable_height = s->desc.Height;
+    props.pixel_format = s->pf;
+    /* framebuffer_only must be off: a framebuffer-only drawable cannot be a
+     * blit destination. */
+    props.framebuffer_only = false;
+    props.display_sync_enabled = true;
+    MetalLayer_setProps(s->layer, &props);
+    g_layer_cfg_layer = s->layer;
+    g_layer_cfg_owner = s;
+    /* A layer that refused the format keeps another one (winemetal falls back
+     * to a documented layer format); Present then converts while drawing. */
+    memset(&got, 0, sizeof got);
+    MetalLayer_getProps(s->layer, &got);
+    if (ORIGINAL_FORMAT(got.pixel_format) != ORIGINAL_FORMAT(s->pf)) {
+        static LONG said;
+        if (InterlockedIncrement(&said) <= 4)
+            d3d12_log("[madeira-d3d12] swapchain format %u: the Metal layer took pixel format %u instead of %u; "
+                      "frames are converted when presented\n", (unsigned)s->desc.Format,
+                      (unsigned)got.pixel_format, (unsigned)s->pf);
+    }
+}
+
 static HRESULT mad_swap_make_buffers(struct mad_swapchain *s) {
     D3D12_RESOURCE_DESC rd;
-    struct WMTLayerProps props;
     UINT i, n = s->desc.BufferCount ? s->desc.BufferCount : 2;
     int is_depth;
     if (n > MAD_SWAP_MAX_BUFFERS) n = MAD_SWAP_MAX_BUFFERS;
@@ -10804,17 +10843,8 @@ static HRESULT mad_swap_make_buffers(struct mad_swapchain *s) {
     s->nbuf = n;
     s->index = 0;
     /* The layer takes the same pixel format so the presenting blit is a plain
-     * copy. framebuffer_only must be off: a framebuffer-only drawable cannot
-     * be a blit destination. */
-    memset(&props, 0, sizeof props);
-    MetalLayer_getProps(s->layer, &props);
-    props.device = s->dev->mtl_device;
-    props.drawable_width = s->desc.Width;
-    props.drawable_height = s->desc.Height;
-    props.pixel_format = s->pf;
-    props.framebuffer_only = false;
-    props.display_sync_enabled = true;
-    MetalLayer_setProps(s->layer, &props);
+     * copy (when the layer refuses it, Present converts). */
+    mad_swap_apply_layer(s);
     d3d12_log("[madeira-d3d12] swapchain: %ux%u, %u buffers, format %u, hwnd %p\n",
               s->desc.Width, s->desc.Height, n, (unsigned)s->desc.Format, (void *)s->hwnd);
     return S_OK;
@@ -10841,6 +10871,7 @@ static ULONG STDMETHODCALLTYPE swap_Release(IDXGISwapChain4 *T) {
     if (n == 0) { mad_pd_purge(T);   /* ml1143 */
         if (s->queue && s->queue->sub_thread) mad_queue_drain(s->queue);   /* ml1121: queued presents name this swapchain */
         mad_swap_release_buffers(s);
+        if (g_layer_cfg_owner == s) g_layer_cfg_owner = NULL;   /* the next Present re-applies its own layer settings */
         if (s->view) ReleaseMetalView(s->view);
         if (s->latency_event) CloseHandle(s->latency_event);
         if (s->factory) IDXGIFactory1_Release(s->factory);
@@ -10917,12 +10948,19 @@ static HRESULT swap_Present_inner(IDXGISwapChain4 *T, UINT sync, UINT flags) {
     s->index = (s->index + 1) % s->nbuf;
     return S_OK;
 }
+/* A plain blit needs the drawable in the back buffer's pixel format and at
+ * least its size. One look at the drawable per frame (three unix calls). */
+static int mad_swap_direct_copy(struct mad_swapchain *s, struct mad_resource *src, obj_handle_t tex) {
+    return ORIGINAL_FORMAT(MTLTexture_pixelFormat(tex)) == ORIGINAL_FORMAT(s->pf) &&
+           MTLTexture_width(tex) == src->width && MTLTexture_height(tex) == src->height;
+}
 /* ml1121: the Metal half of Present; runs on the queue's worker (async) or on the caller. */
 static void mad_mheap_reclaim(struct mad_device *d, int all);
 static void mad_present_run(struct mad_swapchain *s, UINT idx) {
     struct mad_resource *src;
     obj_handle_t drawable, tex, cb, enc;
     struct wmtcmd_blit_copy_from_texture_to_texture t2t;
+    UINT copy_w, copy_h;
     if (idx >= s->nbuf) return;
     src = s->buffers[idx];
     mad_mheap_reclaim(s->dev, 0);   /* ml1148: once a frame, heaps whose GPU work is long done */
@@ -10993,6 +11031,14 @@ static void mad_present_run(struct mad_swapchain *s, UINT idx) {
                           (unsigned long long)s->presents, lat, (unsigned long long)need, waits);
         }
     }
+    if (g_layer_cfg_layer == s->layer && g_layer_cfg_owner != s) {   /* shared layer taken over, see mad_swap_apply_layer */
+        static LONG said;
+        if (InterlockedIncrement(&said) <= 8)
+            d3d12_log("[madeira-d3d12] swapchain %ux%u (hwnd %p): another swapchain reconfigured the shared Metal layer; "
+                      "drawable size and format restored before present #%llu\n",
+                      s->desc.Width, s->desc.Height, (void *)s->hwnd, (unsigned long long)s->presents);
+        mad_swap_apply_layer(s);
+    }
     { LONG64 td = mad_qpc();   /* ml1128 */
     drawable = MetalLayer_nextDrawable(s->layer);
     InterlockedExchangeAdd64(&g_xp.t_draw, mad_qpc() - td); }
@@ -11004,6 +11050,46 @@ static void mad_present_run(struct mad_swapchain *s, UINT idx) {
     { LONG64 tc = mad_qpc();   /* ml1128: blit + presentDrawable + commit */
     tex = MetalDrawable_texture(drawable);
     cb = MTLCommandQueue_commandBuffer(s->queue->device->mtl_queue);
+    copy_w = src->width; copy_h = src->height;
+    if (cb && tex && !mad_swap_direct_copy(s, src, tex)) {
+        /* The drawable is not the back buffer's format or size (the layer
+         * refused the format, or kept another swapchain's size): a blit would
+         * copy the wrong bytes or out of bounds. Draw instead (winemetal
+         * MadeiraCtl op 8), which converts and scales. Without that op (an
+         * older app build), a same-format drawable still gets the copy,
+         * clipped to its bounds; a different format drops the frame rather
+         * than show it wrong. */
+        struct madeira_ctl_args a;
+        struct madeira_present_convert pc;
+        UINT64 tw = MTLTexture_width(tex), th = MTLTexture_height(tex);
+        UINT tf = (UINT)MTLTexture_pixelFormat(tex);
+        memset(&pc, 0, sizeof pc);
+        pc.cmdbuf = cb; pc.src = src->texture; pc.dst = tex;
+        pc.fence = (g_f6_used && s->queue->device->enc_fence) ? s->queue->device->enc_fence : 0;
+        memset(&a, 0, sizeof a);
+        a.op = 8; a.ptr = (UINT64)(ULONG_PTR)&pc; a.len = sizeof pc;
+        MadeiraCtl(&a);
+        if (a.ret) {
+            static LONG said;
+            if (InterlockedIncrement(&said) <= 2)
+                d3d12_log("[madeira-d3d12] Present: drawable format %u %llux%llu, back buffer format %u %ux%u -- drawn "
+                          "with a converting pass\n", tf, (unsigned long long)tw, (unsigned long long)th,
+                          (unsigned)s->pf, src->width, src->height);
+            MTLCommandBuffer_presentDrawable(cb, drawable);
+            MTLCommandBuffer_commit(cb);
+            cb = 0;
+        } else if (ORIGINAL_FORMAT(tf) == ORIGINAL_FORMAT(s->pf)) {
+            if (tw < copy_w) copy_w = (UINT)tw;
+            if (th < copy_h) copy_h = (UINT)th;
+        } else {
+            static LONG said;
+            if (InterlockedIncrement(&said) <= 3)
+                d3d12_log("[madeira-diag] stage=present ok=0 cat=metal-present-failure detail=d3d12: the drawable "
+                          "(format %u) differs from the back buffer (format %u) and this build has no converting "
+                          "present; frame dropped\n", tf, (unsigned)s->pf);
+            cb = 0;
+        }
+    }
     if (cb && tex) {
         enc = MTLCommandBuffer_blitCommandEncoder(cb); if (enc) g_enc_seq++;
         if (enc && g_f6_used && s->queue->device->enc_fence) {   /* ml1134: after every committed batch, not just queue order */
@@ -11014,8 +11100,8 @@ static void mad_present_run(struct mad_swapchain *s, UINT idx) {
             memset(&t2t, 0, sizeof t2t);
             t2t.type = WMTBlitCommandCopyFromTextureToTexture;
             t2t.src = src->texture;
-            t2t.src_size.width = src->width;
-            t2t.src_size.height = src->height;
+            t2t.src_size.width = copy_w;
+            t2t.src_size.height = copy_h;
             t2t.src_size.depth = 1;
             t2t.dst = tex;
             MTLBlitCommandEncoder_encodeCommands(enc, (const struct wmtcmd_base *)&t2t);

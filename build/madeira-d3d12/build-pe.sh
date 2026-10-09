@@ -13,6 +13,10 @@ TESTS="$REPO_ROOT/research/madeira-d3d12/tests/windows"
 OUT="${OUT:-$REPO_ROOT/build/madeira-d3d12/out-pe}"
 mkdir -p "$OUT"
 
+# The runtime uses winemetal.h additions (MadeiraCtl op 8, madeira_layer_format.h)
+# that this repository keeps as DXMT patches.
+"$REPO_ROOT/build/dxmt-ios/apply-madeira-patches.sh"
+
 # Regenerate the stub tables so a toolchain header update cannot silently leave
 # the vtables the wrong length.
 python3 "$SRC/gen_vtables.py" \

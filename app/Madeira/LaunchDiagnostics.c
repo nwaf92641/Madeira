@@ -387,6 +387,28 @@ static void md_feed_locked(const char *line)
     }
 
     /* DXMT (research/dxmt) */
+    if (md_find(line, "Using feature level")) {   /* d3d11.cpp D3D11CoreCreateDevice */
+        md_stage_locked(MD_STAGE_GRAPHICS_API, "Direct3D 10/11 (DXMT)", (size_t)-1);
+        return;
+    }
+    if (md_find(line, "[d3d11-fail]") || md_find(line, "Minimum required feature level") ||
+        md_find(line, "Not a DXMT adapter")) {
+        md_problem_locked(MD_CAT_DEVICE, "device", "d3d11 device failed", line, len, NULL);
+        return;
+    }
+    if ((p = md_find(line, "[d3d9-modes] CreateDevice"))) {   /* d3d9_interface.cpp LogPresentRequest */
+        const char *hr = md_find(p, "-> hr 0x");
+        md_stage_locked(MD_STAGE_GRAPHICS_API, "Direct3D 9 (DXMT)", (size_t)-1);
+        if (hr && hr[8] == '0' && (hr[9] == 0 || hr[9] == ' ' || hr[9] == '\r' || hr[9] == '\n')) {
+            md_stage_locked(MD_STAGE_DEVICE, "Direct3D 9", (size_t)-1);
+            md_stage_locked(MD_STAGE_SWAPCHAIN, p + 13, (size_t)-1);
+        } else if (hr) {
+            md_problem_locked(MD_CAT_DEVICE, "device", "d3d9 CreateDevice failed", line, len,
+                              "IDirect3D9::CreateDevice returned an error for these presentation parameters "
+                              "(back buffer size, format, windowed); the game may retry with others.");
+        }
+        return;
+    }
     if (md_find(line, "nextDrawable #") && md_find(line, "BLOCKED")) {
         md_problem_locked(MD_CAT_PRESENT, "present", "nextDrawable blocked", line, len,
                           "CAMetalLayer.nextDrawable waited long: queued frames are not being shown, so the "
@@ -400,10 +422,12 @@ static void md_feed_locked(const char *line)
                           "registered yet, or the macdrv_functions export is missing from this build.");
         return;
     }
-    if (md_find(line, "CAMetalLayerInvalid") || md_find(line, "invalid pixel format")) {
+    if (md_find(line, "CAMetalLayerInvalid") || md_find(line, "invalid pixel format") ||
+        md_find(line, "CAMetalLayer refused pixel format")) {
         md_problem_locked(MD_CAT_SWAPCHAIN, "swapchain", "layer pixel format", line, len,
-                          "CAMetalLayer accepts only BGRA8, BGRA8 sRGB, RGBA16Float, RGB10A2, BGR10A2 and the "
-                          "XR formats; any other swapchain format must be converted before present.");
+                          "The Metal layer refused the swapchain's pixel format. Madeira gives the layer the "
+                          "closest documented format (BGRA8, BGRA8 sRGB, RGBA16Float, RGB10A2, BGR10A2, XR) and "
+                          "converts each frame; if the screen stays black, this format is the first suspect.");
         return;
     }
 
@@ -460,7 +484,8 @@ void madeira_diag_feed_line(const char *line)
         !strstr(line, "[winios]") && !strstr(line, "[Wine child]") && !strstr(line, "spawn_process") &&
         !strstr(line, "Unhandled") && !strstr(line, "stub table") && !strstr(line, "Library ") &&
         !strstr(line, "shader") && !strstr(line, "CAMetalLayer") && !strstr(line, "pixel format") &&
-        !strstr(line, "[wg-parser]") && !strstr(line, "metal view"))
+        !strstr(line, "[wg-parser]") && !strstr(line, "metal view") && !strstr(line, "feature level") &&
+        !strstr(line, "[d3d9-modes] CreateDevice") && !strstr(line, "DXMT adapter"))
         return;
     pthread_mutex_lock(&md_lock);
     md_feed_locked(line);

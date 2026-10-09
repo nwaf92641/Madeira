@@ -16,6 +16,8 @@ the components really print:
     backend, a 64-bit media DLL missing, a crash exit);
   - a launcher that starts a child and exits is not called an early exit;
   - the report files are written, and the previous one is kept on reset;
+  - the lines the patched DXMT, D3D9, the D3D12 runtime and the display shim
+    print (device, swapchain, no layer, refused format, dropped frame);
   - noise lines are ignored and cost little.
 Needs python3 and a C compiler (AddressSanitizer/UBSan when available).
 """
@@ -121,6 +123,39 @@ int main(int argc, char **argv)
     feed("0060:err:process:spawn_process spawn_process: creating child thread for L\"C:\\\\Games\\\\La\\\\game.exe\" (fd=41, unixdir=-1, dup_unixdir=-1)");
     madeira_diag_process_exit(0, 0);
     dump("launcher");
+
+    /* the lines the patched DXMT (patches/dxmt-ios-layer-safety.patch), the
+     * D3D12 runtime and IOSDisplayShim.m print */
+    madeira_diag_reset("C:\\Games\\Dx\\dx11.exe", dir);
+    feed("info:  Using feature level D3D_FEATURE_LEVEL_11_0");
+    feed("info:  [madeira-diag] stage=device ok=1 detail=Direct3D 11 (DXMT), feature level 0xb000");
+    feed("info:  [madeira-diag] stage=swapchain ok=1 detail=d3d11 1920x1080 format 87");
+    dump("dxmt-d3d11-lines");
+
+    madeira_diag_reset("C:\\Games\\Nl\\nolayer.exe", dir);
+    feed("[madeira-display] hwnd=0x10024 asked for a Metal view before the game view registered its layer; waiting up to 5000 ms");
+    feed("[madeira-display] view_create_metal_view called before layer registered! (hwnd=0x10024; the swapchain gets no surface)");
+    feed("err:   Failed to create metal view for hwnd 0x10024: the window has no Metal layer (game view not registered, or the macdrv_functions export is missing)");
+    feed("err:   [madeira-diag] stage=swapchain ok=0 cat=swapchain-failure detail=d3d11: no Metal layer for the swapchain's window, CreateSwapChain fails");
+    dump("no-layer");
+
+    madeira_diag_reset("C:\\Games\\D9\\d9.exe", dir);
+    feed("info:  [d3d9-modes] CreateDevice 1024x768 X8R8G8B8 refresh=0 windowed=1 count=1 -> hr 0x0");
+    dump("d3d9-ok");
+
+    madeira_diag_reset("C:\\Games\\D9\\d9bad.exe", dir);
+    feed("info:  [d3d9-modes] CreateDevice 640x480 R5G6B5 refresh=60 windowed=0 count=1 -> hr 0x8876086c");
+    dump("d3d9-fail");
+
+    madeira_diag_reset("C:\\Games\\D11\\devfail.exe", dir);
+    feed("err:   [d3d11-fail] ml752 D3D11CoreCreateDevice failed: no Metal device");
+    dump("d3d11-device-fail");
+
+    madeira_diag_reset("C:\\Games\\D12\\cv.exe", dir);
+    feed("[madeira-d3d12] device created: x");
+    feed("[madeira-display] CAMetalLayer refused pixel format 70 (invalid pixel format 70); the layer uses 80 and the frame is converted when it is drawn");
+    feed("[madeira-diag] stage=present ok=0 cat=metal-present-failure detail=d3d12: the drawable (format 80) differs from the back buffer (format 70) and this build has no converting present; frame dropped");
+    dump("d3d12-no-convert");
 
     madeira_diag_reset("C:\\Games\\Noise\\noise.exe", dir);
     {
@@ -230,6 +265,24 @@ with tempfile.TemporaryDirectory() as work:
     a = s['launcher']
     check(any(x['name'] == 'child-process' for x in a['json']['stages']), 'launcher: child stage')
     check(not any(x['error'].startswith('exit code') for x in a['json']['problems']), 'launcher: not an early exit')
+    a = s['dxmt-d3d11-lines']
+    names = [x['name'] for x in a['json']['stages']]
+    check(all(n in names for n in ('graphics-api', 'device', 'swapchain')) and a['json']['problems'] == [],
+          'dxmt d3d11: API, device and swapchain stages from the patched lines (%s)' % names)
+    a = s['no-layer']
+    check(a['verdict'] == 'swapchain-failure' and not any(x['name'] == 'swapchain' for x in a['json']['stages']),
+          'no layer: swapchain failure, no swapchain stage')
+    a = s['d3d9-ok']
+    names = [x['name'] for x in a['json']['stages']]
+    check(all(n in names for n in ('graphics-api', 'device', 'swapchain')) and a['json']['problems'] == [],
+          'd3d9: CreateDevice hr 0 gives API, device and swapchain (%s)' % names)
+    check(s['d3d9-fail']['verdict'] == 'graphics-device-failure', 'd3d9: CreateDevice error is a device failure')
+    check(s['d3d11-device-fail']['verdict'] == 'graphics-device-failure', 'd3d11: device failure line')
+    a = s['d3d12-no-convert']
+    cats = sorted(x['category'] for x in a['json']['problems'])
+    check(cats == ['metal-present-failure', 'swapchain-failure'], 'd3d12: refused format + dropped frame (%s)' % cats)
+    check(any('converts each frame' in x['hint'] for x in a['json']['problems']), 'd3d12: refused-format hint')
+
     a = s['noise']
     check(a['json']['problems'] == [] and len(a['json']['stages']) == 1, 'noise: nothing recognised')
     ms = [int(l.split('=')[1]) for l in r.stdout.splitlines() if l.startswith('noise-cpu-ms=')]
@@ -241,7 +294,7 @@ with tempfile.TemporaryDirectory() as work:
         j = json.loads((outdir / 'last-launch.json').read_text())
         check(j['exe'].endswith('noise.exe'), 'files: last report is the last launch')
     if (outdir / 'previous-launch.txt').is_file():
-        check('launcher.exe' in (outdir / 'previous-launch.txt').read_text(), 'files: previous is the launch before')
+        check('cv.exe' in (outdir / 'previous-launch.txt').read_text(), 'files: previous is the launch before')
 
     # The header names every category the request asked for, under one stable name each.
     hdr = (inc / 'LaunchDiagnostics.h').read_text()

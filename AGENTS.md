@@ -1,72 +1,41 @@
-# Working in this repository
+## Build: what actually works, and what does not
 
-Madeira is the iOS/iPadOS runtime that runs Windows games directly (Wine for
-the Windows API, FEX for x86 translation, DXMT for Direct3D to Metal, its own
-audio, video, input and controller paths). The runtime is the product; do not
-replace it when adding a feature.
+`docs/BUILDING.md` is the authoritative record. Read it first. Its own
+conclusion is that **the app target does not build from a clean checkout**: the
+recipe depends on inputs that are not in the repository. Do not expect a
+first build to succeed; each failure is a new missing input, not a repeat.
 
-## Build and test
+Build order: gnutls -> ffmpeg -> freetype -> LLVM (iOS) -> FEX (iOS) ->
+Wine (host tree, then ntdll-unix / win32u-unix / wineserver) -> DXMT ->
+Madeira Dock -> Xcode.
 
-- The iOS app is built from `app/Madeira.xcodeproj` (SwiftUI, one app target).
-  New Swift sources must be added to the target's Sources phase and get a file
-  reference in `project.pbxproj`; the host tests check this.
-- Host tests live in `build/host-tests/check-*.py`. They are plain scripts:
-  `python3 build/host-tests/check-<name>.py`, exit code 0 on pass. Several
-  compile a production Swift file with `swiftc` against a small harness, so
-  `swiftc` must be on `PATH` (or set `SWIFTC`). Run the whole set with:
+### Inputs that are not in the repository
 
-  ```sh
-  for f in build/host-tests/check-*.py; do python3 "$f" >/dev/null || echo "FAIL $f"; done
-  ```
+| Input | Notes |
+|---|---|
+| `toolchains/llvm-mingw-*` | mstorsjo release tarball, download in CI |
+| `toolchains/llvm-project` + `llvm-ios-build` + `llvm-host-build` | commit `8dfdcc7b7`; recipe reconstructed from CMakeCache |
+| `research/freetype` | not a submodule; `git clone --branch VER-2-13-3` |
+| `wine/build-macos` | **no recipe anywhere**. Every unix-side script includes `$WINE_BUILD/include/config.h` and headers from `$WINE_BUILD/dlls/*`; `d3d11-triangle` needs `tools/winebuild/winebuild`. |
+| `app/Madeira/libwineserver.a` | **not in the repo**. `build/wineserver/build.sh` can only *replace* objects inside an existing archive (some originals are marked "source lost"). `ci/build-wineserver-base.sh` rebuilds a base from `wine/server/*.c`. |
+| `app/Madeira/x86_64-vcruntime/` | Microsoft VC++ x64 redistributables; cannot be redistributed. Referenced as a folder resource, so the folder must exist (may be empty). |
+| `FEX/build-ios`, `app/Madeira/lib{ntdll_unix,win32u_unix,dxmt_combined,av*}.a` | git-ignored build outputs |
 
-  Some checks need out-of-tree inputs (a Wine/FEX checkout, `research/`
-  submodules) and print `SKIP-FAIL`/`Wine source not found` without them; that
-  is environmental, not a regression.
-- Generators live in `build/tools/`. They write generated Swift/JSON into
-  `app/Madeira/`; run them after editing their inputs, and run the matching
-  `check-*` script, which usually verifies the generated file is current.
+Metal Shader Converter is **not** missing: the vendored headers and
+`app/Madeira/d3d12/libmetalirconverter.dylib` are tracked, so
+`build/madeira-d3d12/deps.sh` resolves without Apple's installer.
 
-## Conventions
+### Toolchain gotchas (each cost a failed CI run)
 
-- Swift 6-ish, Foundation-first in model/engine files so they stay host
-  testable: no UIKit in anything `build/host-tests` compiles.
-- Comments explain *why* (an invariant, a workaround, a Wine behaviour), never
-  what the next line does. Match the surrounding tone: full sentences, plain
-  words, no changelog.
-- Docs live in `docs/*.md`, one per subject, and are expected to be updated
-  with the code. `docs/GAME_COMPATIBILITY.md` describes the compatibility
-  engine and is the reference for adding games and dependencies.
-- Do not commit `research/` clones, `__pycache__` or build output.
-
-## Game compatibility (the part that changes most)
-
-- Data, not code: `compat/dependencies.json`, `compat/games.json`,
-  `compat/recipes.json`, `compat/baseline.json`, `compat/rules.json` are the
-  sources; `build/tools/gen-game-compat.py`
-  builds `app/Madeira/compat.json` (run it with `--protonfixes DIR
-  --winetricks DIR --bottles DIR --winlator DIR` to import upstream fixes,
-  `--check` to compare without writing). Never hand-edit
-  `app/Madeira/compat.json`.
-- `compat/wine-modules.json` is generated too, by
-  `build/tools/gen-wine-modules.py --configure <wine>/configure` (or `--wine
-  <checkout>`): the modules the runtime provides, the ones the iOS build skips
-  (`build/wine-i386/build.sh`, SKIP_REASON) and the API set prefixes the loader
-  resolves. It is the list the engine uses to tell "Wine answers this" from
-  "nothing here has this".
-- The universal path is data, in order of priority: `baseline.json` (Windows
-  version for everything) < `rules.json` (a fix that follows from what the
-  program is: its imports, the files beside it, its name, its architecture) <
-  the title's profile. `rules.json` also holds `remedies`, the variation tried
-  on the next launch when a session failed with a given diagnosis category.
-  A program nobody profiled is a normal case, not a fallback: keep it that way.
-- Upstream projects (`/workspace/refs/protonfixes`, `winetricks`,
-  `bottles-deps`, `winlator-app`, `winlator`) are sources of fixes, not code to
-  copy. Anything that depends on Linux, Vulkan, Proton's or Winlator's own
-  runtime, root access or a kernel module is recorded as an unavailable fix on
-  the title instead of being ported. A fix that only means something on that
-  runtime (a Wine patch of theirs, a loader switch FEX does not have) gets the
-  same treatment, with the Madeira counterpart named where one exists.
-- A fix is expressed as a DLL override, a registry value, an environment
-  variable or a launch argument, applied per launch and per game. `{app}` in a
-  registry key or value is replaced by the launched executable's name, which is
-  how Wine's per-application keys are written.
+* Xcode must be >= 16 (`std::atomic_ref`); pick it explicitly, `macos-15` ships
+  several.
+* LLVM for iOS: `LLVM_BUILD_UTILS` does **not** gate `utils/`; `LLVM_INCLUDE_UTILS`
+  does. `LLVM_INCLUDE_TOOLS=OFF` avoids tools/lto (`-Wl,-z,defs` is not an Apple
+  ld flag).
+* `llvm/cmake/modules/AddLLVM.cmake` selects Apple ld's `-dead_strip` only when
+  `CMAKE_SYSTEM_NAME MATCHES "Darwin"`; for iOS it falls through to
+  `-Wl,--gc-sections`, which Apple ld rejects. Several occurrences -> replace all.
+* FEX iOS: `CMAKE_SYSTEM_PROCESSOR` is empty when cross-compiling (FEX aborts),
+  and `TUNE_CPU=native` reads `/proc/cpuinfo`. Use `arm64` and `none`.
+* `FEX_IOS_HOST` belongs to the **Windows PE** builds. FEXCore compiles for
+  Darwin too, and has code that uses its symbols unguarded.

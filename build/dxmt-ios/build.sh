@@ -167,6 +167,30 @@ echo "=== winemetal unix (Objective-C) ==="
 compile_objc "$DXMT_SRC/winemetal/unix/winemetal_unix.c" winemetal_unix
 compile_objc "$DXMT_SRC/winemetal/unix/cache.c"          cache
 
+echo "=== airconv shader headers (meson src/airconv/meson.build:59-71) ==="
+# airconv_context.cpp embeds three compiled AIR shaders as C arrays and the
+# headers are generated, not tracked. meson runs each .metal through metalir
+# (xcrun metal with -std=metal3.1 --target=air64-apple-macos14.0) and then xxd;
+# xxd -n <name> names the array <name>, which is the symbol airconv_context.cpp
+# hands to linkShader().
+for s in air_msad air_samplepos air_tessellation; do
+    h="$BUILD_DIR/shader-headers/$s.h"
+    if [ ! -f "$h" ] || [ "$DXMT_SRC/airconv/shaders/$s.metal" -nt "$h" ]; then
+        mkdir -p "$BUILD_DIR/shader-headers"
+        if ( cd "$BUILD_DIR/shader-headers" \
+             && xcrun -sdk macosx metal -o "$s.air" -c "$DXMT_SRC/airconv/shaders/$s.metal" \
+                    -std=metal3.1 --target=air64-apple-macos14.0 \
+             && xxd -n "$s" -i "$s.air" "$s.h" ); then
+            echo "  $s.h                          OK"
+        else
+            echo "  $s.h                          FAILED"
+            FAILED=$((FAILED+1)); FAILED_FILES="$FAILED_FILES $s.h"
+        fi
+    else
+        echo "  $s.h                          CACHED"
+    fi
+done
+
 echo "=== airconv (C++ 20, needs LLVM headers) ==="
 for cpp in airconv_context.cpp air_type.cpp air_signature.cpp air_operations.cpp \
            dxbc_converter.cpp dxbc_converter_gs.cpp dxbc_converter_ts.cpp \

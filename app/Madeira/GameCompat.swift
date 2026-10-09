@@ -339,6 +339,14 @@ struct CompatDatabase: Codable {
     var wineModules: [String]?
     /// Modules upstream Wine builds that this runtime does not ship.
     var wineNotShipped: [String]?
+    /// The modules the 64-bit (ARM64EC) farm actually holds. `wineModules` is
+    /// the 32-bit (WoW64) set; the 64-bit farm is built group by group and has
+    /// about half of it, so a 64-bit program is checked against this list.
+    var wineModules64: [String]?
+    /// Provided modules that are not in the 64-bit farm (wineModules minus
+    /// wineModules64): a 64-bit program that imports one stops at
+    /// "Library X not found".
+    var wineNotIn64BitFarm: [String]?
     /// Prefixes of the API set contract names (`api-ms-win-*`, `ext-ms-win-*`).
     var apiSetPrefixes: [String]?
 
@@ -346,6 +354,8 @@ struct CompatDatabase: Codable {
         case schema, updated, dependencies, recipes, games, baseline, rules, remedies
         case wineModules = "wine_modules"
         case wineNotShipped = "wine_not_shipped"
+        case wineModules64 = "wine_modules_64"
+        case wineNotIn64BitFarm = "wine_not_in_64bit_farm"
         case apiSetPrefixes = "api_set_prefixes"
     }
 
@@ -365,6 +375,35 @@ struct CompatDatabase: Codable {
     /// Module names as this engine compares them (lowercase, no ".dll").
     var providedModules: Set<String> { Set((wineModules ?? []).map { GameCompatibility.importName($0) }) }
     var absentModules: Set<String> { Set((wineNotShipped ?? []).map { GameCompatibility.importName($0) }) }
+
+    /// The modules a program of `bits` can load from the runtime. A 32-bit
+    /// program gets the WoW64 (i386) farm, which is every module in
+    /// `wineModules`. A 64-bit program gets the ARM64EC farm, which is only
+    /// `wineModules64`: claiming the 32-bit list for it is how a missing DLL
+    /// was reported as provided. When the architecture is unknown, only a
+    /// module both farms have counts, so nothing is claimed that one of them
+    /// lacks. A database without a 64-bit list (an old overlay) keeps the
+    /// single list it has.
+    func providedModules(bits: Int?) -> Set<String> {
+        guard let list64 = wineModules64 else { return providedModules }
+        let farm64 = Set(list64.map { GameCompatibility.importName($0) })
+        switch bits {
+        case 32: return providedModules
+        case 64: return farm64
+        default: return providedModules.intersection(farm64)
+        }
+    }
+
+    /// Modules a program of `bits` cannot load: the ones the build leaves out
+    /// everywhere, and for a 64-bit (or unknown) program also the Wine modules
+    /// the ARM64EC farm does not hold yet.
+    func absentModules(bits: Int?) -> Set<String> {
+        guard bits != 32, let list64 = wineModules64 else { return absentModules }
+        let farm64 = Set(list64.map { GameCompatibility.importName($0) })
+        var missing = Set((wineNotIn64BitFarm ?? []).map { GameCompatibility.importName($0) })
+        missing.formUnion(providedModules.subtracting(farm64))
+        return absentModules.union(missing)
+    }
 
     /// Wine resolves an API set name (`api-ms-win-*`, `ext-ms-win-*`) to the
     /// module that implements the contract — ucrtbase for the C runtime sets,
@@ -579,6 +618,11 @@ enum GameCompatibility {
         merged.remedies = remedies
         merged.wineModules = overlay.wineModules ?? base.wineModules
         merged.wineNotShipped = overlay.wineNotShipped ?? base.wineNotShipped
+        // The 64-bit list belongs to the module list it was cut from: an
+        // overlay that replaces wine_modules without a 64-bit list keeps the
+        // base's only when it still describes the same farm.
+        merged.wineModules64 = overlay.wineModules64 ?? base.wineModules64
+        merged.wineNotIn64BitFarm = overlay.wineNotIn64BitFarm ?? base.wineNotIn64BitFarm
         merged.apiSetPrefixes = overlay.apiSetPrefixes ?? base.apiSetPrefixes
         return merged
     }
@@ -924,13 +968,29 @@ enum GameCompatibility {
             for rule in applicable {
                 for name in (rule.when?.imports ?? []) + (rule.when?.files ?? []) { accounted.insert(importName(name)) }
             }
-            let unaccounted = importedDLLs.subtracting(accounted).subtracting(database.providedModules)
+            // The runtime's modules for this program's architecture: a 64-bit
+            // program loads from the ARM64EC farm, which has about half of the
+            // 32-bit set, so the 32-bit list must not answer for it.
+            let unaccounted = importedDLLs.subtracting(accounted)
+                .subtracting(database.providedModules(bits: launch.bits))
                 .filter { !database.isAPISet($0) }
-            let absent = database.absentModules
-            plan.unavailableModules = unaccounted.intersection(absent).sorted()
+            let absent = database.absentModules(bits: launch.bits)
+            // A gap of the 64-bit farm is reported even when a catalogue
+            // component or a rule names the import: "builtin" in the catalogue
+            // means Wine provides it, which is true of the 32-bit farm and not
+            // of this one. Only a payload component (the game brings the file
+            // itself) answers for it.
+            var brought = Set<String>()
+            for dependency in plan.dependencies where dependency.support == "payload" {
+                for name in (dependency.dlls ?? []) + (dependency.imports ?? []) { brought.insert(importName(name)) }
+            }
+            let farmGaps = importedDLLs.intersection(absent.subtracting(database.absentModules))
+                .subtracting(brought).filter { !database.isAPISet($0) }
+            plan.unavailableModules = unaccounted.intersection(absent).union(farmGaps).sorted()
             plan.unaccountedImports = unaccounted.subtracting(absent).sorted()
             if !plan.unavailableModules.isEmpty {
-                plan.notes.append("the runtime does not ship " + summarise(plan.unavailableModules)
+                let runtime = launch.bits == 64 ? "the 64-bit runtime" : "the runtime"
+                plan.notes.append(runtime + " does not ship " + summarise(plan.unavailableModules)
                                   + "; a title that needs it must bring its own copy")
             }
             if !plan.unaccountedImports.isEmpty {

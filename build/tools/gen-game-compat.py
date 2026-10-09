@@ -1120,6 +1120,18 @@ def validate_universal(database: dict) -> None:
     for name in not_shipped:
         if name in modules:
             fail(f'wine_not_shipped: {name!r} is also listed as provided')
+    modules_64 = database.get('wine_modules_64')
+    if not modules_64:
+        fail('wine_modules_64: missing; without it a 64-bit program would be checked '
+             'against the 32-bit module list and claim DLLs the ARM64EC farm lacks')
+    else:
+        provided = set(modules)
+        for name in modules_64:
+            if name not in provided:
+                fail(f'wine_modules_64: {name!r} is not a provided module')
+        for name in database.get('wine_not_in_64bit_farm') or []:
+            if name in modules_64:
+                fail(f'wine_not_in_64bit_farm: {name!r} is also listed in wine_modules_64')
     api_sets = database.get('api_set_prefixes') or []
     if not api_sets:
         fail('api_set_prefixes: a Wine module list without the API set prefixes '
@@ -1264,6 +1276,10 @@ def build(protonfixes: Path | None, winetricks: Path | None, bottles: Path | Non
         'remedies': load(COMPAT / 'rules.json').get('remedies', {}),
         'wine_modules': load(COMPAT / 'wine-modules.json').get('modules', []),
         'wine_not_shipped': load(COMPAT / 'wine-modules.json').get('not_shipped', []),
+        # The 64-bit (ARM64EC) farm holds about half of the modules above; a
+        # 64-bit program is checked against this list, not the 32-bit one.
+        'wine_modules_64': load(COMPAT / 'wine-modules.json').get('modules_64', []),
+        'wine_not_in_64bit_farm': load(COMPAT / 'wine-modules.json').get('not_in_64bit_farm', []),
         'api_set_prefixes': load(COMPAT / 'wine-modules.json').get('api_set_prefixes', []),
     }
     recipes = database['recipes']

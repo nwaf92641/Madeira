@@ -30,6 +30,22 @@ API set names are the third case. A modern Windows program imports a dozen
 to the module that implements the contract (ucrtbase for the C runtime sets,
 kernelbase for the core ones). They are recorded as prefixes, because there are
 hundreds of them and a program may invent its own from the same schema.
+
+The two architectures do not ship the same set. A 32-bit program runs under
+WoW64 against the i386 farm, which build/wine-i386/build.sh fills with every
+module of the configured tree minus SKIP_REASON, so `modules` is that set. A
+64-bit program runs against the ARM64EC farm, app/Madeira/arm64ec-windows,
+which is built group by group (build/wine-pe/arm64ec-farm.json) and is a
+committed directory: about half of Wine's modules are not in it. The 64-bit
+list is therefore read from that directory, not assumed:
+
+    modules_64          Wine module names (and the DXMT-owned names) that have
+                        a file in the ARM64EC farm.
+    not_in_64bit_farm   `modules` minus `modules_64`: real Wine modules a
+                        64-bit program cannot load here today.
+
+`--farm64` names another farm directory; the list is regenerated whenever a
+group is added to the farm, and `--check` fails while it is out of date.
 """
 from __future__ import annotations
 
@@ -42,6 +58,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 OUT = ROOT / 'compat' / 'wine-modules.json'
 BUILD_SCRIPT = ROOT / 'build' / 'wine-i386' / 'build.sh'
+FARM64 = ROOT / 'app' / 'Madeira' / 'arm64ec-windows'
+# File extensions a farm file carries; the module name is the file name
+# without '.dll' (Wine names the other kinds with their extension: 'appwiz.cpl',
+# 'wineios.drv', 'stdole2.tlb').
+FARM_EXT = ('.dll', '.drv', '.cpl', '.acm', '.ax', '.ocx', '.tlb', '.exe', '.sys', '.ds', '.msstyles')
 
 # 16-bit and VxD modules: real Wine modules, but no Windows program Madeira can
 # load imports them, and they would only pad the list.
@@ -101,6 +122,36 @@ def modules_from_configure(path: Path) -> tuple[list[str], str]:
     return sorted(found), version
 
 
+def farm_names(path: Path) -> set[str]:
+    """Module names of the files in a farm directory, as `modules` spells them.
+
+    Only names are read (the farm check, build/host-tests/check-arm64ec-farm.py,
+    verifies the files themselves). A missing directory is an error rather
+    than an empty farm: an empty 64-bit list would report every import of
+    every 64-bit game as missing.
+    """
+    if not path.is_dir():
+        raise SystemExit(f'{path} is not a directory; pass --farm64 with the ARM64EC farm')
+    names: set[str] = set()
+    for entry in path.iterdir():
+        lower = entry.name.lower()
+        if not lower.endswith(FARM_EXT):
+            continue
+        names.add(lower[:-4] if lower.endswith('.dll') else lower)
+    return names
+
+
+def split_by_farm(modules: list[str], farm: set[str]) -> tuple[list[str], list[str]]:
+    """(modules_64, not_in_64bit_farm): the listed modules the 64-bit farm has
+    a file for, and the ones it has not. A farm file that is not a listed
+    module (a test program, FEX's own DLL, Madeira's d3d12) is not added: the
+    list answers 'does Wine provide this import', and only Wine's modules and
+    the DXMT-owned names are that."""
+    have = [name for name in modules if name.lower() in farm]
+    missing = [name for name in modules if name.lower() not in farm]
+    return have, missing
+
+
 def configure_from_checkout(root: Path) -> Path:
     configure = root / 'configure'
     if not configure.exists():
@@ -115,6 +166,8 @@ def main() -> int:
     source.add_argument('--wine', type=Path, help='a Wine checkout (uses its configure)')
     parser.add_argument('--skip-from', type=Path, default=BUILD_SCRIPT,
                         help='build script whose SKIP_REASON list is not shipped')
+    parser.add_argument('--farm64', type=Path, default=FARM64,
+                        help='the ARM64EC farm directory a 64-bit program loads from')
     parser.add_argument('--check', action='store_true', help='compare without writing')
     arguments = parser.parse_args()
 
@@ -125,14 +178,21 @@ def main() -> int:
     modules = [name for name in upstream if name not in dropped]
     if len(modules) < 400:
         raise SystemExit(f'{configure} lists only {len(modules)} modules; is it a Wine configure?')
+    modules_64, not_in_64 = split_by_farm(modules, farm_names(arguments.farm64))
     document = {
         'wine': version or 'unknown',
         'note': 'Modules the Wine runtime provides as builtins (dlls/*), minus the '
-                'ones the iOS build does not ship. An import matching one of these '
-                'needs no compatibility entry; one in "not_shipped" does not exist '
-                'here and is reported.',
+                'ones the iOS build does not ship. "modules" is the 32-bit (WoW64, '
+                'i386 farm) set; "modules_64" is what the 64-bit ARM64EC farm '
+                '(app/Madeira/arm64ec-windows) actually holds, and '
+                '"not_in_64bit_farm" the rest, which a 64-bit program cannot load. '
+                'An import matching the list for its architecture needs no '
+                'compatibility entry; one in "not_shipped" (or, for a 64-bit '
+                'program, in "not_in_64bit_farm") does not exist here and is reported.',
         'modules': modules,
         'not_shipped': not_shipped,
+        'modules_64': modules_64,
+        'not_in_64bit_farm': not_in_64,
         'api_set_prefixes': list(API_SET_PREFIXES),
     }
     text = json.dumps(document, indent=2, sort_keys=False) + '\n'
@@ -141,11 +201,13 @@ def main() -> int:
         current = OUT.read_text(encoding='utf-8') if OUT.exists() else ''
         if current != text:
             raise SystemExit(f'{OUT} is not current; re-run without --check')
-        print(f'PASS: {OUT.name} is current ({len(modules)} modules, Wine {document["wine"]})')
+        print(f'PASS: {OUT.name} is current ({len(modules)} modules, {len(modules_64)} in the '
+              f'64-bit farm, Wine {document["wine"]})')
         return 0
 
     OUT.write_text(text, encoding='utf-8')
-    print(f'wrote {OUT.relative_to(ROOT)}: {len(modules)} modules, Wine {document["wine"]}')
+    print(f'wrote {OUT.relative_to(ROOT)}: {len(modules)} modules ({len(modules_64)} in the '
+          f'64-bit farm, {len(not_in_64)} not), Wine {document["wine"]}')
     return 0
 
 

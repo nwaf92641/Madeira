@@ -397,6 +397,42 @@ let apiSets = GameCompatibility.plan(CompatLaunch(executable: "modern.exe",
                    "ext-ms-win-ntuser-window-l1-1-0.dll"]), database: universal)
 check(apiSets.unaccountedImports.isEmpty && apiSets.unavailableModules.isEmpty,
       "an API set name is resolved by the loader, so it is neither missing nor unaccounted")
+// the architecture decides which farm answers for an import: a 64-bit program
+// loads from the ARM64EC farm, which holds only part of the 32-bit set
+let farms = db(#"""
+{"schema":1,"dependencies":{},"recipes":{},"games":[],
+ "wine_modules":["ole32","quartz","d3d8","user32"],
+ "wine_not_shipped":["ir50_32"],
+ "wine_modules_64":["ole32","user32"],
+ "wine_not_in_64bit_farm":["quartz","d3d8"],
+ "api_set_prefixes":["api-ms-win-"]}
+"""#)
+let farm32 = GameCompatibility.plan(CompatLaunch(executable: "old.exe",
+    importedDLLs: ["ole32.dll", "quartz.dll", "d3d8.dll"], bits: 32), database: farms)
+check(farm32.unavailableModules.isEmpty && farm32.unaccountedImports.isEmpty,
+      "a 32-bit program is checked against the WoW64 farm, which has every listed module")
+let farm64 = GameCompatibility.plan(CompatLaunch(executable: "new.exe",
+    importedDLLs: ["ole32.dll", "quartz.dll", "d3d8.dll"], bits: 64), database: farms)
+check(farm64.unavailableModules == ["d3d8", "quartz"],
+      "REGRESSION: a 64-bit program is not told a module the ARM64EC farm lacks is provided")
+check(farm64.unaccountedImports.isEmpty, "a farm gap is named as unavailable, not as the game's own file")
+check(farm64.notes.contains { $0.contains("64-bit runtime") && $0.contains("quartz") },
+      "the report says the 64-bit runtime is the one without it")
+let farmUnknown = GameCompatibility.plan(CompatLaunch(executable: "what.exe",
+    importedDLLs: ["ole32.dll", "quartz.dll"]), database: farms)
+check(farmUnknown.unavailableModules == ["quartz"],
+      "an unknown architecture claims only what both farms hold")
+check(farms.providedModules(bits: 64) == ["ole32", "user32"] && farms.providedModules(bits: 32).contains("quartz"),
+      "providedModules(bits:) is the farm of that architecture")
+check(farms.absentModules(bits: 64).isSuperset(of: ["quartz", "d3d8", "ir50_32"])
+      && farms.absentModules(bits: 32) == ["ir50_32"],
+      "absentModules(bits:) adds the 64-bit farm's gaps only for 64-bit programs")
+let oldOverlay = db(#"{"wine_modules":["ole32","quartz"],"wine_not_shipped":[]}"#)
+check(oldOverlay.providedModules(bits: 64) == ["ole32", "quartz"],
+      "a database with no 64-bit list keeps its single list")
+let merged64 = GameCompatibility.merge(base: farms, overlay: db(#"{"games":[]}"#))
+check(merged64.providedModules(bits: 64) == ["ole32", "user32"], "an overlay without module lists keeps the 64-bit list")
+
 let blank = GameCompatibility.emptyDatabase()
 check(blank.isAPISet("api-ms-win-core-heap-l1-1-0.dll") && blank.providedModules.isEmpty,
       "with no database at all, a loader-resolved name is still not reported")
@@ -468,6 +504,32 @@ if CommandLine.arguments.count > 1, let data = try? Data(contentsOf: URL(fileURL
         importedDLLs: ["api-ms-win-core-synch-l1-1-0.dll", "api-ms-win-core-file-l1-2-0.dll"]), database: real)
     check(modern.unaccountedImports.isEmpty && modern.unavailableModules.isEmpty,
           "a modern program whose extra imports are all API sets is reported clean")
+    // REGRESSION (64-bit farm): every module the ARM64EC farm lacks is either
+    // answered by a catalogue component or rule, or named as unavailable for a
+    // 64-bit program. None may pass as provided.
+    check((real.wineModules64 ?? []).count >= 250 && (real.wineNotIn64BitFarm ?? []).count >= 100,
+          "the bundled database carries the 64-bit farm list and its gaps")
+    var claimed: [String] = []
+    for name in real.wineNotIn64BitFarm ?? [] {
+        let one = GameCompatibility.plan(CompatLaunch(executable: "x64.exe", importedDLLs: [name + ".dll"], bits: 64),
+                                         database: real)
+        let key = GameCompatibility.importName(name)
+        let brought = one.dependencies.contains { $0.support == "payload" }
+        if real.providedModules(bits: 64).contains(key) || (!one.unavailableModules.contains(key) && !brought) {
+            claimed.append(name)
+        }
+    }
+    check(claimed.isEmpty, "REGRESSION: no module missing from the 64-bit farm is silently treated as provided"
+          + (claimed.isEmpty ? "" : " (" + claimed.prefix(8).joined(separator: ", ") + ")"))
+    let d3d8x64 = GameCompatibility.plan(CompatLaunch(executable: "x64.exe", importedDLLs: ["d3d8.dll"], bits: 64),
+                                         database: real)
+    let d3d8x86 = GameCompatibility.plan(CompatLaunch(executable: "x86.exe", importedDLLs: ["d3d8.dll"], bits: 32),
+                                         database: real)
+    check(!d3d8x86.unavailableModules.contains("d3d8") && d3d8x64.unavailableModules.contains("d3d8"),
+          "REGRESSION: d3d8 is provided for a 32-bit program and named missing for a 64-bit one, rule or not")
+    let quartz64 = GameCompatibility.plan(CompatLaunch(executable: "x64.exe", importedDLLs: ["quartz.dll", "ole32.dll"],
+                                                       bits: 64), database: real)
+    check(quartz64.unavailableModules.isEmpty, "a module the 64-bit farm does hold (quartz) is not reported")
     let eacFiles = GameCompatibility.plan(CompatLaunch(executable: "game.exe", files: ["EasyAntiCheat_x64.dll"]),
                                           database: real)
     check(eacFiles.rules.contains("anticheat-eac-files") && eacFiles.isFatal,
@@ -706,6 +768,51 @@ def check_database() -> None:
         require(name in answered, f'{name} is answered by a component, a rule or the runtime')
 
 
+def check_farm64() -> None:
+    """REGRESSION: the 64-bit module list is what app/Madeira/arm64ec-windows
+    holds. Every name the database calls provided for a 64-bit program has a
+    file in the farm, and every listed Wine module without one is named as a
+    gap, so the checker cannot claim a DLL a 64-bit game would fail to load."""
+    data = json.loads(DB_PATH.read_text(encoding='utf-8'))
+    farm_dir = APP / 'arm64ec-windows'
+    farm = set()
+    for entry in farm_dir.iterdir():
+        lower = entry.name.lower()
+        farm.add(lower[:-4] if lower.endswith('.dll') else lower)
+    modules = data.get('wine_modules') or []
+    modules_64 = data.get('wine_modules_64') or []
+    gaps = data.get('wine_not_in_64bit_farm') or []
+    require(bool(modules_64), 'the database has a 64-bit module list')
+    phantom = sorted(name for name in modules_64 if name not in farm)
+    require(not phantom, 'every module claimed for 64-bit programs has a file in the ARM64EC farm'
+            + (f' (missing: {", ".join(phantom[:10])})' if phantom else ''))
+    unlisted = sorted(name for name in modules if name in farm and name not in modules_64)
+    require(not unlisted, 'every Wine module in the farm is in the 64-bit list'
+            + (f' ({", ".join(unlisted[:10])})' if unlisted else ''))
+    require(sorted(gaps) == sorted(set(modules) - set(modules_64)),
+            'wine_not_in_64bit_farm is exactly the 32-bit list minus the 64-bit one')
+    wine_json = json.loads((ROOT / 'compat/wine-modules.json').read_text(encoding='utf-8'))
+    require(wine_json.get('modules_64') == modules_64 and wine_json.get('modules') == modules,
+            'app/Madeira/compat.json carries compat/wine-modules.json unchanged')
+    # The generator agrees with the directory as it is now.
+    run = subprocess.run([sys.executable, str(ROOT / 'build/tools/gen-wine-modules.py'),
+                          '--configure', str(ROOT / 'wine/configure'), '--check'],
+                         capture_output=True, text=True)
+    if (ROOT / 'wine/configure').exists():
+        require(run.returncode == 0, 'compat/wine-modules.json is current for the wine submodule and the farm '
+                + (run.stdout + run.stderr).strip()[-200:])
+    # The splitter itself, on a synthetic farm.
+    spec = importlib.util.spec_from_file_location('gen_wine_modules', ROOT / 'build/tools/gen-wine-modules.py')
+    gen = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(gen)
+    with tempfile.TemporaryDirectory() as tmp:
+        for name in ('OLE32.dll', 'appwiz.cpl', 'cube-x64.exe', 'readme.txt'):
+            (Path(tmp) / name).write_bytes(b'')
+        have, missing = gen.split_by_farm(['appwiz.cpl', 'ole32', 'quartz'], gen.farm_names(Path(tmp)))
+        require(have == ['appwiz.cpl', 'ole32'] and missing == ['quartz'],
+                'the generator reads the farm case-insensitively and keeps only listed modules')
+
+
 def check_wiring() -> None:
     engine = (APP / 'GameCompat.swift').read_text(encoding='utf-8')
     view = (APP / 'GameCompatView.swift').read_text(encoding='utf-8')
@@ -828,6 +935,7 @@ def load_generator(path: Path | None = None, name: str = 'gen_game_compat'):
 def main() -> int:
     run_swift()
     check_database()
+    check_farm64()
     check_wiring()
     print(f'\n{"FAIL" if failures else "PASS"}: game compatibility ({failures} failure(s))')
     return 1 if failures else 0

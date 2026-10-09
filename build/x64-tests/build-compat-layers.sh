@@ -15,6 +15,6 @@ fi
 [ -n "${TC:-}" ] || { echo "llvm-mingw not found (docs/BUILDING.md), or set TC" >&2; exit 1; }
 cd "$R/build/x64-tests"
 "$TC/x86_64-w64-mingw32-clang" -O2 -Wall -Wno-missing-braces -o compat-layers-x64.exe compat-layers-x64.c \
-    -lole32 -loleaut32 -luuid -lstrmiids -lmfuuid -lwbemuuid -ldxguid
+    -lole32 -loleaut32 -luuid -lstrmiids -lmfuuid -lwbemuuid -ldxguid -lmsi
 [ "${NO_INSTALL:-}" = 1 ] || cp compat-layers-x64.exe "$R/app/Madeira/arm64ec-windows/compat-layers-x64.exe"
 ls -l compat-layers-x64.exe

@@ -43,6 +43,13 @@
 #include <mfapi.h>
 #include <mfmediaengine.h>
 #include <wmsdkidl.h>
+#include <msi.h>
+#include <msiquery.h>
+#ifndef CSIDL_APPDATA
+#define CSIDL_APPDATA 0x001a   /* shlobj.h does not compile as C here */
+#endif
+#include <activscp.h>
+#include <netfw.h>
 
 /* Declared here rather than taken from headers that do not compile as C
  * (dxdiag.h) or do not carry them (qedit.h, evr.h in this mingw-w64). */
@@ -51,6 +58,17 @@ DEFINE_GUID(IID_IDirect3DDevice9_,  0xd0223b96, 0xbf7a, 0x43fd, 0x92, 0xbd, 0xa4
 DEFINE_GUID(IID_IMFVideoPresenter_, 0x29aff080, 0x182a, 0x4a5d, 0xaf, 0x3b, 0x44, 0x8f, 0x3a, 0x63, 0x46, 0xcb);
 DEFINE_GUID(CLSID_DxDiagProvider_,  0xa65b8071, 0x3bfe, 0x4213, 0x9a, 0x5b, 0x49, 0x1d, 0xa4, 0x46, 0x1c, 0xa7);
 DEFINE_GUID(IID_IDxDiagProvider_,   0x9c6b4cb0, 0x23f8, 0x49cc, 0xa3, 0xed, 0x45, 0xa5, 0x50, 0x00, 0xa6, 0xd2);
+DEFINE_GUID(CLSID_DOMDocument40_,   0x88d969c0, 0xf192, 0x11d4, 0xa6, 0x5f, 0x00, 0x40, 0x96, 0x32, 0x51, 0xe5);
+DEFINE_GUID(CLSID_FileSystemObject_, 0x0d43fe01, 0xf093, 0x11cf, 0x89, 0x40, 0x00, 0xa0, 0xc9, 0x05, 0x42, 0x28);
+DEFINE_GUID(CLSID_WshShell_,        0x72c24dd5, 0xd70a, 0x438b, 0x8a, 0x42, 0x98, 0x42, 0x4b, 0x88, 0xaf, 0xb8);
+DEFINE_GUID(CLSID_JScript_,         0xf414c260, 0x6ac0, 0x11cf, 0xb6, 0xd1, 0x00, 0xaa, 0x00, 0xbb, 0xbb, 0x58);
+DEFINE_GUID(CLSID_VBScript_,        0xb54f3741, 0x5b07, 0x11cf, 0xa4, 0xb0, 0x00, 0xaa, 0x00, 0x4a, 0x55, 0xe8);
+DEFINE_GUID(CLSID_SWbemLocator_,    0x76a64158, 0xcb41, 0x11d1, 0x8b, 0x02, 0x00, 0x60, 0x08, 0x06, 0xd9, 0xb6);
+DEFINE_GUID(CLSID_NetFwMgr_,        0x304ce942, 0x6e39, 0x40d8, 0x94, 0x3a, 0xb9, 0x13, 0xc4, 0x0c, 0x9c, 0xd4);
+DEFINE_GUID(IID_INetFwMgr_,         0xf7898af5, 0xcac4, 0x4632, 0xa2, 0xec, 0xda, 0x06, 0xe5, 0x11, 0x1a, 0xf2);
+DEFINE_GUID(GUID_NULL_,          0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+DEFINE_GUID(IID_IDispatch_,         0x00020400, 0x0000, 0x0000, 0xc0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46);
+DEFINE_GUID(IID_IActiveScript_,     0xbb1a2ae1, 0xa4f9, 0x11cf, 0x8f, 0x20, 0x00, 0x80, 0x5f, 0x2c, 0xd0, 0x64);
 DEFINE_GUID(CLSID_DOMDocument30_,   0xf5078f32, 0xc551, 0x11d3, 0x89, 0xb9, 0x00, 0x00, 0xf8, 0x1f, 0xe2, 0x21);
 
 static int passed, failed, skipped;
@@ -402,6 +420,108 @@ static void test_system(void)
     load_only("system", "cabinet.dll");
 }
 
+/* --- Windows Installer, script hosts, firewall API, shell folders ---------
+ * The installer_scripting group of build/wine-pe/arm64ec-farm.json: a 64-bit
+ * redistributable / game installer, an x64 MSI custom action, a launcher's
+ * script objects and a multiplayer game's firewall exception. */
+static void test_installer_scripting(void)
+{
+    IUnknown *u;
+    char tmp[MAX_PATH], db[MAX_PATH];
+    {
+        UINT (WINAPI *open)(LPCSTR, LPCSTR, MSIHANDLE *) = (void *)entry("installer", "msi.dll", "MsiOpenDatabaseA");
+        UINT (WINAPI *view)(MSIHANDLE, LPCSTR, MSIHANDLE *) = (void *)entry("installer", "msi.dll", "MsiDatabaseOpenViewA");
+        UINT (WINAPI *exec)(MSIHANDLE, MSIHANDLE) = (void *)entry("installer", "msi.dll", "MsiViewExecute");
+        UINT (WINAPI *commit)(MSIHANDLE) = (void *)entry("installer", "msi.dll", "MsiDatabaseCommit");
+        UINT (WINAPI *close)(MSIHANDLE) = (void *)entry("installer", "msi.dll", "MsiCloseHandle");
+        if (open && view && exec && commit && close) {
+            MSIHANDLE h = 0, v = 0;
+            UINT r;
+            GetTempPathA(sizeof tmp, tmp);
+            snprintf(db, sizeof db, "%smadeira-compat-layers.msi", tmp);
+            DeleteFileA(db);
+            r = open(db, MSIDBOPEN_CREATE, &h);
+            if (r == ERROR_SUCCESS) {
+                pass("installer", "msi MsiOpenDatabase (create)");
+                r = view(h, "CREATE TABLE `Madeira` (`Key` CHAR(32) NOT NULL PRIMARY KEY `Key`)", &v);
+                if (r == ERROR_SUCCESS) r = exec(v, 0);
+                if (v) close(v);
+                if (r == ERROR_SUCCESS) r = commit(h);
+                if (r == ERROR_SUCCESS) pass("installer", "msi SQL CREATE TABLE + commit");
+                else fail("installer", "msi SQL CREATE TABLE + commit", "call failed", r);
+                close(h);
+            } else fail("installer", "msi MsiOpenDatabase (create)", "call failed", r);
+            DeleteFileA(db);
+        }
+    }
+    {
+        /* msiexec.exe from system32, as an x64 custom action server or a
+         * double-clicked .msi would start it: removing an unknown product
+         * answers 1605 (ERROR_UNKNOWN_PRODUCT) once msiexec actually ran. */
+        char cmd[MAX_PATH + 96], sys[MAX_PATH];
+        STARTUPINFOA si = { sizeof si };
+        PROCESS_INFORMATION pi;
+        GetSystemDirectoryA(sys, sizeof sys);
+        snprintf(cmd, sizeof cmd, "\"%s\\msiexec.exe\" /x {00000000-0000-0000-0000-00000000DEAD} /qn", sys);
+        if (CreateProcessA(NULL, cmd, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi)) {
+            DWORD code = 0;
+            if (WaitForSingleObject(pi.hProcess, 60000) == WAIT_OBJECT_0 && GetExitCodeProcess(pi.hProcess, &code)
+                && code == ERROR_UNKNOWN_PRODUCT)
+                pass("installer", "msiexec.exe /x unknown product -> 1605");
+            else fail("installer", "msiexec.exe /x unknown product", "unexpected exit code", code);
+            CloseHandle(pi.hThread); CloseHandle(pi.hProcess);
+        } else fail("installer", "msiexec.exe", "not startable", GetLastError());
+    }
+    if ((u = create("scripting", "msxml4 CLSID_DOMDocument40", &CLSID_DOMDocument40_, &IID_IXMLDOMDocument))) {
+        VARIANT_BOOL ok = VARIANT_FALSE;
+        BSTR x = SysAllocString(L"<config><v a=\"1\"/></config>");
+        HRESULT hr = IXMLDOMDocument_loadXML((IXMLDOMDocument *)u, x, &ok);
+        if (hr == S_OK && ok == VARIANT_TRUE) pass("scripting", "msxml4 loadXML"); else fail("scripting", "msxml4 loadXML", "call failed", hr);
+        SysFreeString(x);
+        IUnknown_Release(u);
+    }
+    load_only("scripting", "msxml.dll");
+    load_only("scripting", "msxml2.dll");
+    if ((u = create("scripting", "scrrun Scripting.FileSystemObject", &CLSID_FileSystemObject_, &IID_IDispatch_))) {
+        /* GetSpecialFolder / FolderExists are what setup scripts call first;
+         * IDispatch::GetIDsOfNames shows the type information loads. */
+        LPOLESTR name = (LPOLESTR)L"FolderExists";
+        DISPID id = 0;
+        HRESULT hr = IDispatch_GetIDsOfNames((IDispatch *)u, &GUID_NULL_, &name, 1, 0, &id);
+        if (SUCCEEDED(hr)) pass("scripting", "scrrun IDispatch FolderExists"); else fail("scripting", "scrrun IDispatch FolderExists", "call failed", hr);
+        IUnknown_Release(u);
+    }
+    if ((u = create("scripting", "wshom WScript.Shell", &CLSID_WshShell_, &IID_IDispatch_))) {
+        LPOLESTR name = (LPOLESTR)L"ExpandEnvironmentStrings";
+        DISPID id = 0;
+        HRESULT hr = IDispatch_GetIDsOfNames((IDispatch *)u, &GUID_NULL_, &name, 1, 0, &id);
+        if (SUCCEEDED(hr)) pass("scripting", "wshom IDispatch ExpandEnvironmentStrings"); else fail("scripting", "wshom IDispatch ExpandEnvironmentStrings", "call failed", hr);
+        IUnknown_Release(u);
+    }
+    if ((u = create("scripting", "jscript CLSID_JScript", &CLSID_JScript_, &IID_IActiveScript_))) IUnknown_Release(u);
+    if ((u = create("scripting", "vbscript CLSID_VBScript", &CLSID_VBScript_, &IID_IActiveScript_))) IUnknown_Release(u);
+    if ((u = create("scripting", "wbemdisp WbemScripting.SWbemLocator", &CLSID_SWbemLocator_, &IID_IDispatch_))) IUnknown_Release(u);
+    if ((u = create("network", "hnetcfg HNetCfg.FwMgr", &CLSID_NetFwMgr_, &IID_INetFwMgr_))) {
+        INetFwPolicy *pol = NULL;
+        HRESULT hr = INetFwMgr_get_LocalPolicy((INetFwMgr *)u, &pol);
+        if (SUCCEEDED(hr) && pol) { pass("network", "hnetcfg INetFwMgr::get_LocalPolicy"); INetFwPolicy_Release(pol); }
+        else fail("network", "hnetcfg INetFwMgr::get_LocalPolicy", "call failed", hr);
+        IUnknown_Release(u);
+    }
+    {
+        BOOL (WINAPI *alive)(DWORD *) = (void *)entry("network", "sensapi.dll", "IsNetworkAlive");
+        DWORD flags = 0;
+        if (alive) { alive(&flags); pass("network", "sensapi IsNetworkAlive returns"); }
+    }
+    {
+        HRESULT (WINAPI *gfp)(HWND, int, HANDLE, DWORD, LPSTR) = (void *)entry("system", "shfolder.dll", "SHGetFolderPathA");
+        char path[MAX_PATH] = "";
+        if (gfp) { HRESULT hr = gfp(NULL, CSIDL_APPDATA, NULL, 0, path);
+                   if (SUCCEEDED(hr) && path[0]) pass("system", "shfolder SHGetFolderPathA(CSIDL_APPDATA)");
+                   else fail("system", "shfolder SHGetFolderPathA(CSIDL_APPDATA)", "call failed", hr); }
+    }
+}
+
 int main(int argc, char **argv)
 {
     int i;
@@ -420,6 +540,7 @@ int main(int argc, char **argv)
     test_vfw_acm();
     test_d3d_helpers();
     test_system();
+    test_installer_scripting();
     CoUninitialize();
     printf("[compat-layers] summary: %d passed, %d failed, %d skipped\n", passed, failed, skipped);
     return failed;

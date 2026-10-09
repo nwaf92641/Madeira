@@ -93,9 +93,9 @@ So:
 - `WinSxS.c` is added to the Xcode project by hand (`project.pbxproj`).
   `WineProcessBridge.m` was not compiled here.
 - On the device, check:
-  - the launch log has `[WineProc] winsxs: arm64: 9/10 assemblies seeded from
-    .../arm64ec-windows, 1 not in that farm` (msxml4 is not in the 64-bit
-    farm);
+  - the launch log has `[WineProc] winsxs: arm64: 10/10 assemblies seeded from
+    .../arm64ec-windows` (msxml4 joined the 64-bit farm with the
+    installer_scripting group of arm64ec-farm.json);
   - a 64-bit program with a Common Controls 6 manifest gets
     `...\winsxs\arm64_microsoft.windows.common-controls_...\comctl32.dll`;
   - the ARM64EC loader maps `comctl32_v6.dll` through the symlink like any

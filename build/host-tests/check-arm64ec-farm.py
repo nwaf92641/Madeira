@@ -101,6 +101,14 @@ KEY_CLASSES = {
     '{286F484D-375E-4458-A272-B138E2F80A6A}': 'dpnet.dll',          # CLSID_DirectPlay8Peer
     '{A65B8071-3BFE-4213-9A5B-491DA4461CA7}': 'dxdiagn.dll',        # CLSID_DxDiagProvider
     '{C1F400A0-3F08-11D3-9F0B-006008039E37}': 'qedit.dll',          # CLSID_SampleGrabber
+    # installer_scripting group
+    '{88D969C0-F192-11D4-A65F-0040963251E5}': 'msxml4.dll',         # CLSID_DOMDocument40
+    '{0D43FE01-F093-11CF-8940-00A0C9054228}': 'scrrun.dll',         # Scripting.FileSystemObject
+    '{72C24DD5-D70A-438B-8A42-98424B88AFB8}': 'wshom.ocx',          # WScript.Shell
+    '{F414C260-6AC0-11CF-B6D1-00AA00BBBB58}': 'jscript.dll',        # CLSID_JScript
+    '{B54F3741-5B07-11CF-A4B0-00AA004A55E8}': 'vbscript.dll',       # CLSID_VBScript
+    '{304CE942-6E39-40D8-943A-B913C40C9CD4}': 'hnetcfg.dll',        # HNetCfg.FwMgr
+    '{76A64158-CB41-11D1-8B02-00600806D9B6}': 'wbem\\wbemdisp.dll', # WbemScripting.SWbemLocator
 }
 # Registered 64-bit classes whose DLL is not in the farm: 458 before the list
 # existed; what remains is mostly mshtml/ieframe, DirectMusic, scripting and

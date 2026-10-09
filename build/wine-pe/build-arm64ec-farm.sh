@@ -132,8 +132,10 @@ mkdir -p "$B/dlls/stdole2.tlb/aarch64-windows"
 # ---------------------------------------------------------------------- build
 target_of() {
     local n="$1" t
-    t="$(grep -oE "^dlls/[^/]+/arm64ec-windows/$n:" "$B/Makefile" | head -1 | tr -d ':' || true)"
-    [ -z "$t" ] && t="$(grep -oiE "^dlls/[^/]+/arm64ec-windows/$n:" "$B/Makefile" | head -1 | tr -d ':' || true)"
+    # dlls/<name>/ for libraries, programs/<name>/ for the few Wine programs a
+    # 64-bit session needs in system32 (msiexec.exe runs x64 MSI custom actions).
+    t="$(grep -oE "^(dlls|programs)/[^/]+/arm64ec-windows/$n:" "$B/Makefile" | head -1 | tr -d ':' || true)"
+    [ -z "$t" ] && t="$(grep -oiE "^(dlls|programs)/[^/]+/arm64ec-windows/$n:" "$B/Makefile" | head -1 | tr -d ':' || true)"
     echo "$t"
 }
 TARGETS=(); NOTARGET=()

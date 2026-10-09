@@ -266,9 +266,31 @@
     {
       "name": "side_by_side",
       "winlator_component": null,
-      "reason": "Common Controls 6.0 for 64-bit programs. A program whose manifest asks for Microsoft.Windows.Common-Controls 6.0 (most Windows programs and many game launchers, crash reporters and setup tools do) gets it from C:\\windows\\winsxs, which Madeira seeds at launch from the session's farm (app/Madeira/WinSxS.c). comctl32_v6 is that assembly's comctl32.dll; without it the 64-bit store had no Common Controls 6, the program got comctl32 5.x, and its TaskDialog / TaskDialogIndirect imports were bound to stubs that abort when called (build/host-tests/check-winsxs.py shows this under Wine). The VC80/VC90 CRT and ATL, GDI+ and MSXML 3/6 assemblies are backed by modules already in the farm. msxml4 is not added: there is no evidence of 64-bit programs needing it.",
+      "reason": "Common Controls 6.0 for 64-bit programs. A program whose manifest asks for Microsoft.Windows.Common-Controls 6.0 (most Windows programs and many game launchers, crash reporters and setup tools do) gets it from C:\\windows\\winsxs, which Madeira seeds at launch from the session's farm (app/Madeira/WinSxS.c). comctl32_v6 is that assembly's comctl32.dll; without it the 64-bit store had no Common Controls 6, the program got comctl32 5.x, and its TaskDialog / TaskDialogIndirect imports were bound to stubs that abort when called (build/host-tests/check-winsxs.py shows this under Wine). The VC80/VC90 CRT and ATL, GDI+ and MSXML 3/6 assemblies are backed by modules already in the farm. msxml4 (Msxml2 4.0) is added by the installer_scripting group, which has the evidence for it.",
       "modules": [
         "comctl32_v6.dll"
+      ]
+    },
+    {
+      "name": "installer_scripting",
+      "winlator_component": null,
+      "reason": "Windows Installer, script hosts and the COM servers the 64-bit prefix already registers without a DLL behind them (counted from the template's system.reg: msxml4 11 classes, hnetcfg 8, wshom.ocx 5, msxml/msxml2 5 each, vbscript 4, msi/scrrun/jscript/wbemdisp 3 each). A 64-bit redistributable or game installer (vcredist_x64, PhysX, a game's own .msi), and an x64 custom action, run in msi.dll / msiexec.exe from system32: the 64-bit farm had neither, so the compat catalogue's 'msi: builtin' was true of 32-bit programs only. Launchers and setup scripts create Scripting.FileSystemObject (scrrun), WScript.Shell (wshom.ocx), the JScript / VBScript engines and SWbemLocator (wbemdisp); multiplayer games open the Windows Firewall API (HNetCfg.FwMgr, hnetcfg) to add their exception and treat a class that does not load as a fatal setup error. msxml4 completes the side-by-side store (Msxml2 4.0 was the one assembly WinSxS.c could not seed for 64-bit) and backs MSXML2.DOMDocument.4.0; msxml / msxml2 are the older ProgIDs' servers. sensapi (IsNetworkAlive) and shfolder (SHGetFolderPath) are plain imports of games and their network libraries. jscript / vbscript exist in the aarch64 farm, which only native ARM64 processes can load. About 11 MiB in all; mshtml / ieframe (36 + 11 classes) stay out: they need wine-gecko, which is not shipped. mspatcha (patch application) and odbccp32 (SQLInstallDriverEx for ODBC install actions) are msi.dll imports: the build refuses msi without them.",
+      "modules": [
+        "msi.dll",
+        "msiexec.exe",
+        "msxml4.dll",
+        "msxml.dll",
+        "msxml2.dll",
+        "scrrun.dll",
+        "wshom.ocx",
+        "jscript.dll",
+        "vbscript.dll",
+        "wbemdisp.dll",
+        "hnetcfg.dll",
+        "sensapi.dll",
+        "shfolder.dll",
+        "mspatcha.dll",
+        "odbccp32.dll"
       ]
     }
   ]

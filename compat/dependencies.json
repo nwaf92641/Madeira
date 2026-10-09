@@ -2404,15 +2404,14 @@
    "kind": "runtime",
    "category": "dependency",
    "support": "manual",
-   "summary": "Wine's own .NET implementation, the MSI Wine installs into a prefix so managed programs run without Microsoft's .NET installers. Titles built with .NET need it, and Wine stops a program the first time one starts to ask for it.",
+   "summary": "Wine's own .NET implementation, which mscoree needs to start any managed program (.NET Framework, XNA and FNA titles, many tools and launchers). Without it Wine stops the program at \"Wine Mono is not installed\".",
    "imports": [
     "mscoree"
    ],
    "dlls": [
-    "wine-mono-10.1.0-x86.msi",
-    "wine-mono-10.1.0-x86_64.msi"
+    "wine-mono-11.0.0-x86.tar.xz"
    ],
-   "notes": "Wine installs the MSI from share/wine/mono of the runtime at prefix creation; the engine can only report that it is needed. Winlator ships these two files with its prefixes (winlator:wine_addons) and blocks Microsoft's .NET installers, which Madeira's Wine does not need.",
+   "notes": "Optional component, not in the app (41 MB download, 235 MB unpacked): the unpacked wine-mono-11.0.0-x86.tar.xz from dl.winehq.org/wine/wine-mono/11.0.0/ goes in Documents/Components/wine-mono-11.0.0, and each launch links it to C:\\windows\\mono\\mono-2.0 (app/Madeira/WineMono.c, docs/WINE_MONO.md). 11.0.0 is the version this Wine's mscoree asks for; Winlator ships the 10.1.0 MSIs with its own Wine. Mono's x86_64 JIT output runs under FEX on the iPad, which is not verified yet.",
    "source": "winlator:wine_addons,wine"
   },
   "wine-gecko": {

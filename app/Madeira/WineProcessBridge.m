@@ -29,6 +29,7 @@
 #include "WineProcessBridge.h"
 #include "LaunchDiagnostics.h"
 #include "WinSxS.h"
+#include "WineMono.h"
 #include "WineServerBridge.h"
 #include "PrefixExtractor.h"
 #include "FEXBridge.h"  // fex_get_jit_write_offset()
@@ -1207,6 +1208,18 @@ static void *wine_process_thread(void *arg) {
             /* The arm64_ side-by-side store follows the session's 64-bit farm,
              * as system32 does above (WinSxS.h). */
             madeira_seed_winsxs(prefix, bundlePath, [NSString stringWithUTF8String:bundle_subdir], "arm64");
+
+            /* Wine Mono for managed (.NET) programs, when the optional component
+             * is in Documents/Components (WineMono.h, docs/WINE_MONO.md). Without
+             * it mscoree stops every .NET program at "Wine Mono is not installed". */
+            {
+                const char *env_docs = getenv("MADEIRA_DOCS_DIR");
+                NSString *docs = (env_docs && *env_docs) ? [NSString stringWithUTF8String:env_docs]
+                    : NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES).firstObject;
+                if (docs)
+                    madeira_wine_mono_link(prefix.UTF8String,
+                                           [docs stringByAppendingPathComponent:@"Components"].UTF8String);
+            }
 
             /* ml719: REPAIR THE SHELL FOLDERS. They ship as symlinks to the BUILD
              * MACHINE's home directory.

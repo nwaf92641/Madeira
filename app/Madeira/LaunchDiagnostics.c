@@ -418,6 +418,16 @@ static void md_feed_locked(const char *line)
                           "comctl32 5.x instead, and a later TaskDialog call aborts.");
         return;
     }
+    /* dlls/mscoree/metahost.c: a managed (.NET) program, and no Wine Mono */
+    if (md_find(line, "Wine Mono is not installed")) {
+        md_problem_locked(MD_CAT_DEPENDENCY, "dotnet", "Wine Mono is not installed", line, len,
+                          "A .NET program: Wine runs it through Wine Mono, which the app does not ship (235 MB "
+                          "unpacked). Put the unpacked wine-mono-" "11.0.0" "-x86.tar.xz from dl.winehq.org in "
+                          "Documents/Components/wine-mono-11.0.0 (the Files app can copy a folder there); the next "
+                          "launch links it into the prefix. The '[WineProc] wine-mono:' line says what was found. "
+                          "docs/WINE_MONO.md.");
+        return;
+    }
     /* dlls/ntdll/unix/env.c, unix/loader.c, loader.c: Wine never reached the program */
     if (md_find(line, "wine: failed to start ") || md_find(line, "wine: failed to open ") ||
         md_find(line, "wine: failed to load start.exe") || md_find(line, "wine: could not load kernel32.dll")) {

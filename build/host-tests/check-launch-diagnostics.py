@@ -118,6 +118,11 @@ int main(int argc, char **argv)
     feed("0024:err:module:import_dll Library msi.dll (which is needed by L\"C:\\\\Games\\\\Api\\\\setup.exe\") not found");
     dump("apiset");
 
+    madeira_diag_reset("C:\\Games\\Net\\net.exe", dir);
+    feed("[WineProc] wine-mono: not installed (.NET programs need Documents/Components/wine-mono-11.0.0, docs/WINE_MONO.md)");
+    feed("0024:err:mscoree:CLRRuntimeInfo_GetRuntimeHost Wine Mono is not installed");
+    dump("dotnet");
+
     madeira_diag_reset("C:\\Games\\Gl\\gl.exe", dir);
     feed("0050:warn:module:load_builtin_unixlib iOS: module 0x7000 (opengl32.dll) -> GL-absent stub table (attach ok, wgl/gl NOT_SUPPORTED)");
     dump("opengl");
@@ -369,6 +374,9 @@ with tempfile.TemporaryDirectory() as work:
     check(a['verdict'] == 'missing-dll' and any('API set contract' in h and 'windows.storage' in h for h in hints),
           'api set: missing-dll verdict, hint explains schema / host')
     check(any('installer_scripting' in h for h in hints), 'msi: installer / scripting hint')
+    a = s['dotnet']
+    check(a['verdict'] == 'dependency-load-failure' and 'Documents/Components/wine-mono-11.0.0' in a['json']['problems'][0]['hint'],
+          'dotnet: missing Wine Mono is a dependency failure whose hint says where the component goes (%s)' % a['verdict'])
     a = s['opengl']
     check(a['verdict'] == 'graphics-device-failure' and 'OpenGL' in a['json']['problems'][0]['hint'], 'opengl: verdict + hint')
     a = s['crash']

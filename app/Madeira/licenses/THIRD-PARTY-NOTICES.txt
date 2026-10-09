@@ -47,6 +47,15 @@ Statically linked into the application binary:
   ffmpeg.org) and its SHA-256: the Madeira repository, build/ffmpeg/src,
   built by build/ffmpeg/build.sh.
 
+Windows-side modules in the 32-bit (i386-windows) runtime, when built:
+- d3d8.dll: d3d8to9, (C) 2015 Patrick Mours, BSD-2-Clause
+  (d3d8to9-BSD-2.txt), with Madeira's changes under the same licence.
+  Source: https://github.com/crosire/d3d8to9 at 255338f, vendored with the
+  changes in third_party/d3d8to9 of the Madeira repository. Statically links
+  LLVM's libc++/libunwind (LLVM-Apache-2.0-with-exception.txt) and the
+  MinGW-w64 runtime (permissive; the same runtime's notices are listed in
+  arm64ec-windows/dock-notices.txt).
+
 Dynamically loaded at runtime:
 - Apple Metal Shader Converter dynamic library: Apple proprietary, under the
   agreement in d3d12/METAL-SHADER-CONVERTER-AGREEMENT.txt (section 2.B:

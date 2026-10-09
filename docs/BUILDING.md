@@ -62,6 +62,8 @@ git-ignored and consumed by the app project.
    -> `app/Madeira/i386-windows/`), `build/fex-wow64/build.sh` (FEX WOW64 module
    -> `app/Madeira/aarch64-windows/xtajit.dll`) and the aarch64 `wow64.dll` /
    `wow64win.dll`; see docs/WOW64.md, "Building". UNVERIFIED on macOS.
+   The i386 farm build also runs `build/d3d8/build.sh` (Direct3D 8 over DXMT's
+   Direct3D 9, docs/D3D8.md); that step was verified on Linux with llvm-mingw.
 
 ## Status of the LGPL relink question
 

@@ -70,7 +70,10 @@ SKIP_SUFFIX = ('.dll16', '.drv16', '.exe16', '.vxd')
 # Wine names DXMT answers for. The i386 build skips Wine's own copies of these
 # because DXMT installs its implementation under the same name (the script says
 # so), so the name is provided and must not be listed as missing.
-DXMT_OWNED = {'d3d9', 'd3d10core', 'd3d11', 'dxgi', 'winemetal'}
+DXMT_OWNED = {'d3d9', 'd3d10core', 'd3d11', 'dxgi', 'winemetal',
+              # Madeira's d3d8 (third_party/d3d8to9 over DXMT's d3d9) replaces
+              # Wine's wined3d frontend in the 32-bit farm; build/d3d8/build.sh.
+              'd3d8'}
 # API set contract names, resolved by the loader to the module that implements
 # them. Kept as prefixes: they are not files in any Wine tree, and there are
 # hundreds of them.

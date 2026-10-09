@@ -62,6 +62,18 @@ This is the stage-by-stage view of one launch. `CompatDiagnosis.swift`
 (docs/GAME_COMPATIBILITY.md) still classifies a finished session for the
 library's automatic fallback; the two read the same log.
 
+### Lines the patched graphics code writes
+
+With `patches/dxmt-ios-layer-safety.patch` built in (build/dxmt-ios/README.md):
+
+| Line | Meaning |
+| --- | --- |
+| `[madeira-diag] stage=device ok=1 detail=Direct3D 11 (DXMT), feature level 0x...` | D3D11 device created |
+| `[madeira-diag] stage=swapchain ok=1 detail=d3d11 WxH format N` | D3D11 swapchain created |
+| `[madeira-diag] stage=swapchain ok=0 cat=swapchain-failure ...` | no Metal layer for the window, or a format DXGI does not allow; CreateSwapChain fails instead of abort() |
+| `[madeira-display] CAMetalLayer refused pixel format A (...)` | the layer took a documented format instead; frames are converted |
+| `[madeira-diag] stage=present ok=0 cat=metal-present-failure detail=d3d12: ...` | the D3D12 runtime dropped a frame it could neither copy nor convert (app built without MadeiraCtl op 8) |
+
 ## Settings
 
 | Variable | Default | Effect |
@@ -77,6 +89,9 @@ library's automatic fallback; the two read the same log.
   cost.
 - `build/host-tests/check-child-slots.py`: launcher children keep the session
   and every exit path frees its slot.
+- `build/host-tests/check-layer-format.py`: the layer-format fallback table,
+  the D3D12 copy-or-convert decision, and that the DXMT patch applies.
 
-Both run on any machine with a C compiler. What the report says on a device
+`.github/workflows/host-tests.yml` runs these and the other compiler-only host
+tests on every pull request. They run on any machine with a C compiler. What the report says on a device
 for a given game has to be checked on an iPad.

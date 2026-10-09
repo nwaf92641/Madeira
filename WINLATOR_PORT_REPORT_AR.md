@@ -118,3 +118,19 @@
 `fatal: could not read Username for 'https://github.com'`، و`gh` غير مسجّل، وتكامل GitHub يعيد `scm_not_connected`.
 لم يُخترع أي token ولم يُتجاوز أي تحقق. الـ patches والـ bundle ونص PR جاهزة في `/workspace/madeira-compat-out/`.
 بعد ربط GitHub: `git push origin universal-game-compatibility`، ثم PR إلى `nwaf92641/Madeira:main`.
+
+## 8. الدفعة الثالثة (بعد نسخة الحماية `backup/universal-game-compatibility-1791577204`)
+
+| الـ commit | ما أضافه |
+|---|---|
+| ‏`cad890a` | ‏`build/host-tests/run-all.sh` لتشغيل كل اختبارات المضيف، ويعرض SKIP عند غياب swiftc |
+| ‏`30c2f62` | مجموعة `installer_scripting` في المزرعة 64-bit، وتضم 15 وحدة: msi، وmsiexec، وmsxml4، وscrrun، وwshom، وjscript، وvbscript، وwbemdisp، وhnetcfg، وsensapi، وshfolder، وmspatcha، وodbccp32. فئات COM بلا DLL نزلت من 259 إلى 209 |
+| ‏`5ede471` | ‏`test_installer_scripting` في `compat-layers-x64`: قبل 63/17/4، وبعد 81/0/4. وأُضيف `farm-overrides.py` |
+| ‏`e0d0907` | ‏API sets في `compat.json` ‏(`wine_api_sets`) وفي `GameCompat.apiSetProblem`، مع `gen-game-compat.py --update-local` |
+| ‏`c511adc` | تصحيح بيانات التوافق، وأُضيفت فحوص تفشل إن ادّعى JSON وجود DLL غير مشحون |
+| ‏`c5e6a8e` | تلميحات التشخيص لـ api-ms-win-*، وللمثبّتات والسكربتات |
+| ‏`84f934f` | ‏Wine Mono 11.0.0 مكوّن اختياري (`WineMono.c`) مع `check-wine-mono.py` |
+| ‏`498b03f` | ‏`build/tools/wine-audit.py` لتدقيق اكتمال Wine |
+| ‏`5509b28` | ‏CI يشغّل check-wine-mono وcheck-winsxs وcheck-d3d8-shader |
+
+المقارنة المحدثة مع Winlator في `WINLATOR_COMPARISON.md`.

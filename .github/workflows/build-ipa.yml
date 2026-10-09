@@ -1,0 +1,124 @@
+name: Build unsigned IPA
+
+on:
+  push:
+    branches: [main, 'add-ipa-ci', 'universal-game-compatibility']
+    paths:
+      - 'ci/**'
+      - 'build/**'
+      - 'app/**'
+      - '.github/workflows/build-ipa.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write   # required to save the build caches
+
+jobs:
+  ipa:
+    runs-on: macos-15
+    timeout-minutes: 350
+
+    env:
+      JOBS: 3
+
+    steps:
+      - name: Checkout (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Select recent Xcode
+        # macos-15 ships several Xcodes (16.x by default, 26.x alongside) and
+        # the default moves with image updates. Pin the newest Xcode 26 so the
+        # build matches the SDK the stack is validated against, and always pick
+        # explicitly rather than depending on whatever xcode-select points at.
+        run: |
+          set -eu
+          XC=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -1)
+          if [ -z "$XC" ]; then
+            echo "no Xcode 26 on this image; available:"; ls -d /Applications/Xcode*.app
+            exit 1
+          fi
+          echo "using $XC"
+          sudo xcode-select -s "$XC/Contents/Developer"
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
+
+      - name: Install build tools
+        run: brew install cmake ninja meson bison flex pkgconf autoconf automake libtool ccache llvm
+
+      # Restore/save are split so a *failed* run still saves its partial
+      # progress (the plain cache action skips saving when the job fails).
+      - name: Restore build cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            toolchains/llvm-mingw-20260421-ucrt-macos-universal
+            toolchains/gnutls-ios
+            toolchains/ffmpeg-ios
+            toolchains/llvm-project
+            toolchains/llvm-ios-build
+            toolchains/llvm-host-build
+            research/freetype
+            FEX/build-ios
+            wine/build-macos
+            build/gnutls-ios/obj
+            build/ffmpeg/obj
+            build/freetype-ios/build
+            build/ntdll-unix/obj
+            build/win32u-unix/obj
+            build/wineserver/obj
+            build/dxmt-ios/obj
+          key: madeira-v2-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: |
+            madeira-v2-${{ runner.os }}-
+
+      - name: Build and package unsigned IPA
+        shell: bash
+        # pipefail so a failing ci/build-ipa.sh is not masked by tee.
+        run: |
+          set -o pipefail
+          bash ci/build-ipa.sh 2>&1 | tee build/ci-build.log
+
+      - name: Save build cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            toolchains/llvm-mingw-20260421-ucrt-macos-universal
+            toolchains/gnutls-ios
+            toolchains/ffmpeg-ios
+            toolchains/llvm-project
+            toolchains/llvm-ios-build
+            toolchains/llvm-host-build
+            research/freetype
+            FEX/build-ios
+            wine/build-macos
+            build/gnutls-ios/obj
+            build/ffmpeg/obj
+            build/freetype-ios/build
+            build/ntdll-unix/obj
+            build/win32u-unix/obj
+            build/wineserver/obj
+            build/dxmt-ios/obj
+          key: madeira-v2-${{ runner.os }}-${{ github.run_id }}
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-build-log
+          path: build/ci-build.log
+          if-no-files-found: ignore
+
+      - name: Upload unsigned IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: Madeira-unsigned-ipa
+          path: |
+            build/ipa-output/Madeira-unsigned.ipa
+            build/ipa-output/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 14

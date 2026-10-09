@@ -113,6 +113,11 @@ int main(int argc, char **argv)
     feed("0040:err:module:import_dll Library quartz.dll (which is needed by L\"C:\\\\Games\\\\Vid\\\\vid.exe\") not found");
     dump("video");
 
+    madeira_diag_reset("C:\\Games\\Api\\api.exe", dir);
+    feed("0024:err:module:import_dll Library api-ms-win-shell-namespace-l1-1-0.dll (which is needed by L\"C:\\\\Games\\\\Api\\\\api.exe\") not found");
+    feed("0024:err:module:import_dll Library msi.dll (which is needed by L\"C:\\\\Games\\\\Api\\\\setup.exe\") not found");
+    dump("apiset");
+
     madeira_diag_reset("C:\\Games\\Gl\\gl.exe", dir);
     feed("0050:warn:module:load_builtin_unixlib iOS: module 0x7000 (opengl32.dll) -> GL-absent stub table (attach ok, wgl/gl NOT_SUPPORTED)");
     dump("opengl");
@@ -359,6 +364,11 @@ with tempfile.TemporaryDirectory() as work:
     cats = sorted(x['category'] for x in a['json']['problems'])
     check(cats == ['missing-dll', 'video-init-failure'], 'video: categories (%s)' % cats)
     check(any('media component' in x['hint'] for x in a['json']['problems']), 'video: quartz gets the media hint')
+    a = s['apiset']
+    hints = [x.get('hint') or '' for x in a['json']['problems']]
+    check(a['verdict'] == 'missing-dll' and any('API set contract' in h and 'windows.storage' in h for h in hints),
+          'api set: missing-dll verdict, hint explains schema / host')
+    check(any('installer_scripting' in h for h in hints), 'msi: installer / scripting hint')
     a = s['opengl']
     check(a['verdict'] == 'graphics-device-failure' and 'OpenGL' in a['json']['problems'][0]['hint'], 'opengl: verdict + hint')
     a = s['crash']

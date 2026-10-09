@@ -293,6 +293,16 @@ static const char *md_dll_hint(const char *dll)
     if (md_name_in(dll, no_backend))
         return "This graphics API has no rendering backend in Madeira (no wined3d, OpenGL or Vulkan); only "
                "Direct3D 9, 10, 11 and 12 reach Metal.";
+    if (md_name_in(dll, (const char *const[]){ "api-ms-win-*", "ext-ms-win-*", NULL }))
+        return "An API set contract. Wine maps it through its schema (dlls/apisetschema) to a host module and loads "
+               "that; this one is not in the schema, has no host there, or its host is not in this session's DLL "
+               "folder (the 64-bit folder lacks windows.storage, twinapi.appcore and wintypes, among others). The "
+               "game's compatibility view names which, from compat.json's wine_api_sets.";
+    if (md_name_in(dll, (const char *const[]){ "msi.dll", "msiexec.exe", "scrrun.dll", "wshom.ocx", "jscript.dll",
+                                               "vbscript.dll", "msxml4.dll", "hnetcfg.dll", NULL }))
+        return "An installer or scripting component. Both DLL folders ship Wine's (the 64-bit ones are the "
+               "installer_scripting group of build/wine-pe/arm64ec-farm.json); one reported missing here means "
+               "this build predates that group or left it out.";
     if (md_name_in(dll, redist))
         return "A Windows redistributable the game expects to be installed. Wine answers most of them as builtins "
                "(the 64-bit versions shipped are listed in build/wine-pe/arm64ec-farm.json); for one that is not "

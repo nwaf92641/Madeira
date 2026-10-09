@@ -262,6 +262,14 @@
         "shdocvw.dll",
         "bluetoothapis.dll"
       ]
+    },
+    {
+      "name": "side_by_side",
+      "winlator_component": null,
+      "reason": "Common Controls 6.0 for 64-bit programs. A program whose manifest asks for Microsoft.Windows.Common-Controls 6.0 (most Windows programs and many game launchers, crash reporters and setup tools do) gets it from C:\\windows\\winsxs, which Madeira seeds at launch from the session's farm (app/Madeira/WinSxS.c). comctl32_v6 is that assembly's comctl32.dll; without it the 64-bit store had no Common Controls 6, the program got comctl32 5.x, and its TaskDialog / TaskDialogIndirect imports were bound to stubs that abort when called (build/host-tests/check-winsxs.py shows this under Wine). The VC80/VC90 CRT and ATL, GDI+ and MSXML 3/6 assemblies are backed by modules already in the farm. msxml4 is not added: there is no evidence of 64-bit programs needing it.",
+      "modules": [
+        "comctl32_v6.dll"
+      ]
     }
   ]
 }

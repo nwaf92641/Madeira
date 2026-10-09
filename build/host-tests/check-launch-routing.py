@@ -34,8 +34,15 @@ farm = thread[thread.index("if (has_i386_set) {"):]
 farm = farm[:farm.index("/* ml719: REPAIR THE SHELL FOLDERS.")]
 assert "madeira_link_syswow64(fm, prefix, bundlePath);" in farm
 inner = farm[farm.index("if (is_i386_target) {"):]
-assert "madeira_link_syswow64_wbem(" in inner and "madeira_seed_winsxs_x86(" in inner, "wbem/winsxs for i386 targets only"
-for call in ["madeira_link_syswow64(", "madeira_link_syswow64_wbem(", "madeira_seed_winsxs_x86(",
+wow_wbem = 'madeira_link_wbem(fm, prefix, bundlePath, @"syswow64", @"i386-windows");'
+assert wow_wbem in inner and "madeira_seed_winsxs_x86(" in inner, "syswow64 wbem/winsxs for i386 targets only"
+# system32\wbem comes from the session's own 64-bit farm, for every session,
+# outside the WoW64 gate (the arm64ec farm ships wbemprox/wmiutils).
+sys_wbem = thread.index('madeira_link_wbem(fm, prefix, bundlePath, @"system32",')
+assert sys_wbem < thread.index("if (has_i386_set) {"), "system32 wbem is not gated on WoW64"
+assert "[NSString stringWithUTF8String:bundle_subdir]" in thread[sys_wbem:sys_wbem + 200]
+assert thread.count("madeira_link_wbem(") == 2
+for call in ["madeira_link_syswow64(", wow_wbem, "madeira_seed_winsxs_x86(",
              "madeira_publish_host_probe()"]:
     assert thread.count(call) == 1, call
 assert thread.index("ios_main_image_i386 = is_i386_target ? 1 : 0;") < thread.index("__wine_main(argc, argv);")

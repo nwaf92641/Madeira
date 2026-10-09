@@ -512,17 +512,24 @@ static void madeira_link_syswow64(NSFileManager *fm, NSString *prefix, NSString 
     dprintf(STDERR_FILENO, "[WineProc] Farm syswow64: %d links -> i386-windows\n", linked);
 }
 
-/* syswow64\wbem, for 32-bit targets. The farms are flat, but WMI's registered
- * InprocServer32 paths are C:\windows\system32\wbem\<name> (wine.inf installs
- * these modules there), so a 32-bit CoCreateInstance(CLSID_WbemLocator) -- for
- * example dxdiagn asking WMI about the display adapter -- fails with
- * c0000135 when the subdirectory is empty. The list is wine.inf's. */
-static void madeira_link_syswow64_wbem(NSFileManager *fm, NSString *prefix, NSString *bundle)
+/* <system dir>\wbem. The farms are flat, but WMI's registered InprocServer32
+ * paths are C:\windows\system32\wbem\<name> (wine.inf installs these modules
+ * there; the prefix template's system.reg says so for CLSID_WbemLocator in both
+ * registry views), so CoCreateInstance(CLSID_WbemLocator) -- dxdiagn asking WMI
+ * about the display adapter, an engine reading Win32_VideoController for the
+ * adapter's memory -- fails with c0000135 when the subdirectory is empty.
+ * syswow64\wbem is filled from the i386 farm for 32-bit targets, system32\wbem
+ * from the session's 64-bit farm (arm64ec-windows ships wbemprox and wmiutils
+ * since build/wine-pe/arm64ec-farm.json). A name the farm does not have is
+ * skipped. The list is wine.inf's. */
+static void madeira_link_wbem(NSFileManager *fm, NSString *prefix, NSString *bundle,
+                              NSString *sysdir, NSString *farm)
 {
     static const char * const wbem[] = { "wbemprox.dll", "wbemdisp.dll", "wmiutils.dll",
                                          "wmic.exe", "mofcomp.exe" };
-    NSString *dir = [prefix stringByAppendingPathComponent:@"drive_c/windows/syswow64/wbem"];
-    NSString *source = [bundle stringByAppendingPathComponent:@"i386-windows"];
+    NSString *dir = [prefix stringByAppendingPathComponent:
+                     [NSString stringWithFormat:@"drive_c/windows/%@/wbem", sysdir]];
+    NSString *source = [bundle stringByAppendingPathComponent:farm];
     int linked = 0;
 
     [fm createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:nil];
@@ -535,8 +542,8 @@ static void madeira_link_syswow64_wbem(NSFileManager *fm, NSString *prefix, NSSt
         if (![fm fileExistsAtPath:src]) continue;
         if ([fm createSymbolicLinkAtPath:dst withDestinationPath:src error:nil]) linked++;
     }
-    dprintf(STDERR_FILENO, "[WineProc] syswow64\\wbem: %d/%zu links\n",
-            linked, sizeof(wbem) / sizeof(wbem[0]));
+    dprintf(STDERR_FILENO, "[WineProc] %s\\wbem: %d/%zu links -> %s\n",
+            sysdir.UTF8String, linked, sizeof(wbem) / sizeof(wbem[0]), farm.UTF8String);
 }
 
 /* C:\windows\winsxs for 32-bit targets: the x86 side-by-side assemblies Wine
@@ -1230,13 +1237,17 @@ static void *wine_process_thread(void *arg) {
                 }
             }
 
+            /* system32\wbem from the session's own farm (see madeira_link_wbem). */
+            madeira_link_wbem(fm, prefix, bundlePath, @"system32",
+                              [NSString stringWithUTF8String:bundle_subdir]);
+
             /* WoW64: the i386 farm for every session once the bundle has it;
              * the x86 side-by-side store and syswow64\wbem for a 32-bit
              * target (docs/WOW64.md). */
             if (has_i386_set) {
                 madeira_link_syswow64(fm, prefix, bundlePath);
                 if (is_i386_target) {
-                    madeira_link_syswow64_wbem(fm, prefix, bundlePath);
+                    madeira_link_wbem(fm, prefix, bundlePath, @"syswow64", @"i386-windows");
                     madeira_seed_winsxs_x86(fm, prefix, bundlePath);
                 }
             }

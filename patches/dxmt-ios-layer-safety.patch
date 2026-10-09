@@ -16,7 +16,7 @@ index 85cbc03..f55694b 100644
      /* ml752: report WHAT failed, and do not use Logger to do it.
       *
 diff --git a/src/d3d11/d3d11_swapchain.cpp b/src/d3d11/d3d11_swapchain.cpp
-index 2ab6e11..1a2d18e 100644
+index 2ab6e11..6475fbb 100644
 --- a/src/d3d11/d3d11_swapchain.cpp
 +++ b/src/d3d11/d3d11_swapchain.cpp
 @@ -134,8 +134,16 @@ public:
@@ -57,9 +57,9 @@ index 2ab6e11..1a2d18e 100644
    HRESULT
    STDMETHODCALLTYPE
    QueryInterface(REFIID riid, void **ppvObject) final {
-@@ -1158,19 +1171,42 @@ CreateSwapChain(
-       pDesc->BufferCount != 1) {
-     WARN("CreateSwapChain: unsupported swap effect ", pDesc->SwapEffect, " with backbuffer size ", pDesc->BufferCount);
+@@ -1153,6 +1166,15 @@ CreateSwapChain(
+     ERR("CreateSwapChain: failed to get IMTLDXGIDevice");
+     return E_FAIL;
    }
 +  /* Madeira: a format DXGI does not allow for a swapchain, or one this layer
 +   * cannot present, is refused here as on Windows (DXGI_ERROR_INVALID_CALL)
@@ -70,6 +70,11 @@ index 2ab6e11..1a2d18e 100644
 +                            (uint32_t)pDesc->Format, " refused (DXGI_ERROR_INVALID_CALL)"));
 +    return DXGI_ERROR_INVALID_CALL;
 +  }
+   if ((pDesc->SwapEffect != DXGI_SWAP_EFFECT_DISCARD &&
+        pDesc->SwapEffect != DXGI_SWAP_EFFECT_FLIP_DISCARD) &&
+       pDesc->BufferCount != 1) {
+@@ -1160,17 +1182,31 @@ CreateSwapChain(
+   }
    if (env::getEnvVar("DXMT_METALFX_SPATIAL_SWAPCHAIN") == "1") {
      if (pDevice->GetMTLDevice().supportsFXSpatialScaler()) {
 -      *ppSwapChain = new MTLD3D11SwapChain<true>(

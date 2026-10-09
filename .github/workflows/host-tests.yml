@@ -34,7 +34,7 @@ jobs:
             check-arm64ec-farm check-layer-format check-lazy-windows check-nav-keys
             check-scene-batching check-small-va-band check-unixlib-binder
             check-win32u-zero-bits check-wow-context check-wow-cpu-area
-            check-wow-sweep"
+            check-wow-sweep check-wine-mono check-winsxs check-d3d8-shader"
           failed=""
           for t in $tests; do
             echo "::group::$t"

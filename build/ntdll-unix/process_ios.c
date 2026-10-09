@@ -423,6 +423,7 @@ struct ios_child_args {
     int argc;
     struct pe_image_info pe_info;
     int slot;   /* ios_child_slots index, -1 = none */
+    unsigned slot_gen;   /* the slot's generation when it was taken */
 };
 
 /* Pseudo-process children that are still running. A launcher stub that
@@ -434,8 +435,21 @@ struct ios_child_args {
  * helpers (crs-handler, crashpad, *helper*, *report*) do not count: they live
  * as long as the game and used to end with it. */
 #define IOS_CHILD_SLOTS 32
+/* A child whose master socket never reached the wineserver this long after it
+ * was spawned did not boot (its boot thread is stuck or died without reaching
+ * ios_child_thread_entry's release). It no longer keeps the session. */
+#define IOS_CHILD_BOOT_TIMEOUT 120.0
 static pthread_mutex_t ios_child_lock = PTHREAD_MUTEX_INITIALIZER;
-static struct { char name[64]; double started; int used; } ios_child_slots[IOS_CHILD_SLOTS];
+static struct
+{
+    char name[64];
+    double started;
+    int used;
+    int fd;           /* the child's master socket (args->socketfd), -1 = unknown */
+    int registered;   /* that socket was registered as a pseudo-process (server_ios.c) */
+    unsigned gen;     /* bumped on every take, so a late release cannot free a reused slot */
+} ios_child_slots[IOS_CHILD_SLOTS];
+static unsigned ios_child_gen;
 
 static double ios_child_now(void)
 {
@@ -452,7 +466,7 @@ static int ios_child_is_helper( const char *name )
     return 0;
 }
 
-static int ios_child_slot_take( const UNICODE_STRING *image )
+static int ios_child_slot_take( const UNICODE_STRING *image, int fd, unsigned *gen_out )
 {
     char name[64];
     unsigned i, n = 0, start = 0, len = image->Length / sizeof(WCHAR);
@@ -472,6 +486,10 @@ static int ios_child_slot_take( const UNICODE_STRING *image )
         if (ios_child_slots[i].used) continue;
         ios_child_slots[i].used = 1;
         ios_child_slots[i].started = ios_child_now();
+        ios_child_slots[i].fd = fd;
+        ios_child_slots[i].registered = 0;
+        ios_child_slots[i].gen = ++ios_child_gen;
+        if (gen_out) *gen_out = ios_child_slots[i].gen;
         memcpy( ios_child_slots[i].name, name, n + 1 );
         slot = i;
         break;
@@ -480,16 +498,59 @@ static int ios_child_slot_take( const UNICODE_STRING *image )
     return slot;
 }
 
-static void ios_child_slot_release( int slot )
+/* The boot thread's release (ios_child_thread_entry). A child that ended from
+ * a worker thread was already released by madeira_child_socket_closed, and the
+ * slot may since belong to another child: the generation tells them apart. */
+static void ios_child_slot_release( int slot, unsigned gen )
 {
     if (slot < 0 || slot >= IOS_CHILD_SLOTS) return;
     pthread_mutex_lock( &ios_child_lock );
-    ios_child_slots[slot].used = 0;
+    if (ios_child_slots[slot].used && ios_child_slots[slot].gen == gen)
+    {
+        ios_child_slots[slot].used = 0;
+        ios_child_slots[slot].fd = -1;
+    }
+    pthread_mutex_unlock( &ios_child_lock );
+}
+
+/* server_ios.c, ios_register_proc_socket: the child's master socket is now a
+ * registered pseudo-process, i.e. the child booted far enough to talk to the
+ * wineserver. */
+void madeira_child_socket_registered( int fd )
+{
+    unsigned i;
+    if (fd < 0) return;
+    pthread_mutex_lock( &ios_child_lock );
+    for (i = 0; i < IOS_CHILD_SLOTS; i++)
+        if (ios_child_slots[i].used && ios_child_slots[i].fd == fd) ios_child_slots[i].registered = 1;
+    pthread_mutex_unlock( &ios_child_lock );
+}
+
+/* server_ios.c, process_exit_wrapper: the child's master socket is about to
+ * close, which is how the wineserver learns the process ended. This is the
+ * one place every child exit reaches, on whichever thread called ExitProcess;
+ * a worker thread that ends the process never returns to the boot thread, so
+ * releasing the slot only in ios_child_thread_entry leaked it, and a session
+ * waiting for that child would never end. Called before the close, so the fd
+ * number cannot have been reused yet. */
+void madeira_child_socket_closed( int fd )
+{
+    unsigned i;
+    if (fd < 0) return;
+    pthread_mutex_lock( &ios_child_lock );
+    for (i = 0; i < IOS_CHILD_SLOTS; i++)
+        if (ios_child_slots[i].used && ios_child_slots[i].fd == fd)
+        {
+            ios_child_slots[i].used = 0;
+            ios_child_slots[i].fd = -1;
+        }
     pthread_mutex_unlock( &ios_child_lock );
 }
 
 /* Children still running that are not helpers, started at most max_age
- * seconds ago (max_age < 0: any age); their names go to buf. Called by
+ * seconds ago (max_age < 0: any age); their names go to buf. A child that
+ * never registered its master socket within IOS_CHILD_BOOT_TIMEOUT is not
+ * counted: it did not boot and nothing will ever release it. Called by
  * WineProcessBridge.m (same binary). */
 int madeira_live_game_children( char *buf, int len, double max_age )
 {
@@ -503,6 +564,7 @@ int madeira_live_game_children( char *buf, int len, double max_age )
     {
         if (!ios_child_slots[i].used || ios_child_is_helper( ios_child_slots[i].name )) continue;
         if (max_age >= 0 && now - ios_child_slots[i].started > max_age) continue;
+        if (!ios_child_slots[i].registered && now - ios_child_slots[i].started > IOS_CHILD_BOOT_TIMEOUT) continue;
         count++;
         if (buf && len - used > 1)
             used += snprintf( buf + used, len - used, "%s%s", used ? " " : "", ios_child_slots[i].name );
@@ -569,7 +631,7 @@ static void *ios_child_thread_entry( void *arg )
      * back to the slot is the owner-thread match in ios_wow_slot_current().
      * It is a no-op once the window has been released. */
     ios_wow_window_release_current();
-    ios_child_slot_release( args->slot );
+    ios_child_slot_release( args->slot, args->slot_gen );
     free( args->argv );
     free( args );
 
@@ -616,7 +678,7 @@ static NTSTATUS spawn_process( const RTL_USER_PROCESS_PARAMETERS *params, int so
     args->argv = argv;
     args->argc = argc;
     args->pe_info = *pe_info;
-    args->slot = ios_child_slot_take( &params->ImagePathName );
+    args->slot = ios_child_slot_take( &params->ImagePathName, args->socketfd, &args->slot_gen );
 
     if (winedebug) putenv( winedebug );
 
@@ -626,7 +688,7 @@ static NTSTATUS spawn_process( const RTL_USER_PROCESS_PARAMETERS *params, int so
     ret = pthread_create( &child_thread, NULL, ios_child_thread_entry, args );
     if (ret) {
         ERR("spawn_process: pthread_create failed: %d\n", ret);
-        ios_child_slot_release( args->slot );
+        ios_child_slot_release( args->slot, args->slot_gen );
         free( argv );
         free( args );
         return STATUS_NO_MEMORY;

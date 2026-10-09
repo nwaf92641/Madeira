@@ -1461,33 +1461,47 @@ static void *wine_process_thread(void *arg) {
          * started in the last 60 s and still runs, the session goes on until
          * no such child is left (process_ios.c, madeira_live_game_children).
          * A game that exits normally long after starting its helpers is not
-         * affected. Opt-in, MADEIRA_WAIT_CHILDREN=1 (madeira.cfg, or a game's
-         * own config): a child that ends from a worker thread never releases its
-         * slot (process_ios.c), and the session would then wait forever. */
+         * affected.
+         *
+         * This was opt-in because a child that ended from a worker thread
+         * never released its slot, and the session then waited forever. The
+         * slot is now released where every pseudo-process exit passes
+         * (process_exit_wrapper -> madeira_child_socket_closed), and a child
+         * that never booted stops counting after 120 s, so the wait is on by
+         * default. MADEIRA_WAIT_CHILDREN=0 restores the old ending;
+         * MADEIRA_WAIT_CHILDREN_MAX_S=<seconds> caps the wait (default: none). */
         {
             extern int madeira_live_game_children(char *buf, int len, double max_age);
+            /* 0 = end the session with the main process even while a game child it started still runs */
             const char *wc = getenv("MADEIRA_WAIT_CHILDREN");
+            /* seconds: the longest the session waits for such children after the main process exited (unset = no cap) */
+            const char *wmax = getenv("MADEIRA_WAIT_CHILDREN_MAX_S");
+            unsigned max_s = (wmax && atoi(wmax) > 0) ? (unsigned)atoi(wmax) : 0;
             char names[256];
             int n = madeira_live_game_children(names, sizeof names, 60.0);
-            if (n > 0 && !(wc && wc[0] == '1')) {
+            if (n > 0 && wc && wc[0] == '0') {
                 dprintf(STDERR_FILENO, "[WineProc] the main process exited while %d child process(es) it started "
-                        "still run (%s); the session ends with it (MADEIRA_WAIT_CHILDREN=1 keeps it while they run)\n",
+                        "still run (%s); the session ends with it (MADEIRA_WAIT_CHILDREN=0)\n",
                         n, names);
             } else if (n > 0) {
                 dprintf(STDERR_FILENO, "[WineProc] the main process exited but %d child process(es) "
                         "it started still run (%s) -- a launcher started the game; the session goes on until "
-                        "they exit (MADEIRA_WAIT_CHILDREN=1)\n", n, names);
+                        "they exit (MADEIRA_WAIT_CHILDREN=0 ends it now)\n", n, names);
                 unsigned ticks = 0;
                 while ((n = madeira_live_game_children(names, sizeof names, -1.0)) > 0) {
                     usleep(200 * 1000);
                     if ((++ticks % 300) == 0)
                         dprintf(STDERR_FILENO, "[WineProc] still running: %d child process(es) (%s), %u s\n",
                                 n, names, ticks / 5);
+                    if (max_s && ticks / 5 >= max_s) {
+                        dprintf(STDERR_FILENO, "[WineProc] child wait capped at %u s (MADEIRA_WAIT_CHILDREN_MAX_S); "
+                                "ending the session with %d child process(es) still running (%s)\n", max_s, n, names);
+                        break;
+                    }
                 }
-                dprintf(STDERR_FILENO, "[WineProc] the last child process exited after %u s\n", ticks / 5);
+                if (!n) dprintf(STDERR_FILENO, "[WineProc] the last child process exited after %u s\n", ticks / 5);
             }
         }
-
         g_wine_running = 0;
 
         // Stop wineserver to prevent CPU spin (iOS kills for excessive CPU)

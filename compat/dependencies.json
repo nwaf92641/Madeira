@@ -1258,6 +1258,23 @@
    ],
    "source": "protonfixes:segoe_script"
   },
+  "msxml4": {
+   "title": "MSXML 4.0",
+   "kind": "framework",
+   "category": "dependency",
+   "support": "builtin",
+   "summary": "msxml4.dll (MSXML2.DOMDocument.4.0 and the Msxml2 4.0 side-by-side assembly). Wine's builtin, which shares msxml3's parser, is in both farms; the native-msxml recipe can still put a native copy first.",
+   "imports": [
+    "msxml4"
+   ],
+   "dll_overrides": {
+    "msxml4": "b"
+   },
+   "source": "wine:msxml4",
+   "recipes": [
+    "native-msxml"
+   ]
+  },
   "msxml3": {
    "title": "MSXML 3.0",
    "kind": "framework",
@@ -1694,7 +1711,7 @@
    "kind": "runtime",
    "category": "dependency",
    "support": "builtin",
-   "summary": "Wine's builtin msi runs MSI packages, including the MSI payload inside a self-extracting redistributable.",
+   "summary": "Wine's builtin msi runs MSI packages, including the MSI payload inside a self-extracting redistributable. Both farms ship msi.dll and msiexec.exe: the 64-bit one gained them (installer_scripting in build/wine-pe/arm64ec-farm.json) so x64 packages and custom actions run too.",
    "dll_overrides": {
     "msi": "b"
    },
@@ -1975,7 +1992,7 @@
    "kind": "directx",
    "category": "dx9",
    "support": "builtin",
-   "summary": "The d3dcompiler_33 to _46 DLLs. Wine ships one complete builtin implementation for every version number, so a game that links an older compiler still compiles its shaders.",
+   "summary": "The d3dcompiler_33 to _42 and _46 DLLs. Wine ships one complete builtin implementation for each of those version numbers (both farms), so a game that links an older compiler still compiles its shaders. d3dcompiler_44 and _45 were Windows 8 preview builds that Wine does not build: a program importing one is reported as an unavailable module, not answered here.",
    "imports": [
     "d3dcompiler_33",
     "d3dcompiler_34",
@@ -1987,8 +2004,6 @@
     "d3dcompiler_40",
     "d3dcompiler_41",
     "d3dcompiler_42",
-    "d3dcompiler_44",
-    "d3dcompiler_45",
     "d3dcompiler_46"
    ],
    "dll_overrides": {
@@ -2002,8 +2017,6 @@
     "d3dcompiler_40": "b",
     "d3dcompiler_41": "b",
     "d3dcompiler_42": "b",
-    "d3dcompiler_44": "b",
-    "d3dcompiler_45": "b",
     "d3dcompiler_46": "b"
    },
    "source": "wine:d3dcompiler"
@@ -2260,14 +2273,11 @@
    "kind": "directx",
    "category": "dx12",
    "support": "builtin",
-   "summary": "Direct3D 12 (d3d12.dll / d3d12core.dll), which Wine builds and Madeira's own D3D12 path implements on top of. It is a newer path than D3D11, so a title that offers both may be steadier on D3D11.",
+   "summary": "Direct3D 12 through Madeira's own d3d12.dll (build/madeira-d3d12, Metal), not Wine's vkd3d-based one, which needs Vulkan. It is a newer path than D3D11, so a title that offers both may be steadier on D3D11.",
    "imports": [
-    "d3d12",
-    "d3d12core",
-    "dxil",
-    "dxcompiler"
+    "d3d12"
    ],
-   "notes": "dxil.dll and dxcompiler.dll are the DirectX Shader Compiler redistributables rather than system files: a title that links them ships them beside itself. Neither Wine nor DXMT builds them and there is nothing to install, so one that is genuinely missing from a game folder is a fact about that install.",
+   "notes": "Only d3d12 is claimed. dxil.dll and dxcompiler.dll are the DirectX Shader Compiler redistributables rather than system files: a title that links them ships them beside itself, and the engine reports such an import as one the program brings. D3D12Core.dll is the Agility SDK runtime a game ships in its own folder for d3d12.dll to load; Wine's d3d12core needs Vulkan and is not in either farm, so it is not claimed here either.",
    "source": "madeira:madeira-d3d12"
   },
   "vulkan": {

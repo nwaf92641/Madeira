@@ -66,6 +66,21 @@ DB_PATH = APP / 'compat.json'
 failures = 0
 
 
+# Names a builtin component lists that are not files on any Windows system:
+# they are answered by another module, and no game can import them as a DLL.
+BUILTIN_ALIASES = {
+    'd3d11_1': 'header/interface version; the interfaces are in d3d11.dll (DXMT)',
+    'dxgi1_2': 'header/interface version; in dxgi.dll (DXMT)',
+    'dxgi1_3': 'header/interface version; in dxgi.dll (DXMT)',
+    'dxgi1_4': 'header/interface version; in dxgi.dll (DXMT)',
+}
+# Builtin imports a 64-bit program cannot get, because only 32-bit programs
+# use them (or the 64-bit name has another owner).
+BUILTIN_32_ONLY = {
+    'd3d8': 'Direct3D 8 games are 32-bit; d3d8to9 over DXMT is in the i386 farm only',
+}
+
+
 def require(condition: bool, label: str) -> None:
     global failures
     print(('PASS: ' if condition else 'FAIL: ') + label)
@@ -656,6 +671,12 @@ def check_database() -> None:
             for dep_id in fallback.get('dependencies', []):
                 if dep_id not in dependencies:
                     problems.append(f'{game.get("title")}: unknown fallback dependency {dep_id}')
+    # REGRESSION: a recipe naming a dependency the catalogue does not have
+    # (native-msxml -> msxml4 did) silently applies half of itself.
+    for recipe_id, recipe in recipes.items():
+        for dep_id in recipe.get('dependencies', []):
+            if dep_id not in dependencies:
+                problems.append(f'recipe {recipe_id}: unknown dependency {dep_id}')
     require(not problems, 'the database is internally consistent (no dangling dependencies, unique keys)')
     for problem in problems[:10]:
         print('  ' + problem)
@@ -683,6 +704,54 @@ def check_database() -> None:
     require(not unbacked, 'every builtin claim names a module the runtime ships')
     for problem in unbacked[:10]:
         print('  ' + problem)
+    # REGRESSION (claims vs shipped files): EVERY name a builtin component
+    # answers for must be a shipped module, an API set in Wine's schema, or a
+    # documented alias. d3dcompiler_44/_45 (never built by Wine) passed the
+    # any-name check above while a game importing them would stop at load.
+    schema = data.get('wine_api_sets') or {}
+    def api_ok(name):
+        key = name.rsplit('-', 1)[0]
+        return bool(schema.get(key))
+    not_files = set(BUILTIN_ALIASES)
+    false_claims = []
+    for dep_id, dep in dependencies.items():
+        if dep.get('support') != 'builtin':
+            continue
+        for name in dep.get('imports') or []:
+            name = name.lower().removesuffix('.dll')
+            if name in modules or name in not_files:
+                continue
+            if name.startswith(prefixes) and api_ok(name):
+                continue
+            false_claims.append(f'{dep_id}: {name}')
+    require(not false_claims, 'every name a builtin component claims is shipped, an API set Wine resolves, or a documented alias')
+    for problem in false_claims[:10]:
+        print('  ' + problem)
+    # The same claims for a 64-bit program: a builtin import the ARM64EC farm
+    # does not have must be a known 32-bit-only API (BUILTIN_32_ONLY, with the
+    # reason); anything else is a claim the 64-bit runtime does not honour.
+    modules_64 = set(data.get('wine_modules_64') or [])
+    claims_64 = []
+    for dep_id, dep in dependencies.items():
+        if dep.get('support') != 'builtin':
+            continue
+        # The imports and the modules it pins to Wine's builtin: "msi": "b"
+        # with no msi.dll in the 64-bit farm was such a claim.
+        for name in (dep.get('imports') or []) + list((dep.get('dll_overrides') or {}).keys()):
+            name = name.lower().removesuffix('.dll')
+            if name in modules_64 or name in not_files or name in BUILTIN_32_ONLY:
+                continue
+            if name.startswith(prefixes):
+                host = schema.get(name.rsplit('-', 1)[0])
+                if host and host in modules_64:
+                    continue
+            claims_64.append(f'{dep_id}: {name}')
+    require(not claims_64, 'every builtin claim also holds for a 64-bit program, or is documented 32-bit only')
+    for problem in claims_64[:10]:
+        print('  ' + problem)
+    for name, why in BUILTIN_32_ONLY.items():
+        require(name not in modules_64, f'32-bit-only exception {name} still holds (the 64-bit farm does not ship it)')
+        require(bool(why), f'32-bit-only exception {name} has a reason')
     recipes_used = {recipe for game in games for recipe in game.get('recipes', [])}
     require(len(recipes_used) >= 5, f'titles reuse the fix library ({len(recipes_used)} recipes referenced)')
     classified = sum(1 for game in games if game.get('unavailable_fixes'))

@@ -156,6 +156,12 @@ research/madeira-d3d12/tests/offline/sm51/
 app/Madeira/i386-windows/*
 !app/Madeira/i386-windows/.gitkeep
 
+# cnc-ddraw (DirectDraw over DXMT's Direct3D 9, opt-in per game) is built by
+# build/ddraw/build.sh, which the i386 farm build calls (docs/DIRECTDRAW.md).
+app/Madeira/cnc-ddraw/*
+!app/Madeira/cnc-ddraw/.gitkeep
+build/ddraw/out-i386/
+
 # Madeira Dock: built from research/madeira-dock by build/madeira-dock/build.sh
 app/Madeira/arm64ec-windows/dockhost.exe
 app/Madeira/arm64ec-windows/dock-notices.txt

@@ -14,6 +14,7 @@ are left out of this repository:
 | `src/detours/` | Microsoft Detours (MIT). Compiled only by the MSVC project (`#ifdef _MSC_VER` in `src/directinput.c`); the mingw build that Madeira uses never includes it. |
 | `.github/` | CI configuration. |
 
-The upstream ddraw.ini generator (`cfg_create_ini` in `src/config.c`) and the
-OpenGL shaders it references are not used: Madeira ships its own `ddraw.ini`
-with `renderer=direct3d9` (`MADEIRA_CHANGES.md`, `docs/DIRECTDRAW.md`).
+Madeira does not let cnc-ddraw write its own ddraw.ini at run time. It ships
+one generated at build time from the text of `cfg_create_ini` in
+`src/config.c` (`build/ddraw/make-ini.py`), with `renderer=direct3d9` and the
+other changes listed in `MADEIRA_CHANGES.md` and `docs/DIRECTDRAW.md`.

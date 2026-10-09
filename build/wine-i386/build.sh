@@ -165,6 +165,10 @@ EOF
     # Direct3D 8: third_party/d3d8to9 over the d3d9.dll just installed (no
     # Vulkan, no wined3d). Marked builtin with this tree's winebuild.
     TC="$TC" DEST="$DEST" WINEBUILD="$B/tools/winebuild/winebuild" "$R/build/d3d8/build.sh"
+    # DirectDraw for games that opt in (MADEIRA_DDRAW=cnc): third_party/cnc-ddraw
+    # over the same d3d9.dll. Not part of the farm -- Wine's ddraw stays the
+    # default -- so it goes to its own bundle folder (docs/DIRECTDRAW.md).
+    TC="$TC" "$R/build/ddraw/build.sh"
     cd "$B"
 fi
 

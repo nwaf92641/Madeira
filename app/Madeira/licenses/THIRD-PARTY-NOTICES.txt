@@ -55,6 +55,13 @@ Windows-side modules in the 32-bit (i386-windows) runtime, when built:
   LLVM's libc++/libunwind (LLVM-Apache-2.0-with-exception.txt) and the
   MinGW-w64 runtime (permissive; the same runtime's notices are listed in
   arm64ec-windows/dock-notices.txt).
+- cnc-ddraw/ddraw.dll (used only for a game that opts in with
+  MADEIRA_DDRAW=cnc): cnc-ddraw, (c) 2025 github.com/FunkyFr3sh, MIT
+  (cnc-ddraw-MIT.txt), with Madeira's changes under the same licence.
+  Source: https://github.com/FunkyFr3sh/cnc-ddraw at 279a057, with the
+  changes in third_party/cnc-ddraw of the Madeira repository. Statically
+  links the MinGW-w64 runtime (permissive). cnc-ddraw/ddraw.ini is generated
+  from that source's defaults by build/ddraw/make-ini.py.
 
 Dynamically loaded at runtime:
 - Apple Metal Shader Converter dynamic library: Apple proprietary, under the

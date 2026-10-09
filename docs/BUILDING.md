@@ -64,6 +64,9 @@ git-ignored and consumed by the app project.
    `wow64win.dll`; see docs/WOW64.md, "Building". UNVERIFIED on macOS.
    The i386 farm build also runs `build/d3d8/build.sh` (Direct3D 8 over DXMT's
    Direct3D 9, docs/D3D8.md); that step was verified on Linux with llvm-mingw.
+   It also runs `build/ddraw/build.sh` (cnc-ddraw: DirectDraw over the same
+   Direct3D 9, opt-in per game -> `app/Madeira/cnc-ddraw/`, docs/DIRECTDRAW.md);
+   verified on Linux with llvm-mingw.
 
 ## Status of the LGPL relink question
 

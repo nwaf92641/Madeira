@@ -16,6 +16,7 @@
 #include "utils.h"
 #include "blt.h"
 #include "versionhelpers.h"
+#include "madeira_log.h" /* Madeira */
 
 
 CNCDDRAW g_ddraw;
@@ -1143,6 +1144,7 @@ HRESULT dd_SetDisplayMode(DWORD dwWidth, DWORD dwHeight, DWORD dwBPP, DWORD dwFl
 
             if (!d3d9_active)
             {
+                madeira_log("Direct3D 9 renderer could not start, falling back to GDI"); /* Madeira */
                 d3d9_release();
                 g_ddraw.show_driver_warning = TRUE;
                 g_ddraw.renderer = gdi_render_main;
@@ -1232,6 +1234,7 @@ HRESULT dd_SetDisplayMode(DWORD dwWidth, DWORD dwHeight, DWORD dwBPP, DWORD dwFl
 
             if (!d3d9_active)
             {
+                madeira_log("Direct3D 9 renderer could not start, falling back to GDI"); /* Madeira */
                 d3d9_release();
                 g_ddraw.show_driver_warning = TRUE;
                 g_ddraw.renderer = gdi_render_main;
@@ -1896,6 +1899,10 @@ HRESULT dd_CreateEx(GUID* lpGuid, LPVOID* lplpDD, REFIID iid, IUnknown* pUnkOute
                 g_ddraw.renderer = gdi_render_main;
             }
         }
+
+        /* Madeira: which renderer, from which setting (docs/DIRECTDRAW.md) */
+        madeira_log("renderer %s (ddraw.ini renderer=%s, %s)",
+            madeira_renderer_name((void*)g_ddraw.renderer), g_config.renderer, g_config.ini_path);
 
         LONG ref = InterlockedDecrement(&g_ddraw.ref);
 

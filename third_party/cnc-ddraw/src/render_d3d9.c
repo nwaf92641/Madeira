@@ -10,6 +10,7 @@
 #include "wndproc.h"
 #include "blt.h"
 #include "debug.h"
+#include "madeira_log.h" /* Madeira */
 #include "d3d9types.h"
 #include "hook.h"
 #include "config.h"
@@ -74,6 +75,9 @@ BOOL d3d9_create()
 
     if (!g_d3d9.hmodule)
         g_d3d9.hmodule = real_LoadLibraryA("d3d9.dll");
+
+    if (!g_d3d9.hmodule) /* Madeira */
+        madeira_log("d3d9.dll could not be loaded (error %lu)", GetLastError());
 
     if (g_d3d9.hmodule)
     {
@@ -154,9 +158,11 @@ BOOL d3d9_create()
                 D3DCREATE_MULTITHREADED | D3DCREATE_SOFTWARE_VERTEXPROCESSING | D3DCREATE_FPU_PRESERVE,
             };
 
+            HRESULT madeira_hr = E_FAIL; /* Madeira */
+
             for (int i = 0; i < sizeof(behavior_flags) / sizeof(behavior_flags[0]); i++)
             {
-                if (SUCCEEDEDX(
+                if (SUCCEEDEDX(madeira_hr =
                     IDirect3D9_CreateDevice(
                         g_d3d9.instance,
                         D3DADAPTER_DEFAULT,
@@ -165,8 +171,32 @@ BOOL d3d9_create()
                         behavior_flags[i],
                         &g_d3d9.params,
                         &g_d3d9.device)))
-                    return g_d3d9.device && d3d9_create_resources() && d3d9_set_states();
+                {
+                    /* Madeira: say which step failed (was: one return expression) */
+                    if (!g_d3d9.device)
+                        return FALSE;
+                    if (!d3d9_create_resources())
+                    {
+                        madeira_log("Direct3D 9 device %ux%u created, but its textures/shaders could not be created",
+                            g_d3d9.params.BackBufferWidth, g_d3d9.params.BackBufferHeight);
+                        return FALSE;
+                    }
+                    if (!d3d9_set_states())
+                    {
+                        madeira_log("Direct3D 9 device created, but setting its states failed");
+                        return FALSE;
+                    }
+                    madeira_log("Direct3D 9 device %ux%u windowed=%d", g_d3d9.params.BackBufferWidth,
+                        g_d3d9.params.BackBufferHeight, g_d3d9.params.Windowed);
+                    return TRUE;
+                }
             }
+
+            madeira_log("Direct3D 9 CreateDevice failed (hr 0x%08lx)", (unsigned long)madeira_hr); /* Madeira */
+        }
+        else /* Madeira */
+        {
+            madeira_log("Direct3DCreate9 returned NULL");
         }
     }
 

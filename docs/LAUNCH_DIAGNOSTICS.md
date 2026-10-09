@@ -36,10 +36,26 @@ the in-app log names the outcome. No Mac or computer is needed.
 - **Problems**, each in one category with the error text that was printed and
   a hint: `process-failure`, `missing-dll`, `graphics-device-failure`,
   `swapchain-failure`, `shader-translation-failure`, `metal-present-failure`,
-  `window-visibility`, `video-init-failure`, `unclassified`.
-- **Verdict**: the most decisive category (missing DLL, then process, device,
-  swapchain, present, window, shader, video), or `none` once a frame was
-  presented without problems.
+  `window-visibility`, `video-init-failure`, `unimplemented-function`,
+  `dependency-load-failure`, `architecture-mismatch`, `wine-init-failure`,
+  `audio-init-failure`, `unclassified`.
+- **Verdict**: the most decisive category (Wine init, then missing DLL,
+  architecture, unimplemented function, dependency, process, device,
+  swapchain, present, window, shader, video, audio), or `none` once a frame
+  was presented without problems.
+
+### Which Wine message lands where
+
+| Wine prints | Category |
+|---|---|
+| `Library X.dll (which is needed by ...) not found` | `missing-dll` |
+| `Loading library X (which is needed by Y) failed (error c000007b)` | `architecture-mismatch` (a 32-bit DLL in a 64-bit process or the reverse) |
+| `... failed (error c0000139)` | `unimplemented-function` (an export the DLL does not have) |
+| `... failed (error <other>)` | `dependency-load-failure` (the DLL exists; its own init or import failed) |
+| `Call from ... to unimplemented function dll.fn` | `unimplemented-function` |
+| `Could not find dependent assembly` (side-by-side) | `dependency-load-failure` |
+| `wine: failed to start ...`, `wine: could not load kernel32.dll` | `wine-init-failure` |
+| `err:xaudio2`, `err:xact3`, `err:mmdevapi`, `err:dsound`, `err:winmm`, `err:msacm` | `audio-init-failure` |
 
 ## How it is fed
 

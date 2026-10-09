@@ -49,12 +49,14 @@ static const char *const md_stage_names[MD_STAGE_COUNT] = {
 static const char *const md_cat_names[MD_CAT_COUNT] = {
     "none", "process-failure", "missing-dll", "graphics-device-failure", "swapchain-failure",
     "shader-translation-failure", "metal-present-failure", "window-visibility", "video-init-failure",
-    "unclassified",
+    "unimplemented-function", "dependency-load-failure", "architecture-mismatch", "wine-init-failure",
+    "audio-init-failure", "unclassified",
 };
 static const char *const md_cat_titles[MD_CAT_COUNT] = {
     "No problem", "Process failure", "Missing DLL", "Graphics device failure", "Swapchain failure",
     "Shader translation failure", "Metal present failure", "Window not visible", "Video / media failure",
-    "Unclassified error",
+    "Unimplemented function", "Dependency could not load", "Wrong architecture", "Wine start-up failure",
+    "Audio failure", "Unclassified error",
 };
 static const char *const md_cat_hints[MD_CAT_COUNT] = {
     "",
@@ -73,6 +75,19 @@ static const char *const md_cat_hints[MD_CAT_COUNT] = {
     "through Direct3D (GDI, DirectDraw, OpenGL) has no Metal output here; try the desktop session.",
     "A video or media component is missing or failed. A game that waits for an intro video can stay black "
     "(with or without sound).",
+    "A DLL loaded, but a function the program calls is only a stub in this Wine build, or is not exported by "
+    "the DLL that was found. This is a gap in the Windows layer itself (named in the error), not a missing "
+    "file: replacing the DLL with a game-shipped one, or a newer Wine module, is the fix.",
+    "The DLL exists, but loading it failed: one of its own imports is missing, its DllMain refused, or a "
+    "side-by-side assembly (Visual C++ 2005/2008 CRT, Common Controls 6) it declares could not be found. "
+    "The first missing-dll line, if any, names the real gap.",
+    "A DLL of the wrong architecture was found first (STATUS_INVALID_IMAGE_FORMAT, c000007b): a 32-bit DLL "
+    "beside a 64-bit program, or the reverse. Usually a game folder carrying both, or a DLL copied into the "
+    "wrong place.",
+    "Wine did not get as far as running the program: the executable could not be opened or mapped, or a core "
+    "module (kernel32, start.exe) did not load. Check the path and that the file is a Windows program.",
+    "An audio component failed to initialise. Some games stop, or wait silently, when XAudio2, DirectSound or "
+    "the audio endpoint cannot be created; others continue without sound.",
     "An error matched no known shape; Documents/madeira-log.txt has the context.",
 };
 
@@ -261,14 +276,16 @@ static const char *md_dll_hint(const char *dll)
         "msvcp*", "vcruntime*", "msvcr*", "concrt*", "vcomp*", "d3dx9_*", "d3dx10*", "d3dx11*", "d3dcompiler_*",
         "xinput*", "xaudio*", "x3daudio*", "xapofx*", "physxloader.dll", "physx*", NULL };
     if (md_name_in(dll, media))
-        return "A media component. The 64-bit DLL folder of this build does not ship quartz, winegstreamer or "
-               "mfmediaengine (docs/MEDIA.md), so intro videos of 64-bit games cannot play; 32-bit games have them.";
+        return "A media component. Both DLL folders ship Wine's DirectShow and Media Foundation modules (the 64-bit "
+               "set is listed in build/wine-pe/arm64ec-farm.json); one reported missing here was left out of that "
+               "list or of this build. 64-bit decoding additionally needs MADEIRA_WG_64BIT=1 (docs/MEDIA.md).";
     if (md_name_in(dll, no_backend))
         return "This graphics API has no rendering backend in Madeira (no wined3d, OpenGL or Vulkan); only "
                "Direct3D 9, 10, 11 and 12 reach Metal.";
     if (md_name_in(dll, redist))
-        return "A Windows redistributable the game expects to be installed: add it through the game's "
-               "dependencies (compatibility engine), or place the DLL beside the game.";
+        return "A Windows redistributable the game expects to be installed. Wine answers most of them as builtins "
+               "(the 64-bit versions shipped are listed in build/wine-pe/arm64ec-farm.json); for one that is not "
+               "there, add it through the game's dependencies (compatibility engine) or place the DLL beside the game.";
     return NULL;
 }
 
@@ -327,11 +344,54 @@ static void md_feed_locked(const char *line)
 
     if ((p = md_find(line, "[madeira-diag] "))) { md_feed_diag_locked(p + 15); return; }
 
-    /* Wine's loader (dlls/ntdll/loader.c, import_dll) */
+    /* Wine's loader (dlls/ntdll/loader.c, import_dll). Two messages:
+     *   "Library X (which is needed by Y) not found"            -> X is not there
+     *   "Loading library X (which is needed by Y) failed (error S)." -> X is there, loading it failed;
+     * S says why: c000007b wrong architecture, c0000139 an entry point X lacks
+     * (or one of X's own imports lacks), anything else (c0000135 a nested
+     * import missing, c0000142 DllMain refused) a dependency problem. */
+    if ((p = md_find(line, "Loading library ")) && md_find(line, "(which is needed by")) {
+        const char *err = md_find(line, "failed (error ");
+        char dll[64];
+        md_dll_from(p + 16, dll, sizeof dll);
+        if (!dll[0]) return;
+        if (err && !strncmp(err + 14, "c000007b", 8))
+            md_problem_locked(MD_CAT_ARCH, "dll-load", dll, line, len, NULL);
+        else if (err && !strncmp(err + 14, "c0000139", 8))
+            md_problem_locked(MD_CAT_UNIMPLEMENTED, "dll-load", dll, line, len,
+                              "An entry point is missing: the DLL that was found (or one it imports) does not "
+                              "export a function the importer names. A Windows layer this Wine build only has "
+                              "in part, or an older copy of the DLL earlier on the search path.");
+        else
+            md_problem_locked(MD_CAT_DEPENDENCY, "dll-load", dll, line, len, NULL);
+        return;
+    }
     if (((p = md_find(line, "Library ")) || (p = md_find(line, "library "))) && md_find(line, "(which is needed by")) {
         char dll[64];
         md_dll_from(p + 8, dll, sizeof dll);
         if (dll[0]) md_problem_locked(MD_CAT_MISSING_DLL, "dll-load", dll, line, len, md_dll_hint(dll));
+        return;
+    }
+    /* dlls/ntdll/exception.c: a winebuild stub entry was called */
+    if ((p = md_find(line, "to unimplemented function "))) {
+        char fn[96];
+        md_dll_from(p + 26, fn, sizeof fn);
+        if (fn[0] && fn[strlen(fn) - 1] == ',') fn[strlen(fn) - 1] = 0;
+        md_problem_locked(MD_CAT_UNIMPLEMENTED, "running", fn[0] ? fn : "stub called", line, len, NULL);
+        return;
+    }
+    /* dlls/ntdll/actctx.c: a side-by-side dependency (VC80/VC90 CRT, Common Controls 6) */
+    if (md_find(line, "Could not find dependent assembly")) {
+        md_problem_locked(MD_CAT_DEPENDENCY, "side-by-side", "dependent assembly not found", line, len,
+                          "A side-by-side assembly the program's manifest declares is not in C:\\windows\\winsxs. "
+                          "The loader still finds the DLL in system32 when it is in the DLL folder, so this is "
+                          "fatal only when that DLL is missing too or the program checks its activation context.");
+        return;
+    }
+    /* dlls/ntdll/unix/env.c, unix/loader.c, loader.c: Wine never reached the program */
+    if (md_find(line, "wine: failed to start ") || md_find(line, "wine: failed to open ") ||
+        md_find(line, "wine: failed to load start.exe") || md_find(line, "wine: could not load kernel32.dll")) {
+        md_problem_locked(MD_CAT_WINE_INIT, "wine-start", NULL, line, len, NULL);
         return;
     }
     if ((p = md_find(line, "[Wine child] BOOT FAILED at stage"))) {
@@ -446,8 +506,8 @@ static void md_feed_locked(const char *line)
     /* Media */
     if (md_find(line, "using stub table") && md_find(line, "winegstreamer")) {
         md_problem_locked(MD_CAT_VIDEO, "video", "winegstreamer stub", line, len,
-                          "winegstreamer has no media backend for this caller (64-bit callers need "
-                          "MADEIRA_WG_64BIT=1 and an arm64ec winegstreamer.dll, which this build does not ship).");
+                          "winegstreamer has no media backend for this caller: 64-bit callers get one only with "
+                          "MADEIRA_WG_64BIT=1 (the arm64ec winegstreamer.dll itself is shipped; docs/MEDIA.md).");
         return;
     }
     if (md_find(line, "GL-absent stub table")) {
@@ -455,6 +515,11 @@ static void md_feed_locked(const char *line)
         md_problem_locked(MD_CAT_DEVICE, "graphics-api", "opengl no backend", line, len,
                           "The program loaded opengl32: OpenGL has no rendering backend in Madeira, so an "
                           "OpenGL game cannot show a frame.");
+        return;
+    }
+    if (md_find(line, "err:xaudio2") || md_find(line, "err:xact3") || md_find(line, "err:mmdevapi") ||
+        md_find(line, "err:dsound") || md_find(line, "err:winmm") || md_find(line, "err:msacm")) {
+        md_problem_locked(MD_CAT_AUDIO, "audio", NULL, line, len, NULL);
         return;
     }
     if (md_find(line, "err:quartz") || md_find(line, "err:mfplat") || md_find(line, "err:mf:") ||
@@ -485,7 +550,8 @@ void madeira_diag_feed_line(const char *line)
         !strstr(line, "Unhandled") && !strstr(line, "stub table") && !strstr(line, "Library ") &&
         !strstr(line, "shader") && !strstr(line, "CAMetalLayer") && !strstr(line, "pixel format") &&
         !strstr(line, "[wg-parser]") && !strstr(line, "metal view") && !strstr(line, "feature level") &&
-        !strstr(line, "[d3d9-modes] CreateDevice") && !strstr(line, "DXMT adapter"))
+        !strstr(line, "[d3d9-modes] CreateDevice") && !strstr(line, "DXMT adapter") &&
+        !strstr(line, "wine: ") && !strstr(line, "dependent assembly"))
         return;
     pthread_mutex_lock(&md_lock);
     md_feed_locked(line);
@@ -539,8 +605,9 @@ void madeira_diag_process_exit(int status, uint32_t crash_status)
 static md_category md_verdict_locked(void)
 {
     static const md_category order[] = {
-        MD_CAT_MISSING_DLL, MD_CAT_PROCESS, MD_CAT_DEVICE, MD_CAT_SWAPCHAIN, MD_CAT_PRESENT,
-        MD_CAT_WINDOW, MD_CAT_SHADER, MD_CAT_VIDEO, MD_CAT_UNCLASSIFIED };
+        MD_CAT_WINE_INIT, MD_CAT_MISSING_DLL, MD_CAT_ARCH, MD_CAT_UNIMPLEMENTED, MD_CAT_DEPENDENCY,
+        MD_CAT_PROCESS, MD_CAT_DEVICE, MD_CAT_SWAPCHAIN, MD_CAT_PRESENT, MD_CAT_WINDOW, MD_CAT_SHADER,
+        MD_CAT_VIDEO, MD_CAT_AUDIO, MD_CAT_UNCLASSIFIED };
     unsigned i, j;
     if (md.stages[MD_STAGE_FIRST_PRESENT].reached) return MD_CAT_NONE;
     for (i = 0; i < sizeof(order) / sizeof(order[0]); i++)

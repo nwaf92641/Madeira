@@ -15,6 +15,10 @@ the components really print:
     full-desktop window not drawn, winegstreamer's stub table, OpenGL with no
     backend, a 64-bit media DLL missing, a crash exit);
   - a launcher that starts a child and exits is not called an early exit;
+  - the Windows-layer categories from Wine's own messages: a wrong-architecture
+    DLL (c000007b), a missing export (c0000139), a nested import missing (the
+    missing DLL stays the verdict), a stub called, a side-by-side assembly not
+    found, Wine failing to start the program, an XAudio2 failure;
   - the report files are written, and the previous one is kept on reset;
   - the lines the patched DXMT, D3D9, the D3D12 runtime and the display shim
     print (device, swapchain, no layer, refused format, dropped frame);
@@ -117,6 +121,45 @@ int main(int argc, char **argv)
     madeira_diag_stage(MD_STAGE_WINE_STARTED, "__wine_main");
     madeira_diag_process_exit(-1073741819, 0xC0000005u);
     dump("crash");
+
+    /* The Windows-layer categories, from the lines Wine 11 really prints
+     * (dlls/ntdll/loader.c import_dll, exception.c, actctx.c, unix/env.c). */
+    madeira_diag_reset("C:\\Games\\Arch\\arch.exe", dir);
+    madeira_diag_stage(MD_STAGE_WINE_STARTED, "__wine_main");
+    feed("0024:err:module:import_dll Loading library XINPUT1_3.dll (which is needed by L\"C:\\\\Games\\\\Arch\\\\arch.exe\") failed (error c000007b).");
+    madeira_diag_process_exit(-1073741701, 0xC000007Bu);
+    dump("arch");
+
+    madeira_diag_reset("C:\\Games\\Ep\\ep.exe", dir);
+    madeira_diag_stage(MD_STAGE_WINE_STARTED, "__wine_main");
+    feed("0024:err:module:import_dll Loading library d3dx9_42.dll (which is needed by L\"C:\\\\Games\\\\Ep\\\\ep.exe\") failed (error c0000139).");
+    dump("entry-point");
+
+    madeira_diag_reset("C:\\Games\\Chain\\chain.exe", dir);
+    madeira_diag_stage(MD_STAGE_WINE_STARTED, "__wine_main");
+    feed("0024:err:module:import_dll Library avicap32.dll (which is needed by L\"C:\\\\windows\\\\system32\\\\devenum.dll\") not found");
+    feed("0024:err:module:import_dll Loading library devenum.dll (which is needed by L\"C:\\\\Games\\\\Chain\\\\chain.exe\") failed (error c0000135).");
+    dump("chain");
+
+    madeira_diag_reset("C:\\Games\\Stub\\stub.exe", dir);
+    madeira_diag_stage(MD_STAGE_WINE_STARTED, "__wine_main");
+    feed("wine: Call from 00006FFFFF4A1234 to unimplemented function gameinput.dll.GameInputCreate, aborting");
+    madeira_diag_process_exit(-2147483392, 0x80000100u);
+    dump("unimplemented");
+
+    madeira_diag_reset("C:\\Games\\Sxs\\sxs.exe", dir);
+    madeira_diag_stage(MD_STAGE_WINE_STARTED, "__wine_main");
+    feed("0024:fixme:actctx:parse_depend_manifests Could not find dependent assembly L\"Microsoft.VC90.CRT\" (9.0.21022.8)");
+    dump("sxs");
+
+    madeira_diag_reset("C:\\Games\\Bad\\bad.exe", dir);
+    feed("wine: failed to start L\"\\\\??\\\\C:\\\\Games\\\\Bad\\\\bad.exe\": c000007b");
+    dump("wine-init");
+
+    madeira_diag_reset("C:\\Games\\Snd\\snd.exe", dir);
+    madeira_diag_stage(MD_STAGE_WINE_STARTED, "__wine_main");
+    feed("0040:err:xaudio2:IXAudio2Impl_CreateMasteringVoice Failed to create audio client: 80070490");
+    dump("audio");
 
     madeira_diag_reset("C:\\Games\\La\\launcher.exe", dir);
     madeira_diag_stage(MD_STAGE_WINE_STARTED, "__wine_main");
@@ -262,6 +305,24 @@ with tempfile.TemporaryDirectory() as work:
     check(a['verdict'] == 'graphics-device-failure' and 'OpenGL' in a['json']['problems'][0]['hint'], 'opengl: verdict + hint')
     a = s['crash']
     check(a['verdict'] == 'process-failure' and '0xC0000005' in a['text'], 'crash: verdict + code')
+    a = s['arch']
+    check(a['verdict'] == 'architecture-mismatch', 'arch: c000007b is a wrong-architecture DLL (%s)' % a['verdict'])
+    check('xinput1_3.dll' in a['json']['problems'][0]['error'].lower(), 'arch: names the DLL')
+    a = s['entry-point']
+    check(a['verdict'] == 'unimplemented-function', 'entry point: c0000139 is a missing export (%s)' % a['verdict'])
+    check('entry point' in a['json']['problems'][0]['hint'], 'entry point: hint says so')
+    a = s['chain']
+    cats = [x['category'] for x in a['json']['problems']]
+    check(cats == ['missing-dll', 'dependency-load-failure'], 'chain: nested import missing, then the importer fails (%s)' % cats)
+    check(a['verdict'] == 'missing-dll', 'chain: the missing DLL is the verdict, not the importer')
+    a = s['unimplemented']
+    check(a['verdict'] == 'unimplemented-function', 'stub: verdict (%s)' % a['verdict'])
+    check('gameinput.dll.gameinputcreate' in a['json']['problems'][0]['error'].lower(), 'stub: names dll.function')
+    a = s['sxs']
+    check([x['category'] for x in a['json']['problems']] == ['dependency-load-failure'], 'sxs: dependent assembly')
+    check('winsxs' in a['json']['problems'][0]['hint'], 'sxs: hint names winsxs')
+    check(s['wine-init']['verdict'] == 'wine-init-failure', 'wine init: failed to start (%s)' % s['wine-init']['verdict'])
+    check(s['audio']['verdict'] == 'audio-init-failure', 'audio: xaudio2 error (%s)' % s['audio']['verdict'])
     a = s['launcher']
     check(any(x['name'] == 'child-process' for x in a['json']['stages']), 'launcher: child stage')
     check(not any(x['error'].startswith('exit code') for x in a['json']['problems']), 'launcher: not an early exit')
@@ -299,7 +360,8 @@ with tempfile.TemporaryDirectory() as work:
     # The header names every category the request asked for, under one stable name each.
     hdr = (inc / 'LaunchDiagnostics.h').read_text()
     for c in ('MD_CAT_PROCESS', 'MD_CAT_MISSING_DLL', 'MD_CAT_DEVICE', 'MD_CAT_SWAPCHAIN', 'MD_CAT_SHADER',
-              'MD_CAT_PRESENT', 'MD_CAT_WINDOW', 'MD_CAT_VIDEO', 'MD_CAT_UNCLASSIFIED'):
+              'MD_CAT_PRESENT', 'MD_CAT_WINDOW', 'MD_CAT_VIDEO', 'MD_CAT_UNIMPLEMENTED', 'MD_CAT_DEPENDENCY',
+              'MD_CAT_ARCH', 'MD_CAT_WINE_INIT', 'MD_CAT_AUDIO', 'MD_CAT_UNCLASSIFIED'):
         check(c in hdr, 'header: %s' % c)
 
 if failures:

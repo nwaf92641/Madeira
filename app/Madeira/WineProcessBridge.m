@@ -27,6 +27,9 @@
 #include <sys/sysctl.h>
 
 #include "WineProcessBridge.h"
+#include "LaunchDiagnostics.h"
+#include "WinSxS.h"
+#include "WineMono.h"
 #include "WineServerBridge.h"
 #include "PrefixExtractor.h"
 #include "FEXBridge.h"  // fex_get_jit_write_offset()
@@ -511,17 +514,24 @@ static void madeira_link_syswow64(NSFileManager *fm, NSString *prefix, NSString 
     dprintf(STDERR_FILENO, "[WineProc] Farm syswow64: %d links -> i386-windows\n", linked);
 }
 
-/* syswow64\wbem, for 32-bit targets. The farms are flat, but WMI's registered
- * InprocServer32 paths are C:\windows\system32\wbem\<name> (wine.inf installs
- * these modules there), so a 32-bit CoCreateInstance(CLSID_WbemLocator) -- for
- * example dxdiagn asking WMI about the display adapter -- fails with
- * c0000135 when the subdirectory is empty. The list is wine.inf's. */
-static void madeira_link_syswow64_wbem(NSFileManager *fm, NSString *prefix, NSString *bundle)
+/* <system dir>\wbem. The farms are flat, but WMI's registered InprocServer32
+ * paths are C:\windows\system32\wbem\<name> (wine.inf installs these modules
+ * there; the prefix template's system.reg says so for CLSID_WbemLocator in both
+ * registry views), so CoCreateInstance(CLSID_WbemLocator) -- dxdiagn asking WMI
+ * about the display adapter, an engine reading Win32_VideoController for the
+ * adapter's memory -- fails with c0000135 when the subdirectory is empty.
+ * syswow64\wbem is filled from the i386 farm for 32-bit targets, system32\wbem
+ * from the session's 64-bit farm (arm64ec-windows ships wbemprox and wmiutils
+ * since build/wine-pe/arm64ec-farm.json). A name the farm does not have is
+ * skipped. The list is wine.inf's. */
+static void madeira_link_wbem(NSFileManager *fm, NSString *prefix, NSString *bundle,
+                              NSString *sysdir, NSString *farm)
 {
     static const char * const wbem[] = { "wbemprox.dll", "wbemdisp.dll", "wmiutils.dll",
                                          "wmic.exe", "mofcomp.exe" };
-    NSString *dir = [prefix stringByAppendingPathComponent:@"drive_c/windows/syswow64/wbem"];
-    NSString *source = [bundle stringByAppendingPathComponent:@"i386-windows"];
+    NSString *dir = [prefix stringByAppendingPathComponent:
+                     [NSString stringWithFormat:@"drive_c/windows/%@/wbem", sysdir]];
+    NSString *source = [bundle stringByAppendingPathComponent:farm];
     int linked = 0;
 
     [fm createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:nil];
@@ -534,164 +544,114 @@ static void madeira_link_syswow64_wbem(NSFileManager *fm, NSString *prefix, NSSt
         if (![fm fileExistsAtPath:src]) continue;
         if ([fm createSymbolicLinkAtPath:dst withDestinationPath:src error:nil]) linked++;
     }
-    dprintf(STDERR_FILENO, "[WineProc] syswow64\\wbem: %d/%zu links\n",
-            linked, sizeof(wbem) / sizeof(wbem[0]));
+    dprintf(STDERR_FILENO, "[WineProc] %s\\wbem: %d/%zu links -> %s\n",
+            sysdir.UTF8String, linked, sizeof(wbem) / sizeof(wbem[0]), farm.UTF8String);
 }
 
-/* C:\windows\winsxs for 32-bit targets: the x86 side-by-side assemblies Wine
- * ships.
+/* C:\windows\winsxs: the side-by-side assemblies Wine ships (Common
+ * Controls 6, VC80/VC90 CRT and ATL, GDI+, MSXML), linked from a farm.
  *
- * The prefix has no winsxs directory: the template does not carry one and
- * this port never runs wineboot's fake-DLL install, which is what builds it on
- * a normal Wine prefix. Without it no 32-bit program gets a Common-Controls
- * 6.0 activation context (comdlg32 gives up in DllMain with 14001), and a
- * program built with Visual Studio 2005/2008, which carries its CRT as a
- * side-by-side dependency ("Microsoft.VC80.CRT"), fails the activation
- * context for every DLL with the same dependency.
+ * The prefix template carries no winsxs and this port never runs wineboot's
+ * fake-DLL install, which is what builds it on a normal Wine prefix. The
+ * table, the file layout and why each architecture is written the way it is
+ * are in WinSxS.h / WinSxS.c (plain C, so build/host-tests/check-winsxs.py
+ * runs the same code under a real Wine).
  *
- * This writes what dlls/setupapi/fakedll.c writes for each WINE_MANIFEST
- * assembly in the tree:
- *   windows\winsxs\manifests\<DIR>.manifest
- *   windows\winsxs\<DIR>\<file>          (linked from the i386 farm)
- *   <DIR> = x86_<lower-case name>_<publicKeyToken>_<version>_none_deadbeef
- * with the architecture filled into processorArchitecture, because actctx.c
- * checks the identity in the file against the one in its name. actctx.c pins
- * only major.minor, and accepts any build/revision >= the one requested, so
- * one assembly per major.minor serves every service pack of it.
- *
- * Only the x86 architecture is written: ntdll looks for "x86_" assemblies in
- * a 32-bit process and for "arm64_"/"amd64_" ones in 64-bit processes, so
- * 64-bit processes in the same prefix see no difference. An assembly whose
- * first file is missing from the i386 farm is skipped: a manifest without its
- * DLL would redirect that DLL's loads into an empty directory. */
-static void madeira_seed_winsxs_x86(NSFileManager *fm, NSString *prefix, NSString *bundle)
+ * x86: for a 32-bit target, from the i386 farm (this was an Objective-C
+ * function with the same table before it moved to WinSxS.c).
+ * arm64: for every session, from the session's own 64-bit farm. Before this,
+ * a 64-bit program asking for Common Controls 6 got comctl32 5.x and aborted
+ * at its first TaskDialog / TaskDialogIndirect call (bound to a stub). */
+static void madeira_seed_winsxs(NSString *prefix, NSString *bundle, NSString *farmSubdir, const char *arch)
 {
-    struct sxs_file { const char *in_assembly; const char *in_farm; };
-    struct sxs_assembly { const char *name, *lname, *key, *version; struct sxs_file files[4]; };
-    static const char *comctl32_body =
-        "    <windowClass>Button</windowClass>\n"
-        "    <windowClass>ButtonListBox</windowClass>\n"
-        "    <windowClass>ComboBoxEx32</windowClass>\n"
-        "    <windowClass>ComboLBox</windowClass>\n"
-        "    <windowClass>ComboBox</windowClass>\n"
-        "    <windowClass>Edit</windowClass>\n"
-        "    <windowClass>ListBox</windowClass>\n"
-        "    <windowClass>NativeFontCtl</windowClass>\n"
-        "    <windowClass>ReBarWindow32</windowClass>\n"
-        "    <windowClass>ScrollBar</windowClass>\n"
-        "    <windowClass>Static</windowClass>\n"
-        "    <windowClass>SysAnimate32</windowClass>\n"
-        "    <windowClass>SysDateTimePick32</windowClass>\n"
-        "    <windowClass>SysHeader32</windowClass>\n"
-        "    <windowClass>SysIPAddress32</windowClass>\n"
-        "    <windowClass>SysLink</windowClass>\n"
-        "    <windowClass>SysListView32</windowClass>\n"
-        "    <windowClass>SysMonthCal32</windowClass>\n"
-        "    <windowClass>SysPager</windowClass>\n"
-        "    <windowClass>SysTabControl32</windowClass>\n"
-        "    <windowClass>SysTreeView32</windowClass>\n"
-        "    <windowClass>ToolbarWindow32</windowClass>\n"
-        "    <windowClass>msctls_hotkey32</windowClass>\n"
-        "    <windowClass>msctls_progress32</windowClass>\n"
-        "    <windowClass>msctls_statusbar32</windowClass>\n"
-        "    <windowClass>msctls_trackbar32</windowClass>\n"
-        "    <windowClass>msctls_updown32</windowClass>\n"
-        "    <windowClass>tooltips_class32</windowClass>\n";
-    /* One entry per WINE_MANIFEST resource in the Wine tree (the file the
-     * values come from is named on each entry). */
-    static const struct sxs_assembly asms[] = {
-        /* dlls/comctl32_v6/comctl32.manifest (index 0: gets comctl32_body) */
-        { "Microsoft.Windows.Common-Controls", "microsoft.windows.common-controls",
-          "6595b64144ccf1df", "6.0.2600.2982", { { "comctl32.dll", "comctl32_v6.dll" } } },
-        /* dlls/msvcr80/msvcr80.manifest */
-        { "Microsoft.VC80.CRT", "microsoft.vc80.crt", "1fc8b3b9a1e18e3b", "8.0.50727.9672",
-          { { "msvcr80.dll", "msvcr80.dll" }, { "msvcp80.dll", "msvcp80.dll" },
-            { "msvcm80.dll", "msvcm80.dll" } } },
-        /* dlls/msvcr90/msvcr90.manifest */
-        { "Microsoft.VC90.CRT", "microsoft.vc90.crt", "1fc8b3b9a1e18e3b", "9.0.30729.6161",
-          { { "msvcr90.dll", "msvcr90.dll" }, { "msvcp90.dll", "msvcp90.dll" },
-            { "msvcm90.dll", "msvcm90.dll" } } },
-        /* dlls/atl80/atl80.manifest */
-        { "Microsoft.VC80.ATL", "microsoft.vc80.atl", "1fc8b3b9a1e18e3b", "8.0.50727.4053",
-          { { "atl80.dll", "atl80.dll" } } },
-        /* dlls/atl90/atl90.manifest */
-        { "Microsoft.VC90.ATL", "microsoft.vc90.atl", "1fc8b3b9a1e18e3b", "9.0.30729.6161",
-          { { "atl90.dll", "atl90.dll" } } },
-        /* dlls/gdiplus/gdiplus.manifest and gdiplus11.manifest: one DLL */
-        { "Microsoft.Windows.GdiPlus", "microsoft.windows.gdiplus", "6595b64144ccf1df",
-          "1.0.6000.16386", { { "gdiplus.dll", "gdiplus.dll" } } },
-        { "Microsoft.Windows.GdiPlus", "microsoft.windows.gdiplus", "6595b64144ccf1df",
-          "1.1.7601.23038", { { "gdiplus.dll", "gdiplus.dll" } } },
-        /* dlls/msxml3, msxml4 and msxml6 manifests */
-        { "Microsoft-Windows-MSXML30", "microsoft-windows-msxml30", "31bf3856ad364e35",
-          "6.0.6000.16386", { { "msxml3.dll", "msxml3.dll" } } },
-        { "Microsoft.MSXML2", "microsoft.msxml2", "6bd6b9abf345378f", "4.1.0.0",
-          { { "msxml4.dll", "msxml4.dll" } } },
-        { "Microsoft-Windows-MSXML60", "microsoft-windows-msxml60", "31bf3856ad364e35",
-          "6.0.6000.16386", { { "msxml6.dll", "msxml6.dll" } } },
-    };
-    NSString *winsxs = [prefix stringByAppendingPathComponent:@"drive_c/windows/winsxs"];
-    NSString *manifests = [winsxs stringByAppendingPathComponent:@"manifests"];
-    NSString *source = [bundle stringByAppendingPathComponent:@"i386-windows"];
-    const size_t count = sizeof(asms) / sizeof(asms[0]);
-    int seeded = 0, skipped = 0;
+    NSString *farm = [bundle stringByAppendingPathComponent:farmSubdir];
+    madeira_winsxs_seed(prefix.fileSystemRepresentation, farm.fileSystemRepresentation, arch, NULL);
+}
 
-    [fm createDirectoryAtPath:manifests withIntermediateDirectories:YES attributes:nil error:nil];
-    for (size_t a = 0; a < count; a++)
-    {
-        const struct sxs_assembly *def = &asms[a];
-        const char *body = a == 0 ? comctl32_body : NULL;
-        NSString *first = [source stringByAppendingPathComponent:
-                           [NSString stringWithUTF8String:def->files[0].in_farm]];
-        if (![fm fileExistsAtPath:first])
-        {
-            dprintf(STDERR_FILENO, "[WineProc] winsxs: x86 %s skipped, i386-windows has no %s\n",
-                    def->name, def->files[0].in_farm);
-            skipped++;
-            continue;
-        }
-        NSString *dirName = [NSString stringWithFormat:@"x86_%s_%s_%s_none_deadbeef",
-                             def->lname, def->key, def->version];
-        NSString *asmDir = [winsxs stringByAppendingPathComponent:dirName];
-        NSString *manifest = [manifests stringByAppendingPathComponent:
-                              [dirName stringByAppendingString:@".manifest"]];
-        [fm createDirectoryAtPath:asmDir withIntermediateDirectories:YES attributes:nil error:nil];
-
-        /* Build the manifest and the directory together so the <file> list
-         * and the directory cannot disagree: a file missing from the farm is
-         * left out of both. UTF-8, LF, no BOM. */
-        NSMutableString *text = [NSMutableString stringWithString:
-            @"<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n"
-            @"<assembly xmlns=\"urn:schemas-microsoft-com:asm.v1\" manifestVersion=\"1.0\">\n"];
-        [text appendFormat:@"  <assemblyIdentity type=\"win32\" name=\"%s\" version=\"%s\" "
-                           @"processorArchitecture=\"x86\" publicKeyToken=\"%s\"/>\n",
-                           def->name, def->version, def->key];
-        BOOL ok = YES;
-        for (size_t f = 0; f < sizeof(def->files) / sizeof(def->files[0]) && def->files[f].in_assembly; f++)
-        {
-            NSString *src = [source stringByAppendingPathComponent:
-                             [NSString stringWithUTF8String:def->files[f].in_farm]];
-            NSString *link = [asmDir stringByAppendingPathComponent:
-                              [NSString stringWithUTF8String:def->files[f].in_assembly]];
-            [fm removeItemAtPath:link error:nil];  /* the bundle path changes on reinstall */
-            if (![fm fileExistsAtPath:src]) continue;
-            if (![fm createSymbolicLinkAtPath:link withDestinationPath:src error:nil]) { ok = NO; break; }
-            if (body)
-                [text appendFormat:@"  <file name=\"%s\">\n%s  </file>\n", def->files[f].in_assembly, body];
-            else
-                [text appendFormat:@"  <file name=\"%s\"/>\n", def->files[f].in_assembly];
-        }
-        [text appendString:@"</assembly>\n"];
-        if (!ok || ![[text dataUsingEncoding:NSUTF8StringEncoding] writeToFile:manifest atomically:YES])
-        {
-            dprintf(STDERR_FILENO, "[WineProc] winsxs: x86 %s FAILED\n", def->name);
-            skipped++;
-            continue;
-        }
-        seeded++;
+/* DirectDraw through cnc-ddraw (third_party/cnc-ddraw, MIT), for a game that
+ * opts in with MADEIRA_DDRAW=cnc (recipe "cnc-ddraw" in compat/recipes.json,
+ * or env.MADEIRA_DDRAW = cnc in madeira.cfg). docs/DIRECTDRAW.md.
+ *
+ * Wine's ddraw draws through wined3d, which has no backend here; cnc-ddraw
+ * keeps DirectDraw surfaces in system memory and presents them through
+ * Direct3D 9, i.e. DXMT's d3d9.dll in the i386 farm. Three things make Wine
+ * load it in a 32-bit process, all shown by build/host-tests/check-cnc-ddraw.py
+ * under a host WoW64 Wine:
+ *   - C:\windows\syswow64\ddraw.dll is linked to bundle/cnc-ddraw/ddraw.dll, a
+ *     native (not builtin-marked) DLL. madeira_link_syswow64 relinks the whole
+ *     i386 farm every launch, so a launch without the switch gets Wine's ddraw
+ *     back by itself;
+ *   - "ddraw=n,b" in WINEDLLOVERRIDES: with the default builtin-first order
+ *     Wine loads its own ddraw from the DLL path and ignores the native file
+ *     (the test's second session). Set here, replacing any other ddraw
+ *     entry, so the cfg switch alone is enough;
+ *   - CNC_DDRAW_CONFIG_FILE -> C:\ProgramData\cnc-ddraw\ddraw.ini, copied from
+ *     the bundle once (the player's edits are kept; deleting it brings back
+ *     Madeira's). Madeira's copy says renderer=direct3d9: cnc-ddraw's "auto"
+ *     never picks Direct3D 9 under Wine (it tries OpenGL, which iOS lacks).
+ * cnc-ddraw logs "[cnc-ddraw] renderer ..." itself; LaunchDiagnostics reads it. */
+static void madeira_apply_cnc_ddraw(NSFileManager *fm, NSString *prefix, NSString *bundle)
+{
+    const char *sw = getenv("MADEIRA_DDRAW");   /* "cnc": DirectDraw through cnc-ddraw over DXMT's d3d9 */
+    if (!sw || strcmp(sw, "cnc") != 0) {
+        if (sw && *sw)
+            dprintf(STDERR_FILENO, "[WineProc] cnc-ddraw: MADEIRA_DDRAW=%s not understood (\"cnc\" turns it on); Wine's ddraw\n", sw);
+        return;
     }
-    dprintf(STDERR_FILENO, "[WineProc] winsxs: %d/%zu x86 assemblies seeded, %d skipped\n",
-            seeded, count, skipped);
+    NSString *dir = [bundle stringByAppendingPathComponent:@"cnc-ddraw"];
+    NSString *dll = [dir stringByAppendingPathComponent:@"ddraw.dll"];
+    NSString *ini = [dir stringByAppendingPathComponent:@"ddraw.ini"];
+    if (![fm fileExistsAtPath:dll] || ![fm fileExistsAtPath:ini]) {
+        dprintf(STDERR_FILENO, "[WineProc] cnc-ddraw: requested, but this build has no cnc-ddraw/ddraw.dll "
+                "(build/ddraw/build.sh); Wine's ddraw\n");
+        return;
+    }
+
+    NSString *dst = [prefix stringByAppendingPathComponent:@"drive_c/windows/syswow64/ddraw.dll"];
+    [fm removeItemAtPath:dst error:nil];
+    if (![fm createSymbolicLinkAtPath:dst withDestinationPath:dll error:nil]) {
+        dprintf(STDERR_FILENO, "[WineProc] cnc-ddraw: could not link syswow64\\ddraw.dll; Wine's ddraw\n");
+        [fm createSymbolicLinkAtPath:dst
+                 withDestinationPath:[bundle stringByAppendingPathComponent:@"i386-windows/ddraw.dll"] error:nil];
+        return;
+    }
+
+    NSString *cfgDir = [prefix stringByAppendingPathComponent:@"drive_c/ProgramData/cnc-ddraw"];
+    NSString *cfg = [cfgDir stringByAppendingPathComponent:@"ddraw.ini"];
+    BOOL copied = NO;
+    [fm createDirectoryAtPath:cfgDir withIntermediateDirectories:YES attributes:nil error:nil];
+    if (![fm fileExistsAtPath:cfg])
+        copied = [fm copyItemAtPath:ini toPath:cfg error:nil];
+    setenv("CNC_DDRAW_CONFIG_FILE", "C:\\ProgramData\\cnc-ddraw\\ddraw.ini", 1);
+
+    /* ddraw=n,b replaces whatever the launch said about ddraw (a profile's
+     * "ddraw=b" would otherwise keep Wine's): the switch is the explicit ask. */
+    const char *ov = getenv("WINEDLLOVERRIDES");
+    NSMutableArray<NSString *> *entries = [NSMutableArray array];
+    NSString *was = nil;
+    for (NSString *entry in [[NSString stringWithUTF8String:ov ? ov : ""] componentsSeparatedByString:@";"]) {
+        if (!entry.length) continue;
+        NSRange eq = [entry rangeOfString:@"="];
+        NSString *names = eq.location == NSNotFound ? entry : [entry substringToIndex:eq.location];
+        NSString *order = eq.location == NSNotFound ? @"" : [entry substringFromIndex:eq.location];
+        NSMutableArray<NSString *> *keep = [NSMutableArray array];
+        for (NSString *n in [names componentsSeparatedByString:@","]) {
+            NSString *t = [n stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
+            if ([t caseInsensitiveCompare:@"ddraw"] == NSOrderedSame || [t caseInsensitiveCompare:@"ddraw.dll"] == NSOrderedSame)
+                was = order;
+            else if (t.length)
+                [keep addObject:t];
+        }
+        if (keep.count)
+            [entries addObject:[[keep componentsJoinedByString:@","] stringByAppendingString:order]];
+    }
+    [entries addObject:@"ddraw=n,b"];
+    setenv("WINEDLLOVERRIDES", [entries componentsJoinedByString:@";"].UTF8String, 1);
+
+    dprintf(STDERR_FILENO, "[WineProc] cnc-ddraw: syswow64\\ddraw.dll -> cnc-ddraw/ddraw.dll, config %s%s, "
+            "WINEDLLOVERRIDES ddraw=n,b%s%s%s\n",
+            "C:\\ProgramData\\cnc-ddraw\\ddraw.ini", copied ? " (fresh copy)" : "",
+            was ? " (was ddraw" : "", was ? was.UTF8String : "", was ? ")" : "");
 }
 
 /* FEX's WOW64 module cannot call sysctl, and without an answer it assumes the
@@ -729,6 +689,33 @@ static void madeira_publish_host_probe(void)
     }
     setenv("FEX_MADEIRA_HOSTPROBE", buf, 1);
     dprintf(STDERR_FILENO, "[WineProc] FEX host feature probe: %s\n", buf);
+}
+
+/* Launch diagnostics: the present counter (DXMT and the D3D12 runtime both
+ * count through winemetal) and the app's GDI window counter are sampled here,
+ * so the record notices the first frame without the UI running. One timer for
+ * the app's life; a sample is a few loads and, when something changed, one
+ * small file write. */
+extern uint64_t madeira_get_present_count(void);
+extern unsigned long long winios_surface_present_count(void);
+static void madeira_diag_watch_start(void) {
+    static dispatch_once_t once;
+    static dispatch_source_t timer;
+    static unsigned long long surface_base;
+    surface_base = winios_surface_present_count();
+    dispatch_once(&once, ^{
+        timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0,
+                                       dispatch_get_global_queue(QOS_CLASS_UTILITY, 0));
+        dispatch_source_set_timer(timer, dispatch_time(DISPATCH_TIME_NOW, 0),
+                                  (uint64_t)(0.5 * NSEC_PER_SEC), (uint64_t)(0.1 * NSEC_PER_SEC));
+        dispatch_source_set_event_handler(timer, ^{
+            madeira_diag_note_present_count(madeira_get_present_count());
+            if (winios_surface_present_count() > surface_base && !madeira_diag_reached(MD_STAGE_GDI_WINDOW))
+                madeira_diag_stage(MD_STAGE_GDI_WINDOW, "the app drew a GDI window of the program");
+            madeira_diag_flush();
+        });
+        dispatch_resume(timer);
+    });
 }
 
 static void *wine_process_thread(void *arg) {
@@ -977,6 +964,9 @@ static void *wine_process_thread(void *arg) {
             /* ml519: start the freeze detector as soon as logging works, so
              * every launch (Thumper as well as Steam) yields a measurement. */
             { extern void winios_freeze_watch_start(void); winios_freeze_watch_start(); }
+            /* a game session starts with no game-mode overlay windows and
+             * no known Metal windows (Winios.m) */
+            { extern void winios_session_reset(void); winios_session_reset(); }
             LOG("Wine log file: %{public}s", logPath.UTF8String);
             /* Expose the app Documents dir to Wine code (e.g. for fex-jit-dump.bin) */
             setenv("MADEIRA_DOCS_DIR", docs.UTF8String, 1);
@@ -1079,6 +1069,10 @@ static void *wine_process_thread(void *arg) {
         // Set MADEIRA_EXE=hello-x64.exe in env to launch the ARM64EC test path.
         const char *madeira_exe = getenv("MADEIRA_EXE");
         if (!madeira_exe || !*madeira_exe) madeira_exe = "cube.exe";
+        /* One launch-diagnostics record per launch, written under
+         * Documents/madeira-diagnostics (MADEIRA_DOCS_DIR, set above). */
+        madeira_diag_reset(madeira_exe, NULL);
+        madeira_diag_watch_start();
         // Heuristic: x86_64 guest exes (cube-x64, hello-x64, real games like
         // Thumper) need the arm64ec-windows bundle (ARM64EC hybrid system
         // DLLs that interop with FEX-translated x86_64 code). ARM64-native
@@ -1195,15 +1189,36 @@ static void *wine_process_thread(void *arg) {
                 }
             }
 
+            /* system32\wbem from the session's own farm (see madeira_link_wbem). */
+            madeira_link_wbem(fm, prefix, bundlePath, @"system32",
+                              [NSString stringWithUTF8String:bundle_subdir]);
+
             /* WoW64: the i386 farm for every session once the bundle has it;
              * the x86 side-by-side store and syswow64\wbem for a 32-bit
              * target (docs/WOW64.md). */
             if (has_i386_set) {
                 madeira_link_syswow64(fm, prefix, bundlePath);
+                madeira_apply_cnc_ddraw(fm, prefix, bundlePath);
                 if (is_i386_target) {
-                    madeira_link_syswow64_wbem(fm, prefix, bundlePath);
-                    madeira_seed_winsxs_x86(fm, prefix, bundlePath);
+                    madeira_link_wbem(fm, prefix, bundlePath, @"syswow64", @"i386-windows");
+                    madeira_seed_winsxs(prefix, bundlePath, @"i386-windows", "x86");
                 }
+            }
+
+            /* The arm64_ side-by-side store follows the session's 64-bit farm,
+             * as system32 does above (WinSxS.h). */
+            madeira_seed_winsxs(prefix, bundlePath, [NSString stringWithUTF8String:bundle_subdir], "arm64");
+
+            /* Wine Mono for managed (.NET) programs, when the optional component
+             * is in Documents/Components (WineMono.h, docs/WINE_MONO.md). Without
+             * it mscoree stops every .NET program at "Wine Mono is not installed". */
+            {
+                const char *env_docs = getenv("MADEIRA_DOCS_DIR");
+                NSString *docs = (env_docs && *env_docs) ? [NSString stringWithUTF8String:env_docs]
+                    : NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES).firstObject;
+                if (docs)
+                    madeira_wine_mono_link(prefix.UTF8String,
+                                           [docs stringByAppendingPathComponent:@"Components"].UTF8String);
             }
 
             /* ml719: REPAIR THE SHELL FOLDERS. They ship as symlinks to the BUILD
@@ -1444,11 +1459,81 @@ static void *wine_process_thread(void *arg) {
         ios_main_image_i386 = is_i386_target ? 1 : 0;
         if (has_i386_set) madeira_publish_host_probe();
 
+        madeira_diag_stage(MD_STAGE_WINE_STARTED, is_i386_target ? "32-bit (i386) program through WoW64"
+                                                                  : use_arm64ec ? "64-bit (x86-64) program, ARM64EC"
+                                                                                : "ARM64 program");
+        int main_exit_code = 0;
         if (setjmp(wine_ios_exit_jmpbuf) == 0) {
             __wine_main(argc, argv);
             dprintf(STDERR_FILENO, "[WineProc] __wine_main returned normally\n");
         } else {
+            main_exit_code = wine_ios_exit_code;
             dprintf(STDERR_FILENO, "[WineProc] Wine exited with code %d (caught by longjmp)\n", wine_ios_exit_code);
+        }
+        /* read now: the wait below may outlive the crash record */
+        uint32_t main_crash_status = 0;
+        if (!wine_crash_exit_status(&main_crash_status)) main_crash_status = 0;
+
+        /* A launcher stub that starts the game and exits at once (GTA V
+         * Enhanced: PlayGTAV.exe -> GTA5_Enhanced.exe) must not end the
+         * session -- stopping the wineserver here killed the game while it
+         * loaded. If a child process that is not a crash reporter / helper was
+         * started in the last 60 s and still runs, the session goes on until
+         * no such child is left (process_ios.c, madeira_live_game_children).
+         * A game that exits normally long after starting its helpers is not
+         * affected.
+         *
+         * This was opt-in because a child that ended from a worker thread
+         * never released its slot, and the session then waited forever. The
+         * slot is now released where every pseudo-process exit passes
+         * (process_exit_wrapper -> madeira_child_socket_closed), and a child
+         * that never booted stops counting after 120 s, so the wait is on by
+         * default. MADEIRA_WAIT_CHILDREN=0 restores the old ending;
+         * MADEIRA_WAIT_CHILDREN_MAX_S=<seconds> caps the wait (default: none). */
+        {
+            extern int madeira_live_game_children(char *buf, int len, double max_age);
+            /* 0 = end the session with the main process even while a game child it started still runs */
+            const char *wc = getenv("MADEIRA_WAIT_CHILDREN");
+            /* seconds: the longest the session waits for such children after the main process exited (unset = no cap) */
+            const char *wmax = getenv("MADEIRA_WAIT_CHILDREN_MAX_S");
+            unsigned max_s = (wmax && atoi(wmax) > 0) ? (unsigned)atoi(wmax) : 0;
+            char names[256];
+            int n = madeira_live_game_children(names, sizeof names, 60.0);
+            if (n > 0 && wc && wc[0] == '0') {
+                dprintf(STDERR_FILENO, "[WineProc] the main process exited while %d child process(es) it started "
+                        "still run (%s); the session ends with it (MADEIRA_WAIT_CHILDREN=0)\n",
+                        n, names);
+            } else if (n > 0) {
+                dprintf(STDERR_FILENO, "[WineProc] the main process exited but %d child process(es) "
+                        "it started still run (%s) -- a launcher started the game; the session goes on until "
+                        "they exit (MADEIRA_WAIT_CHILDREN=0 ends it now)\n", n, names);
+                madeira_diag_stage(MD_STAGE_CHILD_PROCESS, names);
+                unsigned ticks = 0;
+                while ((n = madeira_live_game_children(names, sizeof names, -1.0)) > 0) {
+                    usleep(200 * 1000);
+                    if ((++ticks % 300) == 0)
+                        dprintf(STDERR_FILENO, "[WineProc] still running: %d child process(es) (%s), %u s\n",
+                                n, names, ticks / 5);
+                    if (max_s && ticks / 5 >= max_s) {
+                        dprintf(STDERR_FILENO, "[WineProc] child wait capped at %u s (MADEIRA_WAIT_CHILDREN_MAX_S); "
+                                "ending the session with %d child process(es) still running (%s)\n", max_s, n, names);
+                        break;
+                    }
+                }
+                if (!n) dprintf(STDERR_FILENO, "[WineProc] the last child process exited after %u s\n", ticks / 5);
+            }
+        }
+        /* The session is over: write the launch record now (the watch timer
+         * also writes it while the game runs) and name it in the log. */
+        madeira_diag_note_present_count(madeira_get_present_count());
+        madeira_diag_process_exit(main_exit_code, main_crash_status);
+        madeira_diag_flush();
+        {
+            md_category verdict = madeira_diag_verdict();
+            dprintf(STDERR_FILENO, "[launch-diagnostics] first frame: %s; verdict: %s -- "
+                    "Documents/madeira-diagnostics/last-launch.txt\n",
+                    madeira_diag_reached(MD_STAGE_FIRST_PRESENT) ? "presented" : "never presented",
+                    verdict == MD_CAT_NONE ? "none" : madeira_diag_category_name(verdict));
         }
 
         g_wine_running = 0;

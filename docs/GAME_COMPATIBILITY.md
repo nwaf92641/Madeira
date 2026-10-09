@@ -32,6 +32,11 @@ the session ends
    ↓  retry               the remedy for that category, or the title's next alternative
 ```
 
+How far one launch got on the way to its first frame (process, DLLs, device,
+swapchain, Metal layer, present, windows, video) is recorded separately, in
+`Documents/madeira-diagnostics/last-launch.txt`: see
+[LAUNCH_DIAGNOSTICS.md](LAUNCH_DIAGNOSTICS.md).
+
 Everything above the runtime is data-driven and per-launch. Nothing changes the
 runtime: a fix is expressed as an override, a registry value, an environment
 variable or a launch argument, all scoped to one launch of one game.
@@ -50,7 +55,7 @@ variable or a launch argument, all scoped to one launch of one game.
 | `compat/rules.json` | General rules (`when` → what to apply) and the remedies used to retry a failed session. |
 | `compat/wine-modules.json` | The modules this runtime provides, and the ones the iOS build leaves out. Generated from the Wine tree by `build/tools/gen-wine-modules.py` (below). |
 | `build/tools/gen-game-compat.py` | Builds `app/Madeira/compat.json`; optionally imports Protonfixes game scripts, Winetricks verb metadata and Bottles dependency definitions. |
-| `build/tools/gen-wine-modules.py` | Builds `compat/wine-modules.json` from a Wine `configure` output and `build/wine-i386/build.sh`. |
+| `build/tools/gen-wine-modules.py` | Builds `compat/wine-modules.json` from a Wine `configure` output, `build/wine-i386/build.sh` and the ARM64EC farm directory (the 64-bit list). |
 | `app/Madeira/compat.json` | The database the app ships, bundled as a resource. Generated, not edited by hand. |
 | `Documents/madeira-compat/` | Optional update, payload DLLs and fonts (below). |
 
@@ -244,7 +249,8 @@ answer (anti-cheat, DRM) is not retried at all.
 
 **What the runtime does not have** is reported rather than guessed.
 `compat/wine-modules.json` is generated from the Wine build itself: the modules
-the runtime provides (648 of them, including the names DXMT answers for) and the
+the runtime provides (636 for the Wine 11.4 submodule, including the names DXMT
+answers for) and the
 ones the iOS build leaves out (Indeo's `ir50_32`, `vulkan-1.dll`, `opencl.dll`
 and the rest, each with the build script's own reason). An import that nothing
 in the catalogue, no rule and no module accounts for, and that the runtime does
@@ -263,6 +269,24 @@ Two families are deliberately not reported:
 - **The names DXMT answers for.** `d3d9`, `d3d10core`, `d3d11`, `dxgi` and
   `winemetal` are DXMT's, not Wine's, and the iOS build deliberately skips
   Wine's own copies, so they count as provided.
+
+**The two architectures are checked against different farms.** A 32-bit
+program runs under WoW64 against the i386 farm, which `build/wine-i386/build.sh`
+fills with every module of the tree, so `modules` is its list. A 64-bit program
+loads from the ARM64EC farm (`app/Madeira/arm64ec-windows`), which is built
+group by group (`build/wine-pe/arm64ec-farm.json`) and holds about half of the
+set (307 of 636). The generator reads that directory and writes `modules_64`
+and `not_in_64bit_farm`; the engine (`providedModules(bits:)`,
+`absentModules(bits:)`) uses the list for the program's architecture, and a
+64-bit import of a module the farm lacks is named as unavailable even when a
+catalogue component or rule mentions it (only a payload component, the game's
+own copy, answers for it). An unknown architecture counts only modules both
+farms hold. `build/host-tests/check-game-compat.py` fails if any name claimed
+for 64-bit programs has no file in the farm, or if a farm gap passes as provided.
+
+Before this, the document said Wine 11.18 and listed twelve modules (`icu`,
+`winsqlite3`, `wkscli`, ...) the Wine 11.4 submodule does not have; it is now
+regenerated from the submodule's own `configure`.
 
 `build/tools/gen-wine-modules.py --configure <wine>/configure` rewrites
 `compat/wine-modules.json` (and `--check` fails when it is out of date), which is

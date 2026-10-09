@@ -1258,6 +1258,23 @@
    ],
    "source": "protonfixes:segoe_script"
   },
+  "msxml4": {
+   "title": "MSXML 4.0",
+   "kind": "framework",
+   "category": "dependency",
+   "support": "builtin",
+   "summary": "msxml4.dll (MSXML2.DOMDocument.4.0 and the Msxml2 4.0 side-by-side assembly). Wine's builtin, which shares msxml3's parser, is in both farms; the native-msxml recipe can still put a native copy first.",
+   "imports": [
+    "msxml4"
+   ],
+   "dll_overrides": {
+    "msxml4": "b"
+   },
+   "source": "wine:msxml4",
+   "recipes": [
+    "native-msxml"
+   ]
+  },
   "msxml3": {
    "title": "MSXML 3.0",
    "kind": "framework",
@@ -1424,15 +1441,21 @@
    "title": "cnc-ddraw",
    "kind": "utility",
    "category": "dx9",
-   "support": "payload",
-   "summary": "Community DirectDraw wrapper that fixes old 2D RTS/DirectDraw games.",
+   "support": "builtin",
+   "summary": "Madeira ships cnc-ddraw (third_party/cnc-ddraw, MIT) for 32-bit DirectDraw games, presenting through DXMT's Direct3D 9. Opt-in per game: the cnc-ddraw recipe, or env.MADEIRA_DDRAW = cnc.",
    "dlls": [
-    "ddraw.dll",
-    "cnc-ddraw.dll"
+    "ddraw.dll"
    ],
+   "env": {
+    "MADEIRA_DDRAW": "cnc",
+    "MADEIRA_GAME_GDI_FULLSCREEN": "1"
+   },
    "dll_overrides": {
     "ddraw": "n,b"
    },
+   "recipes": [
+    "cnc-ddraw"
+   ],
    "source": "lutris/bottles:cnc-ddraw"
   },
   "dgvoodoo2": {
@@ -1610,8 +1633,8 @@
    "title": "Direct3D 8",
    "kind": "directx",
    "category": "dx9",
-   "support": "override",
-   "summary": "Wine implements d3d8 on top of its D3D9 path; some titles need the native DLL.",
+   "support": "builtin",
+   "summary": "Madeira's d3d8.dll (32-bit) is third_party/d3d8to9: Direct3D 8 translated to DXMT's Direct3D 9 (Metal); Wine's own d3d8 needs wined3d, which has no backend here. A d3d8.dll the game ships beside itself still wins (n,b). There is no 64-bit d3d8 (Windows never had one).",
    "imports": [
     "d3d8"
    ],
@@ -1688,7 +1711,7 @@
    "kind": "runtime",
    "category": "dependency",
    "support": "builtin",
-   "summary": "Wine's builtin msi runs MSI packages, including the MSI payload inside a self-extracting redistributable.",
+   "summary": "Wine's builtin msi runs MSI packages, including the MSI payload inside a self-extracting redistributable. Both farms ship msi.dll and msiexec.exe: the 64-bit one gained them (installer_scripting in build/wine-pe/arm64ec-farm.json) so x64 packages and custom actions run too.",
    "dll_overrides": {
     "msi": "b"
    },
@@ -1969,7 +1992,7 @@
    "kind": "directx",
    "category": "dx9",
    "support": "builtin",
-   "summary": "The d3dcompiler_33 to _46 DLLs. Wine ships one complete builtin implementation for every version number, so a game that links an older compiler still compiles its shaders.",
+   "summary": "The d3dcompiler_33 to _42 and _46 DLLs. Wine ships one complete builtin implementation for each of those version numbers (both farms), so a game that links an older compiler still compiles its shaders. d3dcompiler_44 and _45 were Windows 8 preview builds that Wine does not build: a program importing one is reported as an unavailable module, not answered here.",
    "imports": [
     "d3dcompiler_33",
     "d3dcompiler_34",
@@ -1981,8 +2004,6 @@
     "d3dcompiler_40",
     "d3dcompiler_41",
     "d3dcompiler_42",
-    "d3dcompiler_44",
-    "d3dcompiler_45",
     "d3dcompiler_46"
    ],
    "dll_overrides": {
@@ -1996,8 +2017,6 @@
     "d3dcompiler_40": "b",
     "d3dcompiler_41": "b",
     "d3dcompiler_42": "b",
-    "d3dcompiler_44": "b",
-    "d3dcompiler_45": "b",
     "d3dcompiler_46": "b"
    },
    "source": "wine:d3dcompiler"
@@ -2254,14 +2273,11 @@
    "kind": "directx",
    "category": "dx12",
    "support": "builtin",
-   "summary": "Direct3D 12 (d3d12.dll / d3d12core.dll), which Wine builds and Madeira's own D3D12 path implements on top of. It is a newer path than D3D11, so a title that offers both may be steadier on D3D11.",
+   "summary": "Direct3D 12 through Madeira's own d3d12.dll (build/madeira-d3d12, Metal), not Wine's vkd3d-based one, which needs Vulkan. It is a newer path than D3D11, so a title that offers both may be steadier on D3D11.",
    "imports": [
-    "d3d12",
-    "d3d12core",
-    "dxil",
-    "dxcompiler"
+    "d3d12"
    ],
-   "notes": "dxil.dll and dxcompiler.dll are the DirectX Shader Compiler redistributables rather than system files: a title that links them ships them beside itself. Neither Wine nor DXMT builds them and there is nothing to install, so one that is genuinely missing from a game folder is a fact about that install.",
+   "notes": "Only d3d12 is claimed. dxil.dll and dxcompiler.dll are the DirectX Shader Compiler redistributables rather than system files: a title that links them ships them beside itself, and the engine reports such an import as one the program brings. D3D12Core.dll is the Agility SDK runtime a game ships in its own folder for d3d12.dll to load; Wine's d3d12core needs Vulkan and is not in either farm, so it is not claimed here either.",
    "source": "madeira:madeira-d3d12"
   },
   "vulkan": {
@@ -2388,15 +2404,14 @@
    "kind": "runtime",
    "category": "dependency",
    "support": "manual",
-   "summary": "Wine's own .NET implementation, the MSI Wine installs into a prefix so managed programs run without Microsoft's .NET installers. Titles built with .NET need it, and Wine stops a program the first time one starts to ask for it.",
+   "summary": "Wine's own .NET implementation, which mscoree needs to start any managed program (.NET Framework, XNA and FNA titles, many tools and launchers). Without it Wine stops the program at \"Wine Mono is not installed\".",
    "imports": [
     "mscoree"
    ],
    "dlls": [
-    "wine-mono-10.1.0-x86.msi",
-    "wine-mono-10.1.0-x86_64.msi"
+    "wine-mono-11.0.0-x86.tar.xz"
    ],
-   "notes": "Wine installs the MSI from share/wine/mono of the runtime at prefix creation; the engine can only report that it is needed. Winlator ships these two files with its prefixes (winlator:wine_addons) and blocks Microsoft's .NET installers, which Madeira's Wine does not need.",
+   "notes": "Optional component, not in the app (41 MB download, 235 MB unpacked): the unpacked wine-mono-11.0.0-x86.tar.xz from dl.winehq.org/wine/wine-mono/11.0.0/ goes in Documents/Components/wine-mono-11.0.0, and each launch links it to C:\\windows\\mono\\mono-2.0 (app/Madeira/WineMono.c, docs/WINE_MONO.md). 11.0.0 is the version this Wine's mscoree asks for; Winlator ships the 10.1.0 MSIs with its own Wine. Mono's x86_64 JIT output runs under FEX on the iPad, which is not verified yet.",
    "source": "winlator:wine_addons,wine"
   },
   "wine-gecko": {

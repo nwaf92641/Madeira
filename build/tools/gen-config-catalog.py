@@ -43,6 +43,9 @@ INT_READERS = {"madeira_cfg_int", "mad_cfg_int_pe"}
 # Titles, kinds and fixed choices for options with a dedicated Settings row.
 # "choices" are (value, label); the empty value means "remove the key".
 OVERLAY = {
+    "env.MADEIRA_DDRAW": {"category": "Direct3D 9/10/11 (DXMT)", "title": "DirectDraw (32-bit games)", "kind": "choice",
+                          "note": "cnc: DirectDraw through cnc-ddraw, presented with Direct3D 9 (DXMT), for 2D DirectDraw games that show a black screen with Wine's ddraw. Read at launch; per game through the cnc-ddraw recipe. docs/DIRECTDRAW.md.",
+                          "choices": [("", "Wine's ddraw (default)"), ("cnc", "cnc-ddraw over Direct3D 9")]},
     "swap-mb": { "note": "Moves game data to a file on this device's storage when memory runs short, up to this size. Off by default; read at launch.", "category": "Memory & JIT pool","title": "Swap tier size", "kind": "choice",
                 "choices": [("", "Off"), ("1024", "1 GB"), ("2048", "2 GB"), ("3072", "3 GB"), ("4096", "4 GB")]},
     "env.MADEIRA_SWAP_COVERAGE": {"category": "Memory & JIT pool", "note": "Which allocations the swap tier backs with its file (only when the tier is on). Large allocations (classic, the default): single 8 MB+ commits in the guest band. All allocations of 1 MB+ (blocks). 1 MB+ and overflow (wide): blocks plus allocations outside the band and fresh reservations.", "title": "Swap tier coverage", "kind": "choice",

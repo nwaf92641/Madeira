@@ -6,7 +6,18 @@ DLLs the game loads via Wine.
 
 The upstream DXMT source lives at `research/dxmt/` as a git submodule
 pointing at our fork [willfaust/dxmt](https://github.com/willfaust/dxmt),
-`ios-port` branch. The iOS patches are committed there, not here.
+`ios-port` branch. The iOS patches are committed there, not here, except for
+the ones in `patches/dxmt-*.patch`, which this repository applies on top of
+the pinned commit until they land in the fork:
+
+| Patch | What it changes |
+| --- | --- |
+| `dxmt-ios-layer-safety.patch` | winemetal: a pixel format the CAMetalLayer refuses falls back to a documented one instead of raising (`madeira_layer_format.h`); MadeiraCtl op 8, a converting present for the D3D12 runtime. Presenter: presents into the drawable that exists (its real size; a shared layer reconfigured by another swapchain is configured again, or its format adopted). D3D11: CreateSwapChain fails with `DXGI_ERROR_UNSUPPORTED` instead of `abort()` when the window has no Metal layer, refuses non-swapchain formats, and writes `[madeira-diag]` lines for the launch diagnostics (docs/LAUNCH_DIAGNOSTICS.md). |
+
+`build.sh` and `build/madeira-d3d12/build-pe.sh` apply them
+(`apply-madeira-patches.sh`, idempotent). Run that script by hand before the
+PE meson build below, so `d3d11.dll` / `dxgi.dll` / `winemetal.dll` carry the
+same changes as the unix side.
 
 ## What this produces
 
@@ -54,6 +65,12 @@ Both are gitignored — rebuild via the steps below.
 ## Build steps
 
 ### PE side (d3d11 / dxgi / winemetal / d3d10core)
+
+First apply this repository's DXMT patches (the unix build does it itself):
+
+```
+build/dxmt-ios/apply-madeira-patches.sh
+```
 
 The meson cross file uses `@GLOBAL_SOURCE_ROOT@/toolchains/...` paths, so
 symlink our toolchains dir into the DXMT submodule once:

@@ -96,6 +96,10 @@ final class LogStore: ObservableObject {
         // Tail the log file. Reads everything Wine + DXMT + FEX write via
         // dprintf(STDERR_FILENO, ...), wine_log_write, etc.
         tail = LogTail(path: logFileURL.path) { [weak self] line in
+            // Launch diagnostics see every line, also while the on-screen log
+            // is suppressed (LaunchDiagnostics.h); the feed is a cheap check
+            // on most lines.
+            line.withCString { madeira_diag_feed_line($0) }
             self?.handleRawLine(line)
         }
         tail?.start()

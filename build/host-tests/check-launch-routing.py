@@ -34,8 +34,21 @@ farm = thread[thread.index("if (has_i386_set) {"):]
 farm = farm[:farm.index("/* ml719: REPAIR THE SHELL FOLDERS.")]
 assert "madeira_link_syswow64(fm, prefix, bundlePath);" in farm
 inner = farm[farm.index("if (is_i386_target) {"):]
-assert "madeira_link_syswow64_wbem(" in inner and "madeira_seed_winsxs_x86(" in inner, "wbem/winsxs for i386 targets only"
-for call in ["madeira_link_syswow64(", "madeira_link_syswow64_wbem(", "madeira_seed_winsxs_x86(",
+wow_wbem = 'madeira_link_wbem(fm, prefix, bundlePath, @"syswow64", @"i386-windows");'
+wow_sxs = 'madeira_seed_winsxs(prefix, bundlePath, @"i386-windows", "x86");'
+assert wow_wbem in inner and wow_sxs in inner, "syswow64 wbem / x86 winsxs for i386 targets only"
+# the arm64 side-by-side store follows the session's 64-bit farm for every session (WinSxS.h)
+arm_sxs = 'madeira_seed_winsxs(prefix, bundlePath, [NSString stringWithUTF8String:bundle_subdir], "arm64");'
+assert thread.count(arm_sxs) == 1 and thread.index(arm_sxs) > thread.index("if (has_i386_set) {")
+# cnc-ddraw (MADEIRA_DDRAW=cnc) right after the i386 farm relink (docs/DIRECTDRAW.md)
+assert "madeira_link_syswow64(fm, prefix, bundlePath);\n                madeira_apply_cnc_ddraw(fm, prefix, bundlePath);" in farm
+# system32\wbem comes from the session's own 64-bit farm, for every session,
+# outside the WoW64 gate (the arm64ec farm ships wbemprox/wmiutils).
+sys_wbem = thread.index('madeira_link_wbem(fm, prefix, bundlePath, @"system32",')
+assert sys_wbem < thread.index("if (has_i386_set) {"), "system32 wbem is not gated on WoW64"
+assert "[NSString stringWithUTF8String:bundle_subdir]" in thread[sys_wbem:sys_wbem + 200]
+assert thread.count("madeira_link_wbem(") == 2
+for call in ["madeira_link_syswow64(", wow_wbem, wow_sxs, "madeira_apply_cnc_ddraw(",
              "madeira_publish_host_probe()"]:
     assert thread.count(call) == 1, call
 assert thread.index("ios_main_image_i386 = is_i386_target ? 1 : 0;") < thread.index("__wine_main(argc, argv);")
@@ -45,9 +58,12 @@ exe = exe[:exe.index("// Optional MADEIRA_ARGS")]
 i386_branch = exe[exe.index("} else if (is_i386_target) {"):]
 assert i386_branch.index('"C:\\\\windows\\\\syswow64\\\\%s"') < i386_branch.index("} else {"), exe
 assert 'snprintf(exe_path, sizeof(exe_path), "C:\\\\windows\\\\system32\\\\%s", madeira_exe);' in exe
-sxs = function(src, "static void madeira_seed_winsxs_x86(")
-assert "x86_%s_%s_%s_none_deadbeef" in sxs and 'processorArchitecture=\\"x86\\"' in sxs
-assert "arm64" not in sxs and "amd64" not in sxs, "only x86 assemblies are written"
+# The table and the per-architecture layout moved to WinSxS.c (plain C,
+# exercised under Wine by check-winsxs.py); the bridge only calls it.
+sxs = function(src, "static void madeira_seed_winsxs(")
+assert "madeira_winsxs_seed(" in sxs
+csrc = (root / "app/Madeira/WinSxS.c").read_text()
+assert "%s_%s_%s_%s_none_deadbeef" in csrc or "_none_deadbeef" in csrc
 print("PASS: non-i386 targets keep the upstream core choice, farms and exe path; WoW64 steps are gated")
 
 # ---- Part B: the machine probe

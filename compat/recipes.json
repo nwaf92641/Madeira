@@ -10,6 +10,15 @@
       "dll_overrides": {"ddraw": "n,b"},
       "source": "protonfixes"
     },
+    "cnc-ddraw": {
+      "title": "DirectDraw through cnc-ddraw",
+      "category": "dx9",
+      "summary": "Runs a DirectDraw game on cnc-ddraw, which keeps the game's surfaces in memory and presents them with Direct3D 9 (DXMT on Metal), for 2D DirectDraw titles that show a black screen with Wine's ddraw. 32-bit games only.",
+      "env": {"MADEIRA_DDRAW": "cnc", "MADEIRA_GAME_GDI_FULLSCREEN": "1"},
+      "dll_overrides": {"ddraw": "n,b"},
+      "notes": "The app links C:\\windows\\syswow64\\ddraw.dll to the bundle's cnc-ddraw (third_party/cnc-ddraw, MIT) for this launch only and points CNC_DDRAW_CONFIG_FILE at C:\\ProgramData\\cnc-ddraw\\ddraw.ini, whose [ddraw] renderer is direct3d9 (cnc-ddraw's auto never chooses Direct3D 9 under Wine). ddraw=n,b is what makes Wine load it instead of its builtin ddraw. MADEIRA_GAME_GDI_FULLSCREEN covers cnc-ddraw's GDI fallback, used when Direct3D 9 cannot start (the launch log then says why). A ddraw.dll the game ships beside itself still wins. docs/DIRECTDRAW.md.",
+      "source": "winlator,cnc-ddraw"
+    },
     "native-d3d8": {
       "title": "Native Direct3D 8",
       "category": "dx9",

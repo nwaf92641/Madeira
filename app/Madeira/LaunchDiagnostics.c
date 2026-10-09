@@ -74,7 +74,8 @@ static const char *const md_cat_hints[MD_CAT_COUNT] = {
     "Frames were rendered but Metal did not hand out a drawable or did not show it.",
     "The window exists but is not drawn in a game session. A full-screen window that does not present "
     "through Direct3D (GDI, DirectDraw, OpenGL) has no Metal output here. A GDI or DirectDraw (2D) game: "
-    "set MADEIRA_GAME_GDI_FULLSCREEN=1 for it, or use the desktop session (docs/DIRECTDRAW.md).",
+    "set MADEIRA_GAME_GDI_FULLSCREEN=1 for it, or use the desktop session; a 32-bit DirectDraw game can also "
+    "run on cnc-ddraw over Direct3D 9 (MADEIRA_DDRAW=cnc, docs/DIRECTDRAW.md).",
     "A video or media component is missing or failed. A game that waits for an intro video can stay black "
     "(with or without sound).",
     "A DLL loaded, but a function the program calls is only a stub in this Wine build, or is not exported by "
@@ -273,7 +274,7 @@ static const char *md_dll_hint(const char *dll)
         "evr.dll", "dxva2.dll", "wmvcore.dll", "devenum.dll", "amstream.dll", "msdmo.dll", "wmadmod.dll",
         "qedit.dll", "mfplay.dll", NULL };
     static const char *const no_backend[] = {
-        "ddraw.dll", "opengl32.dll", "wined3d.dll", "vulkan-1.dll", "d3drm.dll", NULL };
+        "opengl32.dll", "wined3d.dll", "vulkan-1.dll", "d3drm.dll", NULL };
     static const char *const redist[] = {
         "msvcp*", "vcruntime*", "msvcr*", "concrt*", "vcomp*", "d3dx9_*", "d3dx10*", "d3dx11*", "d3dcompiler_*",
         "xinput*", "xaudio*", "x3daudio*", "xapofx*", "physxloader.dll", "physx*", NULL };
@@ -285,6 +286,10 @@ static const char *md_dll_hint(const char *dll)
         return "Direct3D 8 is in the 32-bit DLL folder only (third_party/d3d8to9 over DXMT's Direct3D 9, "
                "docs/D3D8.md); Windows never had a 64-bit d3d8.dll either. A build without it predates that "
                "or was made with SKIP_DXMT=1.";
+    if (md_name_in(dll, (const char *const[]){ "ddraw.dll", NULL }))
+        return "Wine's DirectDraw draws through wined3d, which has no backend in Madeira. A 32-bit DirectDraw "
+               "game can run on cnc-ddraw over DXMT's Direct3D 9 instead: the cnc-ddraw recipe, or "
+               "env.MADEIRA_DDRAW = cnc (docs/DIRECTDRAW.md).";
     if (md_name_in(dll, no_backend))
         return "This graphics API has no rendering backend in Madeira (no wined3d, OpenGL or Vulkan); only "
                "Direct3D 9, 10, 11 and 12 reach Metal.";
@@ -461,6 +466,58 @@ static void md_feed_locked(const char *line)
         return;
     }
 
+    /* DirectDraw through cnc-ddraw (third_party/cnc-ddraw/madeira/madeira_log.c,
+     * MADEIRA_DDRAW=cnc; docs/DIRECTDRAW.md), and the app's own line when the
+     * build lacks it. Before DXMT's d3d9 lines, so the API stage names it. */
+    if ((p = md_find(line, "[WineProc] cnc-ddraw: requested, but"))) {
+        md_problem_locked(MD_CAT_DEPENDENCY, "dll", "cnc-ddraw not in this build", line, len,
+                          "MADEIRA_DDRAW=cnc (or the cnc-ddraw recipe) was set, but the app bundle has no "
+                          "cnc-ddraw/ddraw.dll, so Wine's ddraw ran. build/wine-i386/build.sh builds it "
+                          "(build/ddraw/build.sh).");
+        return;
+    }
+    if ((p = md_find(line, "[cnc-ddraw] "))) {
+        p += 12;
+        if (!strncmp(p, "renderer ", 9)) {
+            const char *r = p + 9;
+            if (!strncmp(r, "direct3d9", 9))
+                md_stage_locked(MD_STAGE_GRAPHICS_API, "DirectDraw (cnc-ddraw over DXMT's Direct3D 9)", (size_t)-1);
+            else if (!strncmp(r, "opengl", 6)) {
+                md_stage_locked(MD_STAGE_GRAPHICS_API, "DirectDraw (cnc-ddraw, OpenGL renderer)", (size_t)-1);
+                md_problem_locked(MD_CAT_DEVICE, "graphics-api", "cnc-ddraw: OpenGL renderer", line, len,
+                                  "cnc-ddraw chose OpenGL, which has no backend here, so the picture stays black. "
+                                  "Set renderer=direct3d9 in C:\\ProgramData\\cnc-ddraw\\ddraw.ini ([ddraw] or the "
+                                  "game's own section; delete the file to get Madeira's copy back).");
+            } else
+                md_stage_locked(MD_STAGE_GRAPHICS_API, "DirectDraw (cnc-ddraw, GDI renderer)", (size_t)-1);
+        } else if (!strncmp(p, "Direct3D 9 device ", 18)) {
+            md_stage_locked(MD_STAGE_DEVICE, "DirectDraw via Direct3D 9 (cnc-ddraw)", (size_t)-1);
+        } else if (md_find(p, "d3d9.dll could not be loaded")) {
+            md_problem_locked(MD_CAT_DEPENDENCY, "dll", "cnc-ddraw: d3d9.dll did not load", line, len,
+                              "cnc-ddraw presents through d3d9.dll (DXMT's, in the 32-bit DLL folder), which did "
+                              "not load; it falls back to GDI. Check that the 32-bit DLL folder has d3d9.dll and "
+                              "d3d9-emulated.dll (build/wine-i386/build.sh).");
+        } else if (md_find(p, "Direct3DCreate9 returned NULL")) {
+            md_problem_locked(MD_CAT_DEVICE, "device", "cnc-ddraw: no Direct3D 9", line, len,
+                              "DXMT's Direct3DCreate9 returned nothing, so cnc-ddraw falls back to GDI (visible "
+                              "in a game session only with MADEIRA_GAME_GDI_FULLSCREEN=1, which the cnc-ddraw "
+                              "recipe sets).");
+        } else if (md_find(p, "CreateDevice failed") || md_find(p, "could not be created") ||
+                   md_find(p, "setting its states failed")) {
+            md_problem_locked(MD_CAT_DEVICE, "device", "cnc-ddraw: Direct3D 9 device failed", line, len,
+                              "cnc-ddraw's Direct3D 9 device (or its textures / ps_2_0 palette shader) was refused "
+                              "by DXMT; cnc-ddraw falls back to GDI. The d3d9 lines next to it have the reason. "
+                              "renderer=gdi in C:\\ProgramData\\cnc-ddraw\\ddraw.ini skips the attempt.");
+        } else if (md_find(p, "falling back to GDI")) {
+            /* replaces the "over Direct3D 9" detail the renderer line set */
+            static const char fb[] = "DirectDraw (cnc-ddraw, GDI fallback)";
+            md_stage_locked(MD_STAGE_GRAPHICS_API, fb, (size_t)-1);
+            md_copy(md.stages[MD_STAGE_GRAPHICS_API].detail, sizeof md.stages[0].detail, fb, (size_t)-1);
+            md.dirty = 2;
+        }
+        return;
+    }
+
     /* Direct3D 8 over Direct3D 9 (third_party/d3d8to9, madeira_log.hpp). Before
      * DXMT's own d3d9 lines, so the API stage names the Direct3D 8 path. */
     if ((p = md_find(line, "[d3d8to9] "))) {
@@ -597,7 +654,8 @@ void madeira_diag_feed_line(const char *line)
         !strstr(line, "shader") && !strstr(line, "CAMetalLayer") && !strstr(line, "pixel format") &&
         !strstr(line, "[wg-parser]") && !strstr(line, "metal view") && !strstr(line, "feature level") &&
         !strstr(line, "[d3d9-modes] CreateDevice") && !strstr(line, "DXMT adapter") &&
-        !strstr(line, "wine: ") && !strstr(line, "dependent assembly") && !strstr(line, "[d3d8to9] "))
+        !strstr(line, "wine: ") && !strstr(line, "dependent assembly") && !strstr(line, "[d3d8to9] ") &&
+        !strstr(line, "cnc-ddraw"))
         return;
     pthread_mutex_lock(&md_lock);
     md_feed_locked(line);

@@ -567,6 +567,92 @@ static void madeira_seed_winsxs(NSString *prefix, NSString *bundle, NSString *fa
     madeira_winsxs_seed(prefix.fileSystemRepresentation, farm.fileSystemRepresentation, arch, NULL);
 }
 
+/* DirectDraw through cnc-ddraw (third_party/cnc-ddraw, MIT), for a game that
+ * opts in with MADEIRA_DDRAW=cnc (recipe "cnc-ddraw" in compat/recipes.json,
+ * or env.MADEIRA_DDRAW = cnc in madeira.cfg). docs/DIRECTDRAW.md.
+ *
+ * Wine's ddraw draws through wined3d, which has no backend here; cnc-ddraw
+ * keeps DirectDraw surfaces in system memory and presents them through
+ * Direct3D 9, i.e. DXMT's d3d9.dll in the i386 farm. Three things make Wine
+ * load it in a 32-bit process, all shown by build/host-tests/check-cnc-ddraw.py
+ * under a host WoW64 Wine:
+ *   - C:\windows\syswow64\ddraw.dll is linked to bundle/cnc-ddraw/ddraw.dll, a
+ *     native (not builtin-marked) DLL. madeira_link_syswow64 relinks the whole
+ *     i386 farm every launch, so a launch without the switch gets Wine's ddraw
+ *     back by itself;
+ *   - "ddraw=n,b" in WINEDLLOVERRIDES: with the default builtin-first order
+ *     Wine loads its own ddraw from the DLL path and ignores the native file
+ *     (the test's second session). Set here, replacing any other ddraw
+ *     entry, so the cfg switch alone is enough;
+ *   - CNC_DDRAW_CONFIG_FILE -> C:\ProgramData\cnc-ddraw\ddraw.ini, copied from
+ *     the bundle once (the player's edits are kept; deleting it brings back
+ *     Madeira's). Madeira's copy says renderer=direct3d9: cnc-ddraw's "auto"
+ *     never picks Direct3D 9 under Wine (it tries OpenGL, which iOS lacks).
+ * cnc-ddraw logs "[cnc-ddraw] renderer ..." itself; LaunchDiagnostics reads it. */
+static void madeira_apply_cnc_ddraw(NSFileManager *fm, NSString *prefix, NSString *bundle)
+{
+    const char *sw = getenv("MADEIRA_DDRAW");   /* "cnc": DirectDraw through cnc-ddraw over DXMT's d3d9 */
+    if (!sw || strcmp(sw, "cnc") != 0) {
+        if (sw && *sw)
+            dprintf(STDERR_FILENO, "[WineProc] cnc-ddraw: MADEIRA_DDRAW=%s not understood (\"cnc\" turns it on); Wine's ddraw\n", sw);
+        return;
+    }
+    NSString *dir = [bundle stringByAppendingPathComponent:@"cnc-ddraw"];
+    NSString *dll = [dir stringByAppendingPathComponent:@"ddraw.dll"];
+    NSString *ini = [dir stringByAppendingPathComponent:@"ddraw.ini"];
+    if (![fm fileExistsAtPath:dll] || ![fm fileExistsAtPath:ini]) {
+        dprintf(STDERR_FILENO, "[WineProc] cnc-ddraw: requested, but this build has no cnc-ddraw/ddraw.dll "
+                "(build/ddraw/build.sh); Wine's ddraw\n");
+        return;
+    }
+
+    NSString *dst = [prefix stringByAppendingPathComponent:@"drive_c/windows/syswow64/ddraw.dll"];
+    [fm removeItemAtPath:dst error:nil];
+    if (![fm createSymbolicLinkAtPath:dst withDestinationPath:dll error:nil]) {
+        dprintf(STDERR_FILENO, "[WineProc] cnc-ddraw: could not link syswow64\\ddraw.dll; Wine's ddraw\n");
+        [fm createSymbolicLinkAtPath:dst
+                 withDestinationPath:[bundle stringByAppendingPathComponent:@"i386-windows/ddraw.dll"] error:nil];
+        return;
+    }
+
+    NSString *cfgDir = [prefix stringByAppendingPathComponent:@"drive_c/ProgramData/cnc-ddraw"];
+    NSString *cfg = [cfgDir stringByAppendingPathComponent:@"ddraw.ini"];
+    BOOL copied = NO;
+    [fm createDirectoryAtPath:cfgDir withIntermediateDirectories:YES attributes:nil error:nil];
+    if (![fm fileExistsAtPath:cfg])
+        copied = [fm copyItemAtPath:ini toPath:cfg error:nil];
+    setenv("CNC_DDRAW_CONFIG_FILE", "C:\\ProgramData\\cnc-ddraw\\ddraw.ini", 1);
+
+    /* ddraw=n,b replaces whatever the launch said about ddraw (a profile's
+     * "ddraw=b" would otherwise keep Wine's): the switch is the explicit ask. */
+    const char *ov = getenv("WINEDLLOVERRIDES");
+    NSMutableArray<NSString *> *entries = [NSMutableArray array];
+    NSString *was = nil;
+    for (NSString *entry in [[NSString stringWithUTF8String:ov ? ov : ""] componentsSeparatedByString:@";"]) {
+        if (!entry.length) continue;
+        NSRange eq = [entry rangeOfString:@"="];
+        NSString *names = eq.location == NSNotFound ? entry : [entry substringToIndex:eq.location];
+        NSString *order = eq.location == NSNotFound ? @"" : [entry substringFromIndex:eq.location];
+        NSMutableArray<NSString *> *keep = [NSMutableArray array];
+        for (NSString *n in [names componentsSeparatedByString:@","]) {
+            NSString *t = [n stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
+            if ([t caseInsensitiveCompare:@"ddraw"] == NSOrderedSame || [t caseInsensitiveCompare:@"ddraw.dll"] == NSOrderedSame)
+                was = order;
+            else if (t.length)
+                [keep addObject:t];
+        }
+        if (keep.count)
+            [entries addObject:[[keep componentsJoinedByString:@","] stringByAppendingString:order]];
+    }
+    [entries addObject:@"ddraw=n,b"];
+    setenv("WINEDLLOVERRIDES", [entries componentsJoinedByString:@";"].UTF8String, 1);
+
+    dprintf(STDERR_FILENO, "[WineProc] cnc-ddraw: syswow64\\ddraw.dll -> cnc-ddraw/ddraw.dll, config %s%s, "
+            "WINEDLLOVERRIDES ddraw=n,b%s%s%s\n",
+            "C:\\ProgramData\\cnc-ddraw\\ddraw.ini", copied ? " (fresh copy)" : "",
+            was ? " (was ddraw" : "", was ? was.UTF8String : "", was ? ")" : "");
+}
+
 /* FEX's WOW64 module cannot call sysctl, and without an answer it assumes the
  * newest cores' feature set. A wrong "present" is silent corruption, not a
  * crash (FEAT_AFP claimed on a core without it leaves FPCR.NEP RES0, so every
@@ -1111,6 +1197,7 @@ static void *wine_process_thread(void *arg) {
              * target (docs/WOW64.md). */
             if (has_i386_set) {
                 madeira_link_syswow64(fm, prefix, bundlePath);
+                madeira_apply_cnc_ddraw(fm, prefix, bundlePath);
                 if (is_i386_target) {
                     madeira_link_wbem(fm, prefix, bundlePath, @"syswow64", @"i386-windows");
                     madeira_seed_winsxs(prefix, bundlePath, @"i386-windows", "x86");

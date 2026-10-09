@@ -1424,15 +1424,21 @@
    "title": "cnc-ddraw",
    "kind": "utility",
    "category": "dx9",
-   "support": "payload",
-   "summary": "Community DirectDraw wrapper that fixes old 2D RTS/DirectDraw games.",
+   "support": "builtin",
+   "summary": "Madeira ships cnc-ddraw (third_party/cnc-ddraw, MIT) for 32-bit DirectDraw games, presenting through DXMT's Direct3D 9. Opt-in per game: the cnc-ddraw recipe, or env.MADEIRA_DDRAW = cnc.",
    "dlls": [
-    "ddraw.dll",
-    "cnc-ddraw.dll"
+    "ddraw.dll"
    ],
+   "env": {
+    "MADEIRA_DDRAW": "cnc",
+    "MADEIRA_GAME_GDI_FULLSCREEN": "1"
+   },
    "dll_overrides": {
     "ddraw": "n,b"
    },
+   "recipes": [
+    "cnc-ddraw"
+   ],
    "source": "lutris/bottles:cnc-ddraw"
   },
   "dgvoodoo2": {

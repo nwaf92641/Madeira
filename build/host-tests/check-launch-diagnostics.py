@@ -215,6 +215,39 @@ int main(int argc, char **argv)
     feed("[d3d8to9] CreateVertexShader: shader rejected (opcode not valid in shader model 1, version 0xfffe0101)");
     dump("d3d8-shader");
 
+    /* the lines third_party/cnc-ddraw/madeira/madeira_log.c prints, as
+     * build/host-tests/check-cnc-ddraw.py records them under Wine */
+    madeira_diag_reset("C:\\Games\\Dd\\dd.exe", dir);
+    feed("[WineProc] cnc-ddraw: syswow64\\ddraw.dll -> cnc-ddraw/ddraw.dll, config C:\\ProgramData\\cnc-ddraw\\ddraw.ini (fresh copy), WINEDLLOVERRIDES ddraw=n,b");
+    feed("[cnc-ddraw] renderer direct3d9 (ddraw.ini renderer=direct3d9, C:\\ProgramData\\cnc-ddraw\\ddraw.ini)");
+    feed("[cnc-ddraw] Direct3D 9 device 0x0 windowed=1");
+    dump("cnc-ok");
+
+    madeira_diag_reset("C:\\Games\\Dd\\ddnodev.exe", dir);
+    feed("[cnc-ddraw] renderer direct3d9 (ddraw.ini renderer=direct3d9, C:\\ProgramData\\cnc-ddraw\\ddraw.ini)");
+    feed("[cnc-ddraw] Direct3D 9 CreateDevice failed (hr 0x8876086a)");
+    feed("[cnc-ddraw] Direct3D 9 renderer could not start, falling back to GDI");
+    dump("cnc-device-fail");
+
+    madeira_diag_reset("C:\\Games\\Dd\\ddnod9.exe", dir);
+    feed("[cnc-ddraw] renderer direct3d9 (ddraw.ini renderer=direct3d9, C:\\ProgramData\\cnc-ddraw\\ddraw.ini)");
+    feed("[cnc-ddraw] Direct3DCreate9 returned NULL");
+    feed("[cnc-ddraw] Direct3D 9 renderer could not start, falling back to GDI");
+    dump("cnc-no-d3d9");
+
+    madeira_diag_reset("C:\\Games\\Dd\\ddgl.exe", dir);
+    feed("[cnc-ddraw] renderer opengl (ddraw.ini renderer=auto, C:\\ProgramData\\cnc-ddraw\\ddraw.ini)");
+    dump("cnc-opengl");
+
+    madeira_diag_reset("C:\\Games\\Dd\\ddmissing.exe", dir);
+    feed("[WineProc] cnc-ddraw: requested, but this build has no cnc-ddraw/ddraw.dll (build/ddraw/build.sh); Wine's ddraw");
+    dump("cnc-not-built");
+
+    madeira_diag_reset("C:\\Games\\Dd\\ddlib.exe", dir);
+    madeira_diag_stage(MD_STAGE_WINE_STARTED, "__wine_main");
+    feed("0024:err:module:import_dll Library ddraw.dll (which is needed by L\"C:\\\\Games\\\\Dd\\\\ddlib.exe\") not found");
+    dump("ddraw-missing");
+
     madeira_diag_reset("C:\\Games\\D11\\devfail.exe", dir);
     feed("err:   [d3d11-fail] ml752 D3D11CoreCreateDevice failed: no Metal device");
     dump("d3d11-device-fail");
@@ -378,6 +411,30 @@ with tempfile.TemporaryDirectory() as work:
     check(a['verdict'] == 'graphics-device-failure' and 'd3d9.dll' in a['json']['problems'][0]['hint'],
           'd3d8: no Direct3D 9 runtime is a device failure that names d3d9.dll')
     check(s['d3d8-shader']['verdict'] == 'shader-translation-failure', 'd3d8: a refused shader is a shader failure')
+    a = s['cnc-ok']
+    st = {x['name']: x.get('detail', '') for x in a['json']['stages']}
+    check(a['json']['problems'] == [] and 'cnc-ddraw over DXMT' in st.get('graphics-api', '')
+          and 'cnc-ddraw' in st.get('device', ''), 'cnc-ddraw: API and device stages name it, no problem (%s)' % st)
+    a = s['cnc-device-fail']
+    st = {x['name']: x.get('detail', '') for x in a['json']['stages']}
+    check(a['verdict'] == 'graphics-device-failure' and 'GDI fallback' in st.get('graphics-api', '')
+          and 'renderer=gdi' in a['json']['problems'][0]['hint'],
+          'cnc-ddraw: a refused Direct3D 9 device is a device failure, the stage says GDI fallback (%s)' % st)
+    a = s['cnc-no-d3d9']
+    check(a['verdict'] == 'graphics-device-failure' and 'MADEIRA_GAME_GDI_FULLSCREEN' in a['json']['problems'][0]['hint'],
+          'cnc-ddraw: no Direct3D 9 is a device failure that names the GDI fallback switch')
+    a = s['cnc-opengl']
+    check(a['verdict'] == 'graphics-device-failure' and 'renderer=direct3d9' in a['json']['problems'][0]['hint'],
+          'cnc-ddraw: an OpenGL renderer is flagged with the ini fix')
+    a = s['cnc-not-built']
+    check(a['verdict'] == 'dependency-load-failure' and 'build/ddraw/build.sh' in a['json']['problems'][0]['hint'],
+          'cnc-ddraw: requested but not in the bundle is a dependency failure')
+    a = s['ddraw-missing']
+    check(a['verdict'] == 'missing-dll' and 'MADEIRA_DDRAW' in a['json']['problems'][0]['hint'],
+          'ddraw.dll missing: the hint points at cnc-ddraw (%s)' % (a['json']['problems'][:1],))
+    check('MADEIRA_DDRAW=cnc' in s['window']['json']['problems'][0]['hint']
+          and s['window']['json']['problems'][0]['hint'].rstrip().endswith(').'),
+          'window-visibility hint mentions cnc-ddraw and is not cut off')
     a = s['d3d12-no-convert']
     cats = sorted(x['category'] for x in a['json']['problems'])
     check(cats == ['metal-present-failure', 'swapchain-failure'], 'd3d12: refused format + dropped frame (%s)' % cats)

@@ -190,6 +190,26 @@ int main(int argc, char **argv)
     feed("info:  [d3d9-modes] CreateDevice 640x480 R5G6B5 refresh=60 windowed=0 count=1 -> hr 0x8876086c");
     dump("d3d9-fail");
 
+    madeira_diag_reset("C:\\Games\\D8\\d8.exe", dir);
+    feed("[d3d8to9] Direct3DCreate8(220): translating Direct3D 8 to the Direct3D 9 runtime");
+    feed("[d3d8to9] CreateDevice 800x600 fmt 22 windowed behavior 0x40 -> hr 0x0");
+    feed("info:  [d3d9-modes] CreateDevice 800x600 X8R8G8B8 refresh=0 windowed=1 count=1 -> hr 0x0");
+    dump("d3d8-ok");
+
+    madeira_diag_reset("C:\\Games\\D8\\d8bad.exe", dir);
+    feed("[d3d8to9] Direct3DCreate8(220): translating Direct3D 8 to the Direct3D 9 runtime");
+    feed("[d3d8to9] CreateDevice 640x480 fmt 23 fullscreen behavior 0x20 -> hr 0x8876086c");
+    dump("d3d8-device-fail");
+
+    madeira_diag_reset("C:\\Games\\D8\\d8nod9.exe", dir);
+    feed("[d3d8to9] Direct3DCreate8(220): Direct3DCreate9 failed, no Direct3D 9 runtime to translate to");
+    dump("d3d8-no-d3d9");
+
+    madeira_diag_reset("C:\\Games\\D8\\d8sh.exe", dir);
+    feed("[d3d8to9] Direct3DCreate8(220): translating Direct3D 8 to the Direct3D 9 runtime");
+    feed("[d3d8to9] CreateVertexShader: shader rejected (opcode not valid in shader model 1, version 0xfffe0101)");
+    dump("d3d8-shader");
+
     madeira_diag_reset("C:\\Games\\D11\\devfail.exe", dir);
     feed("err:   [d3d11-fail] ml752 D3D11CoreCreateDevice failed: no Metal device");
     dump("d3d11-device-fail");
@@ -339,6 +359,15 @@ with tempfile.TemporaryDirectory() as work:
           'd3d9: CreateDevice hr 0 gives API, device and swapchain (%s)' % names)
     check(s['d3d9-fail']['verdict'] == 'graphics-device-failure', 'd3d9: CreateDevice error is a device failure')
     check(s['d3d11-device-fail']['verdict'] == 'graphics-device-failure', 'd3d11: device failure line')
+    a = s['d3d8-ok']
+    st = {x['name']: x.get('detail', '') for x in a['json']['stages']}
+    check('graphics-api' in st and 'Direct3D 8' in st['graphics-api'] and 'device' in st and 'swapchain' in st
+          and a['json']['problems'] == [], 'd3d8: the API stage names the Direct3D 8 path, device + swapchain (%s)' % st)
+    check(s['d3d8-device-fail']['verdict'] == 'graphics-device-failure', 'd3d8: CreateDevice error is a device failure')
+    a = s['d3d8-no-d3d9']
+    check(a['verdict'] == 'graphics-device-failure' and 'd3d9.dll' in a['json']['problems'][0]['hint'],
+          'd3d8: no Direct3D 9 runtime is a device failure that names d3d9.dll')
+    check(s['d3d8-shader']['verdict'] == 'shader-translation-failure', 'd3d8: a refused shader is a shader failure')
     a = s['d3d12-no-convert']
     cats = sorted(x['category'] for x in a['json']['problems'])
     check(cats == ['metal-present-failure', 'swapchain-failure'], 'd3d12: refused format + dropped frame (%s)' % cats)

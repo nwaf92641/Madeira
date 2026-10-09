@@ -271,7 +271,7 @@ static const char *md_dll_hint(const char *dll)
         "evr.dll", "dxva2.dll", "wmvcore.dll", "devenum.dll", "amstream.dll", "msdmo.dll", "wmadmod.dll",
         "qedit.dll", "mfplay.dll", NULL };
     static const char *const no_backend[] = {
-        "d3d8.dll", "ddraw.dll", "opengl32.dll", "wined3d.dll", "vulkan-1.dll", "d3drm.dll", NULL };
+        "ddraw.dll", "opengl32.dll", "wined3d.dll", "vulkan-1.dll", "d3drm.dll", NULL };
     static const char *const redist[] = {
         "msvcp*", "vcruntime*", "msvcr*", "concrt*", "vcomp*", "d3dx9_*", "d3dx10*", "d3dx11*", "d3dcompiler_*",
         "xinput*", "xaudio*", "x3daudio*", "xapofx*", "physxloader.dll", "physx*", NULL };
@@ -279,6 +279,10 @@ static const char *md_dll_hint(const char *dll)
         return "A media component. Both DLL folders ship Wine's DirectShow and Media Foundation modules (the 64-bit "
                "set is listed in build/wine-pe/arm64ec-farm.json); one reported missing here was left out of that "
                "list or of this build. 64-bit decoding additionally needs MADEIRA_WG_64BIT=1 (docs/MEDIA.md).";
+    if (md_name_in(dll, (const char *const[]){ "d3d8.dll", NULL }))
+        return "Direct3D 8 is in the 32-bit DLL folder only (third_party/d3d8to9 over DXMT's Direct3D 9, "
+               "docs/D3D8.md); Windows never had a 64-bit d3d8.dll either. A build without it predates that "
+               "or was made with SKIP_DXMT=1.";
     if (md_name_in(dll, no_backend))
         return "This graphics API has no rendering backend in Madeira (no wined3d, OpenGL or Vulkan); only "
                "Direct3D 9, 10, 11 and 12 reach Metal.";
@@ -446,6 +450,37 @@ static void md_feed_locked(const char *line)
         return;
     }
 
+    /* Direct3D 8 over Direct3D 9 (third_party/d3d8to9, madeira_log.hpp). Before
+     * DXMT's own d3d9 lines, so the API stage names the Direct3D 8 path. */
+    if ((p = md_find(line, "[d3d8to9] "))) {
+        if (md_find(p, "Direct3DCreate9 failed")) {
+            md_problem_locked(MD_CAT_DEVICE, "device", "d3d8: no Direct3D 9 runtime", line, len,
+                              "Direct3D 8 is translated to Direct3D 9 (DXMT's d3d9.dll); Direct3DCreate9 returned "
+                              "nothing, so the game gets no Direct3D 8 either. Check that the 32-bit DLL folder "
+                              "has d3d9.dll and d3d9-emulated.dll (build/wine-i386/build.sh).");
+        } else if (md_find(p, "Direct3DCreate8(")) {
+            md_stage_locked(MD_STAGE_GRAPHICS_API, "Direct3D 8 (d3d8to9 over DXMT's Direct3D 9)", (size_t)-1);
+        } else if (md_find(p, "CreateDevice ")) {
+            const char *hr = md_find(p, "-> hr 0x");
+            if (hr && hr[8] == '0' && (hr[9] == 0 || hr[9] == ' ' || hr[9] == '\r' || hr[9] == '\n'))
+                md_stage_locked(MD_STAGE_DEVICE, "Direct3D 8", (size_t)-1);
+            else if (hr)
+                md_problem_locked(MD_CAT_DEVICE, "device", "d3d8 CreateDevice failed", line, len,
+                                  "IDirect3D8::CreateDevice was passed to Direct3D 9 and refused for these "
+                                  "presentation parameters; the d3d9 line next to it has the reason.");
+        } else if (md_find(p, "CreateVertexShader:") || md_find(p, "CreatePixelShader:")) {
+            md_problem_locked(MD_CAT_SHADER, "shader", "d3d8 shader refused", line, len,
+                              "A Direct3D 8 shader was not accepted: either it is not valid shader model 1 "
+                              "bytecode (the reason is in the line) or the Direct3D 9 runtime refused the "
+                              "translated shader. Draws that use it are skipped.");
+        } else if (md_find(p, "d3dx9_43.dll did not load")) {
+            md_problem_locked(MD_CAT_DEPENDENCY, "dll", "d3d8: d3dx9_43 missing", line, len,
+                              "Only CopyRects between different surface formats needs it; the 32-bit DLL folder "
+                              "normally ships Wine's d3dx9_43.");
+        }
+        return;
+    }
+
     /* DXMT (research/dxmt) */
     if (md_find(line, "Using feature level")) {   /* d3d11.cpp D3D11CoreCreateDevice */
         md_stage_locked(MD_STAGE_GRAPHICS_API, "Direct3D 10/11 (DXMT)", (size_t)-1);
@@ -551,7 +586,7 @@ void madeira_diag_feed_line(const char *line)
         !strstr(line, "shader") && !strstr(line, "CAMetalLayer") && !strstr(line, "pixel format") &&
         !strstr(line, "[wg-parser]") && !strstr(line, "metal view") && !strstr(line, "feature level") &&
         !strstr(line, "[d3d9-modes] CreateDevice") && !strstr(line, "DXMT adapter") &&
-        !strstr(line, "wine: ") && !strstr(line, "dependent assembly"))
+        !strstr(line, "wine: ") && !strstr(line, "dependent assembly") && !strstr(line, "[d3d8to9] "))
         return;
     pthread_mutex_lock(&md_lock);
     md_feed_locked(line);
@@ -666,7 +701,7 @@ static const char *md_stall_hint_locked(void)
         return "The program started another process (a launcher starting the game); no Direct3D device yet.";
     if (md.stages[MD_STAGE_WINE_STARTED].reached)
         return "The program runs but created no Direct3D device yet: it is still starting, waiting, or it "
-               "uses an API with no backend here (DirectDraw, Direct3D 8, OpenGL, Vulkan).";
+               "uses an API with no backend here (DirectDraw's 3D path, OpenGL, Vulkan).";
     return "Wine has not started the program yet.";
 }
 

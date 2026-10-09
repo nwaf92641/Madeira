@@ -1610,8 +1610,8 @@
    "title": "Direct3D 8",
    "kind": "directx",
    "category": "dx9",
-   "support": "override",
-   "summary": "Wine implements d3d8 on top of its D3D9 path; some titles need the native DLL.",
+   "support": "builtin",
+   "summary": "Madeira's d3d8.dll (32-bit) is third_party/d3d8to9: Direct3D 8 translated to DXMT's Direct3D 9 (Metal); Wine's own d3d8 needs wined3d, which has no backend here. A d3d8.dll the game ships beside itself still wins (n,b). There is no 64-bit d3d8 (Windows never had one).",
    "imports": [
     "d3d8"
    ],

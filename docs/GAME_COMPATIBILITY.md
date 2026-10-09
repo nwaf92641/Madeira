@@ -32,6 +32,11 @@ the session ends
    ↓  retry               the remedy for that category, or the title's next alternative
 ```
 
+How far one launch got on the way to its first frame (process, DLLs, device,
+swapchain, Metal layer, present, windows, video) is recorded separately, in
+`Documents/madeira-diagnostics/last-launch.txt`: see
+[LAUNCH_DIAGNOSTICS.md](LAUNCH_DIAGNOSTICS.md).
+
 Everything above the runtime is data-driven and per-launch. Nothing changes the
 runtime: a fix is expressed as an override, a registry value, an environment
 variable or a launch argument, all scoped to one launch of one game.

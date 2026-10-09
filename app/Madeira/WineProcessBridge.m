@@ -27,6 +27,7 @@
 #include <sys/sysctl.h>
 
 #include "WineProcessBridge.h"
+#include "LaunchDiagnostics.h"
 #include "WineServerBridge.h"
 #include "PrefixExtractor.h"
 #include "FEXBridge.h"  // fex_get_jit_write_offset()
@@ -731,6 +732,33 @@ static void madeira_publish_host_probe(void)
     dprintf(STDERR_FILENO, "[WineProc] FEX host feature probe: %s\n", buf);
 }
 
+/* Launch diagnostics: the present counter (DXMT and the D3D12 runtime both
+ * count through winemetal) and the app's GDI window counter are sampled here,
+ * so the record notices the first frame without the UI running. One timer for
+ * the app's life; a sample is a few loads and, when something changed, one
+ * small file write. */
+extern uint64_t madeira_get_present_count(void);
+extern unsigned long long winios_surface_present_count(void);
+static void madeira_diag_watch_start(void) {
+    static dispatch_once_t once;
+    static dispatch_source_t timer;
+    static unsigned long long surface_base;
+    surface_base = winios_surface_present_count();
+    dispatch_once(&once, ^{
+        timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0,
+                                       dispatch_get_global_queue(QOS_CLASS_UTILITY, 0));
+        dispatch_source_set_timer(timer, dispatch_time(DISPATCH_TIME_NOW, 0),
+                                  (uint64_t)(0.5 * NSEC_PER_SEC), (uint64_t)(0.1 * NSEC_PER_SEC));
+        dispatch_source_set_event_handler(timer, ^{
+            madeira_diag_note_present_count(madeira_get_present_count());
+            if (winios_surface_present_count() > surface_base && !madeira_diag_reached(MD_STAGE_GDI_WINDOW))
+                madeira_diag_stage(MD_STAGE_GDI_WINDOW, "the app drew a GDI window of the program");
+            madeira_diag_flush();
+        });
+        dispatch_resume(timer);
+    });
+}
+
 static void *wine_process_thread(void *arg) {
     @autoreleasepool {
         /* Perf: the guest main thread runs ON this pthread. Promote to
@@ -1082,6 +1110,10 @@ static void *wine_process_thread(void *arg) {
         // Set MADEIRA_EXE=hello-x64.exe in env to launch the ARM64EC test path.
         const char *madeira_exe = getenv("MADEIRA_EXE");
         if (!madeira_exe || !*madeira_exe) madeira_exe = "cube.exe";
+        /* One launch-diagnostics record per launch, written under
+         * Documents/madeira-diagnostics (MADEIRA_DOCS_DIR, set above). */
+        madeira_diag_reset(madeira_exe, NULL);
+        madeira_diag_watch_start();
         // Heuristic: x86_64 guest exes (cube-x64, hello-x64, real games like
         // Thumper) need the arm64ec-windows bundle (ARM64EC hybrid system
         // DLLs that interop with FEX-translated x86_64 code). ARM64-native
@@ -1447,12 +1479,20 @@ static void *wine_process_thread(void *arg) {
         ios_main_image_i386 = is_i386_target ? 1 : 0;
         if (has_i386_set) madeira_publish_host_probe();
 
+        madeira_diag_stage(MD_STAGE_WINE_STARTED, is_i386_target ? "32-bit (i386) program through WoW64"
+                                                                  : use_arm64ec ? "64-bit (x86-64) program, ARM64EC"
+                                                                                : "ARM64 program");
+        int main_exit_code = 0;
         if (setjmp(wine_ios_exit_jmpbuf) == 0) {
             __wine_main(argc, argv);
             dprintf(STDERR_FILENO, "[WineProc] __wine_main returned normally\n");
         } else {
+            main_exit_code = wine_ios_exit_code;
             dprintf(STDERR_FILENO, "[WineProc] Wine exited with code %d (caught by longjmp)\n", wine_ios_exit_code);
         }
+        /* read now: the wait below may outlive the crash record */
+        uint32_t main_crash_status = 0;
+        if (!wine_crash_exit_status(&main_crash_status)) main_crash_status = 0;
 
         /* A launcher stub that starts the game and exits at once (GTA V
          * Enhanced: PlayGTAV.exe -> GTA5_Enhanced.exe) must not end the
@@ -1487,6 +1527,7 @@ static void *wine_process_thread(void *arg) {
                 dprintf(STDERR_FILENO, "[WineProc] the main process exited but %d child process(es) "
                         "it started still run (%s) -- a launcher started the game; the session goes on until "
                         "they exit (MADEIRA_WAIT_CHILDREN=0 ends it now)\n", n, names);
+                madeira_diag_stage(MD_STAGE_CHILD_PROCESS, names);
                 unsigned ticks = 0;
                 while ((n = madeira_live_game_children(names, sizeof names, -1.0)) > 0) {
                     usleep(200 * 1000);
@@ -1502,6 +1543,19 @@ static void *wine_process_thread(void *arg) {
                 if (!n) dprintf(STDERR_FILENO, "[WineProc] the last child process exited after %u s\n", ticks / 5);
             }
         }
+        /* The session is over: write the launch record now (the watch timer
+         * also writes it while the game runs) and name it in the log. */
+        madeira_diag_note_present_count(madeira_get_present_count());
+        madeira_diag_process_exit(main_exit_code, main_crash_status);
+        madeira_diag_flush();
+        {
+            md_category verdict = madeira_diag_verdict();
+            dprintf(STDERR_FILENO, "[launch-diagnostics] first frame: %s; verdict: %s -- "
+                    "Documents/madeira-diagnostics/last-launch.txt\n",
+                    madeira_diag_reached(MD_STAGE_FIRST_PRESENT) ? "presented" : "never presented",
+                    verdict == MD_CAT_NONE ? "none" : madeira_diag_category_name(verdict));
+        }
+
         g_wine_running = 0;
 
         // Stop wineserver to prevent CPU spin (iOS kills for excessive CPU)

@@ -1,0 +1,82 @@
+# Launch diagnostics (black screens)
+
+A black screen looks the same to the player whatever the cause: the program
+never started, a DLL is missing, Direct3D refused the device or the swapchain,
+a shader did not translate, Metal gave no drawable, the window exists but is
+not drawn, or the game waits on a video it cannot play. Madeira keeps one
+record per launch that says how far the launch got on the way to the first
+frame, and what went wrong on the way.
+
+## Where to read it (on the iPad)
+
+Files app › On My iPad › Madeira › `madeira-diagnostics/`
+
+| File | What it is |
+| --- | --- |
+| `last-launch.txt` | The report for the latest launch, readable as is. |
+| `last-launch.json` | The same, for tools. |
+| `previous-launch.txt` | The launch before it. |
+
+The full log stays in `Documents/madeira-log.txt`. At the end of a session the
+log also gets one line, `[launch-diagnostics] first frame: … verdict: …`, so
+the in-app log names the outcome. No Mac or computer is needed.
+
+## What the report says
+
+- **Process** and **Display** are separate lines. "Process: running" only
+  means Wine runs the program; "Display: FIRST FRAME PRESENTED" means a frame
+  reached Metal (the present counter that DXMT and the D3D12 runtime share
+  increased after this launch began). A live process with no frame is never
+  reported as success.
+- **Stages**, each with the time since launch: launch, wine-started,
+  child-process (a launcher started the game), graphics-api, device,
+  metal-layer, swapchain, first-present, gdi-window (the app drew a launcher or
+  dialog window), process-exit.
+- **Where it stopped**: a hint that follows from the furthest stage reached.
+- **Problems**, each in one category with the error text that was printed and
+  a hint: `process-failure`, `missing-dll`, `graphics-device-failure`,
+  `swapchain-failure`, `shader-translation-failure`, `metal-present-failure`,
+  `window-visibility`, `video-init-failure`, `unclassified`.
+- **Verdict**: the most decisive category (missing DLL, then process, device,
+  swapchain, present, window, shader, video), or `none` once a frame was
+  presented without problems.
+
+## How it is fed
+
+`app/Madeira/LaunchDiagnostics.c` (plain C, host-tested) is fed two ways:
+
+- native calls: `WineProcessBridge.m` (launch, Wine started with the target's
+  architecture, the program's exit and NTSTATUS, the child-process wait, the
+  present counter sampled every 0.5 s), `IOSDisplayShim.m` (the game layer
+  handed to a swapchain);
+- every log line, from the tail `LogStore.swift` already runs (also while the
+  on-screen log is suppressed). It recognises the messages Wine, DXMT, the
+  D3D12 runtime and the app really print, and lines of the form
+  `[madeira-diag] stage=<stage> ok=0|1 cat=<category> detail=<text>` that PE-side
+  code, which cannot call into the app, writes for it.
+
+The work per log line is a few byte comparisons for lines that cannot match;
+the report file is written only when something changed.
+
+This is the stage-by-stage view of one launch. `CompatDiagnosis.swift`
+(docs/GAME_COMPATIBILITY.md) still classifies a finished session for the
+library's automatic fallback; the two read the same log.
+
+## Settings
+
+| Variable | Default | Effect |
+| --- | --- | --- |
+| `MADEIRA_LAYER_WAIT_MS` | 5000 | How long a swapchain created before the game view registered its layer waits for it, instead of getting no surface. 0: no wait. |
+| `MADEIRA_WAIT_CHILDREN` | on | `0`: the session ends with the main process even while a game it started still runs. |
+| `MADEIRA_WAIT_CHILDREN_MAX_S` | none | Caps that wait, in seconds. |
+
+## Tests
+
+- `build/host-tests/check-launch-diagnostics.py`: real log shapes per category,
+  "running" kept apart from "first frame", report files and rotation, noise
+  cost.
+- `build/host-tests/check-child-slots.py`: launcher children keep the session
+  and every exit path frees its slot.
+
+Both run on any machine with a C compiler. What the report says on a device
+for a given game has to be checked on an iPad.

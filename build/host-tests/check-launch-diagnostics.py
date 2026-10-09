@@ -1,0 +1,256 @@
+#!/usr/bin/env python3
+"""Launch diagnostics (app/Madeira/LaunchDiagnostics.c) on real log shapes; no Wine runs.
+
+Compiles the production file against a small harness and checks, per scenario,
+that the stage reached, the verdict category and the hint follow from the lines
+the components really print:
+  - a Direct3D 11 game that presents: verdict "none", time to first frame set,
+    "process running" kept apart from "first frame presented";
+  - a missing redistributable (Wine's import_dll line): missing-dll with the
+    DLL named, one problem for two threads printing it;
+  - a process that lives but never presents: no success claimed, the stall
+    hint names the furthest stage (a swapchain exists, no present);
+  - each error category from its real message (swapchain refused by a PE-side
+    "[madeira-diag]" line, shader conversion, nextDrawable blocked, a
+    full-desktop window not drawn, winegstreamer's stub table, OpenGL with no
+    backend, a 64-bit media DLL missing, a crash exit);
+  - a launcher that starts a child and exits is not called an early exit;
+  - the report files are written, and the previous one is kept on reset;
+  - noise lines are ignored and cost little.
+Needs python3 and a C compiler (AddressSanitizer/UBSan when available).
+"""
+from pathlib import Path
+import json
+import os
+import subprocess
+import sys
+import tempfile
+import time
+
+root = Path(__file__).resolve().parents[2]
+src = root / 'app/Madeira/LaunchDiagnostics.c'
+inc = root / 'app/Madeira'
+
+harness = r'''
+#include "LaunchDiagnostics.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+
+static char buf[65536];
+static void dump(const char *name)
+{
+    printf("=== %s verdict=%s\n", name, madeira_diag_category_name(madeira_diag_verdict()));
+    madeira_diag_render_text(buf, sizeof buf); fputs(buf, stdout);
+    printf("--- json\n");
+    madeira_diag_render_json(buf, sizeof buf); fputs(buf, stdout);
+    printf("=== end\n");
+}
+static void feed(const char *l) { madeira_diag_feed_line(l); }
+
+int main(int argc, char **argv)
+{
+    const char *dir = argv[1];
+    (void)argc;
+
+    madeira_diag_reset("C:\\Games\\Thumper\\THUMPER_win8.exe", dir);
+    madeira_diag_note_present_count(41);   /* the counter is process-wide: the base is its value at launch */
+    madeira_diag_stage(MD_STAGE_WINE_STARTED, "__wine_main");
+    feed("[madeira-diag] stage=api ok=1 detail=Direct3D 11 (DXMT)");
+    feed("[madeira-diag] stage=device ok=1 detail=Direct3D 11 feature level 11_1");
+    madeira_diag_stage(MD_STAGE_METAL_LAYER, "hwnd 0x10024");
+    feed("[madeira-diag] stage=swapchain ok=1 detail=d3d11 1920x1080 DXGI 87 -> layer 80");
+    madeira_diag_note_present_count(41);
+    madeira_diag_note_present_count(45);
+    dump("d3d11-presents");
+
+    madeira_diag_reset("C:\\Games\\Foo\\foo.exe", dir);
+    madeira_diag_stage(MD_STAGE_WINE_STARTED, "__wine_main");
+    feed("0024:err:module:import_dll Library MSVCP140.dll (which is needed by L\"C:\\\\Games\\\\Foo\\\\foo.exe\") not found");
+    feed("0030:err:module:import_dll Library MSVCP140.dll (which is needed by L\"C:\\\\Games\\\\Foo\\\\foo.exe\") not found");
+    feed("0024:err:module:loader_init Importing dlls for L\"C:\\\\Games\\\\Foo\\\\foo.exe\" failed, status c0000135");
+    madeira_diag_process_exit(-1073741515, 0xC0000135u);
+    dump("missing-dll");
+
+    madeira_diag_reset("C:\\Games\\Stuck\\stuck.exe", dir);
+    madeira_diag_stage(MD_STAGE_WINE_STARTED, "__wine_main");
+    feed("[madeira-d3d12] device created: build 2026-10-01");
+    feed("[madeira-d3d12] swapchain: 2560x1440, 3 buffers, format 28, hwnd 0000000000010080");
+    dump("alive-no-frame");
+
+    madeira_diag_reset("C:\\Games\\Sc\\sc.exe", dir);
+    feed("[madeira-diag] stage=swapchain ok=0 cat=swapchain-failure detail=d3d11 CreateSwapChain: DXGI format 88 has no CAMetalLayer format; refused with DXGI_ERROR_INVALID_CALL");
+    dump("swapchain");
+
+    madeira_diag_reset("C:\\Games\\Sh\\sh.exe", dir);
+    feed("[madeira-d3d12] device created: x");
+    feed("[madeira-d3d12] pixel conversion failed: entry point not found (MSC backend, code 8); 1234 bytes, head 44584243");
+    dump("shader-no-frame");
+    madeira_diag_note_present_count(1);
+    madeira_diag_note_present_count(2);
+    dump("shader-with-frame");
+
+    madeira_diag_reset("C:\\Games\\Pr\\pr.exe", dir);
+    feed("[madeira-diag] stage=swapchain ok=1 detail=d3d11 1280x720");
+    feed("[iOS DXMT] nextDrawable #12 BLOCKED 1000ms (nil=1 slow_total=12)");
+    feed("[iOS DXMT] nextDrawable #13 BLOCKED 1001ms (nil=1 slow_total=13)");
+    dump("present-blocked");
+
+    madeira_diag_reset("C:\\Games\\Gdi\\gdi.exe", dir);
+    feed("[winios] game window hwnd=0x10050 not drawn (covers the guest desktop)");
+    dump("window");
+
+    madeira_diag_reset("C:\\Games\\Vid\\vid.exe", dir);
+    feed("[madeira-diag] stage=swapchain ok=1 detail=d3d11 1920x1080");
+    feed("0040:warn:module:load_builtin_unixlib iOS: no unix .so for module 0x6ffff (unix_path=winegstreamer.so, modname=winegstreamer.dll, mapped=1), using stub table");
+    feed("0040:err:module:import_dll Library quartz.dll (which is needed by L\"C:\\\\Games\\\\Vid\\\\vid.exe\") not found");
+    dump("video");
+
+    madeira_diag_reset("C:\\Games\\Gl\\gl.exe", dir);
+    feed("0050:warn:module:load_builtin_unixlib iOS: module 0x7000 (opengl32.dll) -> GL-absent stub table (attach ok, wgl/gl NOT_SUPPORTED)");
+    dump("opengl");
+
+    madeira_diag_reset("C:\\Games\\Cr\\cr.exe", dir);
+    madeira_diag_stage(MD_STAGE_WINE_STARTED, "__wine_main");
+    madeira_diag_process_exit(-1073741819, 0xC0000005u);
+    dump("crash");
+
+    madeira_diag_reset("C:\\Games\\La\\launcher.exe", dir);
+    madeira_diag_stage(MD_STAGE_WINE_STARTED, "__wine_main");
+    feed("0060:err:process:spawn_process spawn_process: creating child thread for L\"C:\\\\Games\\\\La\\\\game.exe\" (fd=41, unixdir=-1, dup_unixdir=-1)");
+    madeira_diag_process_exit(0, 0);
+    dump("launcher");
+
+    madeira_diag_reset("C:\\Games\\Noise\\noise.exe", dir);
+    {
+        clock_t c0 = clock();
+        for (int i = 0; i < 300000; i++) {
+            feed("[frame] present 16.6ms gpu 9.1ms draws 1200");
+            feed("0080:trace:file:NtWriteFile (0x40,(nil),(nil),(nil),0x7ff,0x1234,32,(nil),(nil))");
+        }
+        printf("noise-cpu-ms=%ld\n", (long)((clock() - c0) * 1000 / CLOCKS_PER_SEC));
+    }
+    dump("noise");
+    madeira_diag_flush();
+    return 0;
+}
+'''
+
+def compile_harness(work):
+    exe = Path(work) / 'harness'
+    (Path(work) / 'harness.c').write_text(harness)
+    cc = os.environ.get('CC', 'cc')
+    base = [cc, '-std=c11', '-D_DEFAULT_SOURCE', '-Wall', '-Wextra', '-Werror', '-I', str(inc),
+            str(src), str(Path(work) / 'harness.c'), '-o', str(exe), '-lpthread']
+    for extra in (['-fsanitize=address,undefined', '-fno-omit-frame-pointer', '-g'], ['-O1']):
+        if subprocess.run(base + extra, capture_output=True).returncode == 0:
+            print('built with', 'AddressSanitizer/UBSan' if 'address' in extra[0] else 'no sanitizers')
+            return exe
+    r = subprocess.run(base, capture_output=True, text=True)
+    print(r.stderr)
+    sys.exit('FAIL: the harness does not compile')
+
+
+def scenarios(out):
+    res = {}
+    cur = None
+    for line in out.splitlines():
+        if line.startswith('=== ') and not line.startswith('=== end'):
+            name, verdict = line[4:].split(' verdict=')
+            cur = {'verdict': verdict, 'text': [], 'json': []}
+            res[name] = cur
+            mode = 'text'
+        elif line == '=== end':
+            cur['json'] = json.loads('\n'.join(cur['json']))
+            cur['text'] = '\n'.join(cur['text'])
+            cur = None
+        elif cur is not None:
+            if line == '--- json':
+                mode = 'json'
+            else:
+                cur[mode].append(line)
+    return res
+
+
+failures = []
+def check(cond, what):
+    if not cond:
+        failures.append(what)
+
+
+with tempfile.TemporaryDirectory() as work:
+    exe = compile_harness(work)
+    outdir = Path(work) / 'madeira-diagnostics'
+    r = subprocess.run([str(exe), str(outdir)], capture_output=True, text=True, timeout=120)
+    if r.returncode != 0:
+        print(r.stdout[-4000:], r.stderr[-4000:])
+        sys.exit('FAIL: harness exited %d' % r.returncode)
+    s = scenarios(r.stdout)
+
+    a = s['d3d11-presents']
+    check(a['verdict'] == 'none', 'd3d11: verdict none')
+    check(a['json']['first_frame_presented'] is True and 'time_to_first_frame' in a['json'], 'd3d11: first frame + time')
+    check(a['json']['presents'] == 4, 'd3d11: presents counted from the launch base (got %s)' % a['json']['presents'])
+    check([x['name'] for x in a['json']['stages']] == ['launch', 'wine-started', 'graphics-api', 'device',
+                                                        'metal-layer', 'swapchain', 'first-present'], 'd3d11: stage order')
+    check('FIRST FRAME PRESENTED' in a['text'], 'd3d11: text says first frame')
+
+    a = s['missing-dll']
+    check(a['verdict'] == 'missing-dll', 'missing dll: verdict (%s)' % a['verdict'])
+    p = [x for x in a['json']['problems'] if x['category'] == 'missing-dll']
+    check(len(p) == 1 and p[0]['count'] == 2, 'missing dll: two threads are one problem')
+    check(p and 'MSVCP140.dll' in p[0]['error'] and 'redistributable' in p[0]['hint'], 'missing dll: name + redistributable hint')
+    check(a['json']['crash_status'] == 0xC0000135, 'missing dll: crash status kept')
+    check(not a['json']['process_running'], 'missing dll: process not running')
+
+    a = s['alive-no-frame']
+    check(a['verdict'] != 'none' and a['json']['first_frame_presented'] is False, 'alive: no success claimed')
+    check(a['json']['process_running'] is True, 'alive: process running')
+    check('NO FRAME PRESENTED' in a['text'] and 'A swapchain exists but nothing was presented' in a['text'],
+          'alive: stall hint names the swapchain stage')
+
+    check(s['swapchain']['verdict'] == 'swapchain-failure', 'swapchain: verdict')
+    check('DXGI_ERROR_INVALID_CALL' in s['swapchain']['json']['problems'][0]['error'], 'swapchain: actual error kept')
+    check(s['shader-no-frame']['verdict'] == 'shader-translation-failure', 'shader: verdict before a frame')
+    check(s['shader-with-frame']['verdict'] == 'none' and
+          any(x['category'] == 'shader-translation-failure' for x in s['shader-with-frame']['json']['problems']),
+          'shader: kept as a problem after the first frame')
+    a = s['present-blocked']
+    check(a['verdict'] == 'metal-present-failure' and a['json']['problems'][0]['count'] == 2, 'present: verdict + count')
+    check(s['window']['verdict'] == 'window-visibility', 'window: verdict')
+    a = s['video']
+    cats = sorted(x['category'] for x in a['json']['problems'])
+    check(cats == ['missing-dll', 'video-init-failure'], 'video: categories (%s)' % cats)
+    check(any('media component' in x['hint'] for x in a['json']['problems']), 'video: quartz gets the media hint')
+    a = s['opengl']
+    check(a['verdict'] == 'graphics-device-failure' and 'OpenGL' in a['json']['problems'][0]['hint'], 'opengl: verdict + hint')
+    a = s['crash']
+    check(a['verdict'] == 'process-failure' and '0xC0000005' in a['text'], 'crash: verdict + code')
+    a = s['launcher']
+    check(any(x['name'] == 'child-process' for x in a['json']['stages']), 'launcher: child stage')
+    check(not any(x['error'].startswith('exit code') for x in a['json']['problems']), 'launcher: not an early exit')
+    a = s['noise']
+    check(a['json']['problems'] == [] and len(a['json']['stages']) == 1, 'noise: nothing recognised')
+    ms = [int(l.split('=')[1]) for l in r.stdout.splitlines() if l.startswith('noise-cpu-ms=')]
+    check(ms and ms[0] < 8000, 'noise: 600k lines are cheap (%s ms, sanitizers on)' % ms)
+
+    check((outdir / 'last-launch.txt').is_file() and (outdir / 'last-launch.json').is_file(), 'files: report written')
+    check((outdir / 'previous-launch.txt').is_file(), 'files: previous report kept')
+    if (outdir / 'last-launch.json').is_file():
+        j = json.loads((outdir / 'last-launch.json').read_text())
+        check(j['exe'].endswith('noise.exe'), 'files: last report is the last launch')
+    if (outdir / 'previous-launch.txt').is_file():
+        check('launcher.exe' in (outdir / 'previous-launch.txt').read_text(), 'files: previous is the launch before')
+
+    # The header names every category the request asked for, under one stable name each.
+    hdr = (inc / 'LaunchDiagnostics.h').read_text()
+    for c in ('MD_CAT_PROCESS', 'MD_CAT_MISSING_DLL', 'MD_CAT_DEVICE', 'MD_CAT_SWAPCHAIN', 'MD_CAT_SHADER',
+              'MD_CAT_PRESENT', 'MD_CAT_WINDOW', 'MD_CAT_VIDEO', 'MD_CAT_UNCLASSIFIED'):
+        check(c in hdr, 'header: %s' % c)
+
+if failures:
+    for f in failures:
+        print('FAIL:', f)
+    sys.exit(1)
+print('PASS: launch diagnostics classify real log shapes, keep "running" apart from "first frame", and write the report')

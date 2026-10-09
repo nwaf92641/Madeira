@@ -31,7 +31,7 @@ jobs:
             check-child-slots check-config-catalog check-d3d9-splitlock
             check-d9-upload-commit check-filtering-cap check-gamepad
             check-image-retire check-launch-diagnostics check-launch-routing
-            check-layer-format check-lazy-windows check-nav-keys
+            check-arm64ec-farm check-layer-format check-lazy-windows check-nav-keys
             check-scene-batching check-small-va-band check-unixlib-binder
             check-win32u-zero-bits check-wow-context check-wow-cpu-area
             check-wow-sweep"

@@ -19,8 +19,30 @@ This port supplies that unix side in `libntdll_unix.a`, bound by name in
 process gets the generic stub table, which is what every module without a
 unix side gets and what `winegstreamer` got before this code existed, so the
 64-bit engine behaves exactly as it did. `MADEIRA_WG_64BIT=1` opts 64-bit
-processes in (they also need an arm64ec `winegstreamer.dll`, which is not
-shipped).
+processes in. The arm64ec `winegstreamer.dll` and the 64-bit DirectShow, Media
+Foundation, WMF and VfW/ACM modules are shipped in the 64-bit farm (see
+"64-bit media modules" below); with the stub table they load and create their
+objects, and decoding needs `MADEIRA_WG_64BIT=1` (UNVERIFIED on the iPad).
+
+## 64-bit media modules
+
+`build/wine-pe/build-arm64ec-farm.sh` builds the Wine modules listed in
+`build/wine-pe/arm64ec-farm.json` for ARM64EC and installs them in
+`app/Madeira/arm64ec-windows/`. The media groups are `directshow` (quartz,
+amstream, qasf, qcap, qdvd, qedit, devenum, ...), `media_foundation`
+(winegstreamer, mfmediaengine, mfplay, evr, dxva2, msmpeg2vdec, msauddecmft,
+colorcnv, resampledmo, ...), `wmdecoder` (wmvcore, wmasf, wmadmod, wmvdecod)
+and `vfw_acm_mci` (avifil32, msvfw32, iccvid, the ACM codecs, the MCI drivers,
+midimap). The prefix template already registered their classes under
+`system32`; before this the files were missing in 64-bit sessions.
+
+Not shipped: `mfsrcsnk`, `mfasfsrcsnk` and `mfmp4srcsnk`. In Wine 11 they
+depend on `winedmo`, whose unix side (an FFmpeg demuxer) has no iOS port yet.
+Porting it is a follow-up; FFmpeg is already built for winegstreamer.
+
+`build/x64-tests/compat-layers-x64.exe` (built by
+`build/x64-tests/build-compat-layers.sh`) creates the objects of each layer
+from a 64-bit process and prints `[compat-layers] PASS|FAIL|SKIP` lines.
 
 ## Pieces
 

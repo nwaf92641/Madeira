@@ -3,3 +3,4 @@ EXPORTS
 	ValidateVertexShader
 	DebugSetMute
 	Direct3DCreate8
+	D3D8GetSWInfo

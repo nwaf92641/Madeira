@@ -5,6 +5,7 @@
 
 #include "d3dx9.hpp"
 #include "d3d8to9.hpp"
+#include "madeira_log.hpp"
 
 PFN_D3DXAssembleShader D3DXAssembleShader = nullptr;
 PFN_D3DXDisassembleShader D3DXDisassembleShader = nullptr;
@@ -129,20 +130,20 @@ extern "C" void WINAPI DebugSetMute()
 #endif
 }
 
+// Madeira: the fifth export of Windows' and Wine's d3d8.dll, so a program that
+// imports it still loads. It is an undocumented internal entry point; Wine
+// answers it with 0 as well (dlls/d3d8/d3d8_main.c), which is what this does.
+extern "C" HRESULT WINAPI D3D8GetSWInfo()
+{
+	return 0;
+}
+
 extern "C" IDirect3D8 *WINAPI Direct3DCreate8(UINT SDKVersion)
 {
 #ifndef D3D8TO9NOLOG
-	static bool LogMessageFlag = true;
-
 	if (!LOG.is_open())
 	{
 		LOG.open("d3d8.log", std::ios::trunc);
-	}
-
-	if (!LOG.is_open() && LogMessageFlag)
-	{
-		LogMessageFlag = false;
-		MessageBox(nullptr, TEXT("Failed to open debug log file \"d3d8.log\"!"), nullptr, MB_ICONWARNING);
 	}
 
 	LOG << "Redirecting '" << "Direct3DCreate8" << "(" << SDKVersion << ")' ..." << std::endl;
@@ -153,11 +154,20 @@ extern "C" IDirect3D8 *WINAPI Direct3DCreate8(UINT SDKVersion)
 
 	if (d3d == nullptr)
 	{
+		// Madeira: d3d9.dll is DXMT's (Metal). Without it there is no Direct3D 8
+		// either; say so in the launch log rather than return a bare NULL.
+		madeira_d3d8::log("Direct3DCreate8(%u): Direct3DCreate9 failed, no Direct3D 9 runtime to translate to", SDKVersion);
 		return nullptr;
 	}
+	madeira_d3d8::log("Direct3DCreate8(%u): translating Direct3D 8 to the Direct3D 9 runtime", SDKVersion);
 
-	// Load D3DX
-	if (!D3DXAssembleShader || !D3DXDisassembleShader || !D3DXLoadSurfaceFromSurface)
+	// D3DX is used only by CopyRects, to convert between formats a plain copy
+	// cannot (D3DXLoadSurfaceFromSurface). Shaders are converted on tokens
+	// (madeira_d3d8_shader.hpp) and need no D3DX. Madeira's 32-bit farm ships
+	// Wine's d3dx9_43; when it is missing that one path degrades, so it is
+	// logged, never shown as a dialog (upstream opens a message box and a
+	// download page, which on an iPad is a session that looks frozen).
+	if (!D3DXLoadSurfaceFromSurface)
 	{
 		const HMODULE module = LoadLibrary(TEXT("d3dx9_43.dll"));
 
@@ -169,18 +179,7 @@ extern "C" IDirect3D8 *WINAPI Direct3DCreate8(UINT SDKVersion)
 		}
 		else
 		{
-#ifndef D3D8TO9NOLOG
-			LOG << "Failed to load d3dx9_43.dll! Some features will not work correctly." << std::endl;
-#endif
-			if (MessageBox(nullptr, TEXT(
-					"Failed to load d3dx9_43.dll! Some features will not work correctly.\n\n"
-					"It's required to install the \"Microsoft DirectX End-User Runtime\" in order to use d3d8to9, or alternatively get the DLLs from this NuGet package:\nhttps://www.nuget.org/packages/Microsoft.DXSDK.D3DX\n\n"
-					"Please click \"OK\" to open the official download page or \"Cancel\" to continue anyway."), nullptr, MB_ICONWARNING | MB_TOPMOST | MB_SETFOREGROUND | MB_OKCANCEL | MB_DEFBUTTON1) == IDOK)
-			{
-				ShellExecute(nullptr, TEXT("open"), TEXT("https://www.microsoft.com/download/details.aspx?id=35"), nullptr, nullptr, SW_SHOW);
-
-				return nullptr;
-			}
+			madeira_d3d8::log("d3dx9_43.dll did not load; CopyRects between different formats will fail");
 		}
 	}
 

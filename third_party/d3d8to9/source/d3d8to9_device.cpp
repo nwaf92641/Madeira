@@ -5,13 +5,22 @@
 
 #include "d3dx9.hpp"
 #include "d3d8to9.hpp"
-#include <regex>
+#include "madeira_d3d8_shader.hpp"
+#include "madeira_log.hpp"
 #include <assert.h>
 
 struct VertexShaderInfo
 {
 	IDirect3DVertexShader9 *Shader = nullptr;
 	IDirect3DVertexDeclaration9 *Declaration = nullptr;
+	// Madeira: what the application gave CreateVertexShader, so the D3D8
+	// getters return D3D8 tokens rather than the translated D3D9 ones, and the
+	// declaration's constants (D3DVSD_CONST), which D3D8 loads into constant
+	// memory each time the shader is set.
+	std::vector<DWORD> Declaration8;
+	std::vector<DWORD> Function8;
+	struct Constant { DWORD Register; float Value[4]; };
+	std::vector<Constant> Constants;
 };
 
 Direct3DDevice8::Direct3DDevice8(Direct3D8 *d3d, IDirect3DDevice9 *ProxyInterface, DWORD BehaviorFlags, D3DFORMAT ZBufferFormat, BOOL EnableZBufferDiscarding) :
@@ -1166,7 +1175,8 @@ HRESULT STDMETHODCALLTYPE Direct3DDevice8::CreateVertexShader(const DWORD *pDecl
 
 	UINT ElementIndex = 0;
 	const UINT ElementLimit = 32;
-	std::string ConstantsCode;
+	std::vector<VertexShaderInfo::Constant> DeclarationConstants;
+	const DWORD *const DeclarationStart = pDeclaration;
 	WORD Stream = 0, Offset = 0;
 	DWORD VertexShaderInputs[ElementLimit];
 	D3DVERTEXELEMENT9 VertexElements[ElementLimit];
@@ -1302,11 +1312,14 @@ HRESULT STDMETHODCALLTYPE Direct3DDevice8::CreateVertexShader(const DWORD *pDecl
 
 			for (DWORD RegisterIndex = 0; RegisterIndex < RegisterCount; RegisterIndex += 4, ++Address)
 			{
-				ConstantsCode += "    def c" + std::to_string(Address) + ", " +
-					std::to_string(*reinterpret_cast<const float *>(&pDeclaration[RegisterIndex + 1])) + ", " +
-					std::to_string(*reinterpret_cast<const float *>(&pDeclaration[RegisterIndex + 2])) + ", " +
-					std::to_string(*reinterpret_cast<const float *>(&pDeclaration[RegisterIndex + 3])) + ", " +
-					std::to_string(*reinterpret_cast<const float *>(&pDeclaration[RegisterIndex + 4])) + " /* vertex declaration constant */\n";
+				// Madeira: kept as data and loaded at SetVertexShader, which is
+				// when D3D8 loads declaration constants (an application may
+				// still overwrite them afterwards); upstream bakes them into the
+				// shader as def instructions, which an application cannot.
+				VertexShaderInfo::Constant Constant;
+				Constant.Register = Address;
+				memcpy(Constant.Value, &pDeclaration[RegisterIndex + 1], sizeof(Constant.Value));
+				DeclarationConstants.push_back(Constant);
 			}
 
 			pDeclaration += RegisterCount;
@@ -1329,261 +1342,40 @@ HRESULT STDMETHODCALLTYPE Direct3DDevice8::CreateVertexShader(const DWORD *pDecl
 	HRESULT hr;
 	VertexShaderInfo *ShaderInfo;
 
+	ShaderInfo = new VertexShaderInfo();
+	ShaderInfo->Declaration8.assign(DeclarationStart, pDeclaration + 1);  // through D3DVSD_END
+	ShaderInfo->Constants = DeclarationConstants;
+
 	if (pFunction != nullptr)
 	{
-#ifndef D3D8TO9NOLOG
-		LOG << "> Disassembling shader and translating assembly to Direct3D 9 compatible code ..." << std::endl;
-#endif
+		// Madeira: token-level translation (madeira_d3d8_shader.hpp) instead of
+		// the D3DX disassemble / regex / reassemble round trip. The D3D9 shader
+		// is the D3D8 one with a dcl per declared input; DXMT's DXSO front end
+		// reads it as vs_1_1.
+		std::vector<madeira_d3d8::VsInput> Inputs;
+		for (UINT k = 0; k < ElementIndex; ++k)
+			Inputs.push_back({ VertexShaderInputs[k], VertexElements[k].Usage, VertexElements[k].UsageIndex });
 
-		if (*pFunction < D3DVS_VERSION(1, 0) || *pFunction > D3DVS_VERSION(1, 1))
+		std::vector<uint32_t> Translated;
+		const madeira_d3d8::ShaderResult Result = madeira_d3d8::translate_vs(
+			reinterpret_cast<const uint32_t *>(pFunction), madeira_d3d8::kMaxDwords, Inputs.data(), Inputs.size(), Translated);
+		if (Result != madeira_d3d8::ShaderResult::Ok)
 		{
-#ifndef D3D8TO9NOLOG
-			LOG << "> Failed because of version mismatch ('" << std::showbase << std::hex << *pFunction << std::dec << std::noshowbase << "')! Only 'vs_1_x' shaders are supported." << std::endl;
-#endif
-
+			madeira_d3d8::log("CreateVertexShader: shader rejected (%s, version 0x%08lx)",
+				madeira_d3d8::shader_result_name(Result), static_cast<unsigned long>(*pFunction));
+			delete ShaderInfo;
 			return D3DERR_INVALIDCALL;
 		}
+		const size_t Length = madeira_d3d8::sm1_dword_count(reinterpret_cast<const uint32_t *>(pFunction), madeira_d3d8::kMaxDwords, nullptr);
+		ShaderInfo->Function8.assign(pFunction, pFunction + Length);
 
-		ID3DXBuffer *Disassembly = nullptr, *Assembly = nullptr, *ErrorBuffer = nullptr;
-
-		if (D3DXDisassembleShader != nullptr)
-		{
-			hr = D3DXDisassembleShader(pFunction, FALSE, nullptr, &Disassembly);
-		}
-		else
-		{
-			hr = D3DERR_INVALIDCALL;
-		}
-
+		hr = ProxyInterface->CreateVertexShader(reinterpret_cast<const DWORD *>(Translated.data()), &ShaderInfo->Shader);
 		if (FAILED(hr))
-		{
-#ifndef D3D8TO9NOLOG
-			LOG << "> Failed to disassemble shader with error code " << std::hex << hr << std::dec << "!" << std::endl;
-#endif
-
-			return hr;
-		}
-
-		std::string SourceCode;
-		{
-			const char* raw = static_cast<const char*>(Disassembly->GetBufferPointer());
-			size_t rawSize = Disassembly->GetBufferSize();
-
-			SourceCode.reserve(rawSize);
-
-			for (size_t i = 0; i < rawSize; ++i)
-			{
-				unsigned char c = static_cast<unsigned char>(raw[i]);
-
-				bool isAllowed =
-					(c == '\t') ||
-					(c == '\n') ||
-					(c == '\r') ||
-					(c >= ' ' && c <= '~');
-
-				if (!isAllowed)
-					continue;
-
-				SourceCode.push_back(static_cast<char>(c));
-			}
-		}
-
-#ifndef D3D8TO9NOLOG
-		LOG << "> Dumping original shader assembly:" << std::endl << std::endl << SourceCode << std::endl;
-#endif
-
-		const size_t VersionPosition = SourceCode.find("vs_1_");
-
-		assert(VersionPosition != std::string::npos);
-
-		if (SourceCode.at(VersionPosition + 5) == '0')
-		{
-#ifndef D3D8TO9NOLOG
-			LOG << "> Replacing version 'vs_1_0' with 'vs_1_1' ..." << std::endl;
-#endif
-
-			SourceCode.replace(VersionPosition, 6, "vs_1_1");
-		}
-
-		size_t DeclPosition = VersionPosition + 7;
-
-		for (UINT k = 0; k < ElementIndex; k++)
-		{
-			std::string DeclCode = "    ";
-
-			switch (VertexElements[k].Usage)
-			{
-			case D3DDECLUSAGE_POSITION:
-				DeclCode += "dcl_position";
-				break;
-			case D3DDECLUSAGE_BLENDWEIGHT:
-				DeclCode += "dcl_blendweight";
-				break;
-			case D3DDECLUSAGE_BLENDINDICES:
-				DeclCode += "dcl_blendindices";
-				break;
-			case D3DDECLUSAGE_NORMAL:
-				DeclCode += "dcl_normal";
-				break;
-			case D3DDECLUSAGE_PSIZE:
-				DeclCode += "dcl_psize";
-				break;
-			case D3DDECLUSAGE_COLOR:
-				DeclCode += "dcl_color";
-				break;
-			case D3DDECLUSAGE_TEXCOORD:
-				DeclCode += "dcl_texcoord";
-				break;
-			}
-
-			if (VertexElements[k].UsageIndex > 0)
-			{
-				DeclCode += std::to_string(VertexElements[k].UsageIndex);
-			}
-
-			DeclCode += " v" + std::to_string(VertexShaderInputs[k]) + '\n';
-
-			SourceCode.insert(DeclPosition, DeclCode);
-			DeclPosition += DeclCode.length();
-		}
-
-		#pragma region Fill registers with default value
-		SourceCode.insert(DeclPosition, ConstantsCode);
-
-		// Get number of arithmetic instructions used
-		const size_t InstructionPosition = SourceCode.find("instruction");
-		size_t InstructionCount = InstructionPosition > 2 && InstructionPosition < SourceCode.size() ? strtoul(SourceCode.substr(InstructionPosition - 4, 4).c_str(), nullptr, 10) : 0;
-
-		for (size_t j = 0; j < 8; j++)
-		{
-			const std::string reg = "oT" + std::to_string(j);
-
-			if (SourceCode.find(reg) != std::string::npos && InstructionCount < 128)
-			{
-				++InstructionCount;
-				SourceCode.insert(DeclPosition + ConstantsCode.size(), "    mov " + reg + ", c0 /* initialize output register " + reg + " */\n");
-			}
-		}
-		for (size_t j = 0; j < 2; j++)
-		{
-			const std::string reg = "oD" + std::to_string(j);
-
-			if (SourceCode.find(reg) != std::string::npos && InstructionCount < 128)
-			{
-				++InstructionCount;
-				SourceCode.insert(DeclPosition + ConstantsCode.size(), "    mov " + reg + ", c0 /* initialize output register " + reg + " */\n");
-			}
-		}
-		for (size_t j = 0; j < 12; j++)
-		{
-			const std::string reg = "r" + std::to_string(j);
-
-			if (SourceCode.find(reg) != std::string::npos && InstructionCount < 128)
-			{
-				++InstructionCount;
-				SourceCode.insert(DeclPosition + ConstantsCode.size(), "    mov " + reg + ", c0 /* initialize register " + reg + " */\n");
-			}
-		}
-		#pragma endregion
-
-		SourceCode = std::regex_replace(SourceCode, std::regex("    \\/\\/ vs\\.1\\.1\\n((?! ).+\\n)+"), "");
-		SourceCode = std::regex_replace(SourceCode, std::regex("([^\\n]\\n)[\\s]*#line [0123456789]+.*\\n"), "$1");
-		SourceCode = std::regex_replace(SourceCode, std::regex("(oFog|oPts)\\.x"), "$1 /* removed swizzle */");
-		SourceCode = std::regex_replace(SourceCode, std::regex("(add|sub|mul|min|max) (oFog|oPts), ([cr][0-9]+), (.+)\\n"), "$1 $2, $3.x /* added swizzle */, $4\n");
-		SourceCode = std::regex_replace(SourceCode, std::regex("(add|sub|mul|min|max) (oFog|oPts), (.+), ([cr][0-9]+)\\n"), "$1 $2, $3, $4.x /* added swizzle */\n");
-		SourceCode = std::regex_replace(SourceCode, std::regex("(mov|mad) (oFog|oPts)(.*), (-?)([crv][0-9]+(?![\\.0-9]))"), "$1 $2$3, $4$5.x /* select single component */");
-
-		// Destination register cannot be the same as first source register for m*x* instructions.
-		if (std::regex_search(SourceCode, std::regex("m.x.")))
-		{
-			// Check for unused register
-			size_t r;
-			for (r = 0; r < 12; r++)
-			{
-				if (SourceCode.find("r" + std::to_string(r)) == std::string::npos) break;
-			}
-
-			// Check if first source register is the same as the destination register
-			for (size_t j = 0; j < 12; j++)
-			{
-				const std::string reg = "(m.x.) (r" + std::to_string(j) + "), ((-?)r" + std::to_string(j) + "([\\.xyzw]*))(?![0-9])";
-
-				while (std::regex_search(SourceCode, std::regex(reg)))
-				{
-					// If there is enough remaining instructions and an unused register then update to use a temp register
-					if (r < 12 && InstructionCount < 128)
-					{
-						++InstructionCount;
-						SourceCode = std::regex_replace(SourceCode, std::regex(reg),
-							"mov r" + std::to_string(r) + ", $2 /* added line */\n    $1 $2, $4r" + std::to_string(r) + "$5 /* changed $3 to r" + std::to_string(r) + " */",
-							std::regex_constants::format_first_only);
-					}
-					// Disable line to prevent assembly error
-					else
-					{
-						SourceCode = std::regex_replace(SourceCode, std::regex("(.*" + reg + ".*)"), "/*$1*/ /* disabled this line */");
-						break;
-					}
-				}
-			}
-		}
-
-		// Vertex shader must minimally write all four components (xyzw) of oPos output register. (fix error X5350)
-		if (std::regex_search(SourceCode, std::regex("    ([a-z2-4]*) oPos\\.")) && !std::regex_search(SourceCode, std::regex("    ([a-z2-4]*) oPos,")))
-		{
-			bool xReg = std::regex_search(SourceCode, std::regex("    ([a-z2-4]*) oPos\\.[y|z|w]*x"));
-			bool yReg = std::regex_search(SourceCode, std::regex("    ([a-z2-4]*) oPos\\.[x|z|w]*y"));
-			bool zReg = std::regex_search(SourceCode, std::regex("    ([a-z2-4]*) oPos\\.[x|y|w]*z"));
-			bool wReg = std::regex_search(SourceCode, std::regex("    ([a-z2-4]*) oPos\\.[x|y|z]*w"));
-			if (!xReg || !yReg || !zReg || !wReg)
-			{
-				SourceCode = std::regex_replace(SourceCode, std::regex("    ([a-z2-4]*) (oPos\\.[x|y|z|w]*,) ([^\\n]*)\\n"), "    $1 oPos, $3 /* removed oPos swizzles */\n");
-			}
-		}
-
-#ifndef D3D8TO9NOLOG
-		LOG << "> Dumping translated shader assembly:" << std::endl << std::endl << SourceCode << std::endl;
-#endif
-
-		if (D3DXAssembleShader != nullptr)
-		{
-			hr = D3DXAssembleShader(SourceCode.data(), static_cast<UINT>(SourceCode.size()), nullptr, nullptr, D3DXASM_FLAGS, &Assembly, &ErrorBuffer);
-		}
-		else
-		{
-			hr = D3DERR_INVALIDCALL;
-		}
-
-		Disassembly->Release();
-
-		if (FAILED(hr))
-		{
-			if (ErrorBuffer != nullptr)
-			{
-#ifndef D3D8TO9NOLOG
-				LOG << "> Failed to reassemble shader:" << std::endl << std::endl << static_cast<const char *>(ErrorBuffer->GetBufferPointer()) << std::endl;
-#endif
-				ErrorBuffer->Release();
-			}
-			else
-			{
-#ifndef D3D8TO9NOLOG
-				LOG << "> Failed to reassemble shader with error code " << std::hex << hr << std::dec << "!" << std::endl;
-#endif
-			}
-
-			return hr;
-		}
-
-		ShaderInfo = new VertexShaderInfo();
-
-		hr = ProxyInterface->CreateVertexShader(static_cast<const DWORD *>(Assembly->GetBufferPointer()), &ShaderInfo->Shader);
-
-		Assembly->Release();
+			madeira_d3d8::log("CreateVertexShader: the Direct3D 9 runtime refused the translated vs_1_1 (%u inputs) -> hr 0x%lx",
+				static_cast<unsigned>(Inputs.size()), static_cast<unsigned long>(hr));
 	}
 	else
 	{
-		ShaderInfo = new VertexShaderInfo();
 		ShaderInfo->Shader = nullptr;
 
 		hr = D3D_OK;
@@ -1652,6 +1444,8 @@ HRESULT STDMETHODCALLTYPE Direct3DDevice8::SetVertexShader(DWORD Handle)
 
 		hr = ProxyInterface->SetVertexShader(ShaderInfo->Shader);
 		ProxyInterface->SetVertexDeclaration(ShaderInfo->Declaration);
+		for (const VertexShaderInfo::Constant &Constant : ShaderInfo->Constants)
+			ProxyInterface->SetVertexShaderConstantF(Constant.Register, Constant.Value, 1);
 
 		if (SUCCEEDED(hr))
 			CurrentVertexShaderHandle = Handle;
@@ -1715,39 +1509,50 @@ HRESULT STDMETHODCALLTYPE Direct3DDevice8::GetVertexShaderConstant(DWORD Registe
 {
 	return ProxyInterface->GetVertexShaderConstantF(Register, static_cast<float *>(pConstantData), ConstantCount);
 }
+// Madeira: a copy of a stored D3D8 token array, with the D3D8 size protocol
+// (pData NULL asks for the size; a short buffer is D3DERR_MOREDATA).
+static HRESULT CopyD3D8Tokens(const std::vector<DWORD> &Tokens, void *pData, DWORD *pSizeOfData)
+{
+	if (pSizeOfData == nullptr)
+		return D3DERR_INVALIDCALL;
+	const DWORD Size = static_cast<DWORD>(Tokens.size() * sizeof(DWORD));
+	if (pData == nullptr)
+	{
+		*pSizeOfData = Size;
+		return D3D_OK;
+	}
+	if (*pSizeOfData < Size)
+	{
+		*pSizeOfData = Size;
+		return D3DERR_MOREDATA;
+	}
+	memcpy(pData, Tokens.data(), Size);
+	*pSizeOfData = Size;
+	return D3D_OK;
+}
 HRESULT STDMETHODCALLTYPE Direct3DDevice8::GetVertexShaderDeclaration(DWORD Handle, void *pData, DWORD *pSizeOfData)
 {
-	UNREFERENCED_PARAMETER(Handle);
-	UNREFERENCED_PARAMETER(pData);
-	UNREFERENCED_PARAMETER(pSizeOfData);
-
-#ifndef D3D8TO9NOLOG
-	LOG << "Redirecting '" << "IDirect3DDevice8::GetVertexShaderDeclaration" << "(" << this << ", " << Handle << ", " << pData << ", " << pSizeOfData << ")' ..." << std::endl;
-	LOG << "> 'IDirect3DDevice8::GetVertexShaderDeclaration' is not implemented!" << std::endl;
-#endif
-
-	return D3DERR_INVALIDCALL;
-}
-HRESULT STDMETHODCALLTYPE Direct3DDevice8::GetVertexShaderFunction(DWORD Handle, void *pData, DWORD *pSizeOfData)
-{
-#ifndef D3D8TO9NOLOG
-	LOG << "Redirecting '" << "IDirect3DDevice8::GetVertexShaderFunction" << "(" << this << ", " << Handle << ", " << pData << ", " << pSizeOfData << ")' ..." << std::endl;
-#endif
-
-	if ((Handle & 0x80000000) == 0)
+	// Madeira: upstream returns D3DERR_INVALIDCALL here; the declaration is
+	// kept at creation, so the D3D8 tokens the application passed come back.
+	if ((Handle & 0x80000000) == 0 || VertexShaderHandles.count(Handle) == 0)
 		return D3DERR_INVALIDCALL;
 
 	const DWORD HandleMagic = Handle << 1;
-	IDirect3DVertexShader9 *VertexShaderInterface = reinterpret_cast<VertexShaderInfo *>(HandleMagic)->Shader;
-
-	if (VertexShaderInterface == nullptr)
+	return CopyD3D8Tokens(reinterpret_cast<VertexShaderInfo *>(HandleMagic)->Declaration8, pData, pSizeOfData);
+}
+HRESULT STDMETHODCALLTYPE Direct3DDevice8::GetVertexShaderFunction(DWORD Handle, void *pData, DWORD *pSizeOfData)
+{
+	// Madeira: the D3D8 function the application created, not the translated
+	// D3D9 one (which has dcl instructions D3D8 tokens do not).
+	if ((Handle & 0x80000000) == 0 || VertexShaderHandles.count(Handle) == 0)
 		return D3DERR_INVALIDCALL;
 
-#ifndef D3D8TO9NOLOG
-	LOG << "> Returning translated shader byte code." << std::endl;
-#endif
+	const DWORD HandleMagic = Handle << 1;
+	const VertexShaderInfo *const ShaderInfo = reinterpret_cast<VertexShaderInfo *>(HandleMagic);
+	if (ShaderInfo->Shader == nullptr)
+		return D3DERR_INVALIDCALL;
 
-	return VertexShaderInterface->GetFunction(pData, reinterpret_cast<UINT *>(pSizeOfData));
+	return CopyD3D8Tokens(ShaderInfo->Function8, pData, pSizeOfData);
 }
 HRESULT STDMETHODCALLTYPE Direct3DDevice8::SetStreamSource(UINT StreamNumber, IDirect3DVertexBuffer8 *pStreamData, UINT Stride)
 {
@@ -1825,471 +1630,37 @@ HRESULT STDMETHODCALLTYPE Direct3DDevice8::CreatePixelShader(const DWORD *pFunct
 
 	*pHandle = 0;
 
-#ifndef D3D8TO9NOLOG
-	LOG << "> Disassembling shader and translating assembly to Direct3D 9 compatible code ..." << std::endl;
-#endif
-
-	if (*pFunction < D3DPS_VERSION(1, 0) || *pFunction > D3DPS_VERSION(1, 4))
+	// Madeira: ps.1.0-1.4 bytecode is D3D9 ps_1_x bytecode; it is walked
+	// (so a malformed or SM2+ blob is refused here, with a reason in the launch
+	// log) and passed on, ps.1.0 raised to ps.1.1. Upstream rewrites the D3DX
+	// disassembly to satisfy Microsoft's D3D9 validator (no modifiers on
+	// constants, ps_1_4 promotion); DXMT's DXSO front end translates those
+	// modifiers itself, so the shader is not rewritten.
+	std::vector<uint32_t> Translated;
+	const madeira_d3d8::ShaderResult Result = madeira_d3d8::translate_ps(
+		reinterpret_cast<const uint32_t *>(pFunction), madeira_d3d8::kMaxDwords, Translated);
+	if (Result != madeira_d3d8::ShaderResult::Ok)
 	{
-#ifndef D3D8TO9NOLOG
-		LOG << "> Failed because of version mismatch ('" << std::showbase << std::hex << *pFunction << std::dec << std::noshowbase << "')! Only 'ps_1_x' shaders are supported." << std::endl;
-#endif
+		madeira_d3d8::log("CreatePixelShader: shader rejected (%s, version 0x%08lx)",
+			madeira_d3d8::shader_result_name(Result), static_cast<unsigned long>(*pFunction));
 		return D3DERR_INVALIDCALL;
 	}
 
-	ID3DXBuffer *Disassembly = nullptr, *Assembly = nullptr, *ErrorBuffer = nullptr;
-
-	HRESULT hr = D3DERR_INVALIDCALL;
-
-	if (D3DXDisassembleShader != nullptr)
-		hr = D3DXDisassembleShader(pFunction, FALSE, nullptr, &Disassembly);
-
+	IDirect3DPixelShader9 *PixelShader = nullptr;
+	const HRESULT hr = ProxyInterface->CreatePixelShader(reinterpret_cast<const DWORD *>(Translated.data()), &PixelShader);
 	if (FAILED(hr))
 	{
-#ifndef D3D8TO9NOLOG
-		LOG << "> Failed to disassemble shader with error code " << std::hex << hr << std::dec << "!" << std::endl;
-#endif
+		madeira_d3d8::log("CreatePixelShader: the Direct3D 9 runtime refused ps.%lu.%lu -> hr 0x%lx",
+			static_cast<unsigned long>((*pFunction >> 8) & 0xFF), static_cast<unsigned long>(*pFunction & 0xFF),
+			static_cast<unsigned long>(hr));
 		return hr;
 	}
 
-	std::string SourceCode;
-	{
-		const char* raw = static_cast<const char*>(Disassembly->GetBufferPointer());
-		size_t rawSize = Disassembly->GetBufferSize();
+	*pHandle = reinterpret_cast<DWORD>(PixelShader);
+	PixelShaderHandles.insert(*pHandle);
+	PixelShaderFunctions[*pHandle].assign(pFunction, pFunction + Translated.size());
 
-		SourceCode.reserve(rawSize);
-
-		for (size_t i = 0; i < rawSize; ++i)
-		{
-			unsigned char c = static_cast<unsigned char>(raw[i]);
-
-			bool isAllowed =
-				(c == '\t') ||
-				(c == '\n') ||
-				(c == '\r') ||
-				(c >= ' ' && c <= '~');
-
-			if (!isAllowed)
-				continue;
-
-			SourceCode.push_back(static_cast<char>(c));
-		}
-	}
-
-	const size_t VersionPosition = SourceCode.find("ps_1_");
-
-	assert(VersionPosition != std::string::npos);
-
-	if (SourceCode.at(VersionPosition + 5) == '0')
-	{
-#ifndef D3D8TO9NOLOG
-		LOG << "> Replacing version 'ps_1_0' with 'ps_1_1' ..." << std::endl;
-#endif
-
-		SourceCode.replace(VersionPosition, 6, "ps_1_1");
-	}
-
-	// Get number of arithmetic instructions used
-	const size_t ArithmeticPosition = SourceCode.find("arithmetic");
-	size_t ArithmeticCount = ArithmeticPosition > 2 && ArithmeticPosition < SourceCode.size() ? strtoul(SourceCode.substr(ArithmeticPosition - 2, 2).c_str(), nullptr, 10) : 0;
-	ArithmeticCount = (ArithmeticCount != 0) ? ArithmeticCount : 10;	// Default to 10
-
-	// Remove lines when "    // ps.1.1" string is found and the next line does not start with a space
-	SourceCode = std::regex_replace(SourceCode,
-		std::regex("    \\/\\/ ps\\.1\\.[1-4]\\n((?! ).+\\n)+"),
-		"");
-
-	// Remove debug lines
-	SourceCode = std::regex_replace(SourceCode,
-		std::regex("([^\\n]\\n)[\\s]*#line [0123456789]+.*\\n"),
-		"$1");
-
-	// Fix '-' modifier for constant values when using 'add' arithmetic by changing it to use 'sub'
-	SourceCode = std::regex_replace(SourceCode,
-		std::regex("(add)([_satxd248]*) (r[0-9][\\.wxyz]*), ((1-|)[crtv][0-9][\\.wxyz_abdis2]*), (-)(c[0-9][\\.wxyz]*)(_bx2|_bias|_x2|_d[zbwa]|)(?![_\\.wxyz])"),
-		"sub$2 $3, $4, $7$8 /* changed 'add' to 'sub' removed modifier $6 */");
-
-	// Create temporary varables for ps_1_4
-	std::string SourceCode14 = SourceCode;
-	int ArithmeticCount14 = ArithmeticCount;
-
-	// Fix modifiers for constant values by using any remaining arithmetic places to add an instruction to move the constant value to a temporary register
-	while (std::regex_search(SourceCode, std::regex("-c[0-9]|c[0-9][\\.wxyz]*_")) && ArithmeticCount < 8)
-	{
-		// Make sure that the dest register is not already being used
-		const std::string normalizedSourceCode =
-			std::regex_replace(
-				std::regex_replace(SourceCode,
-					std::regex("1?-(c[0-9])[\\._a-z0-9]*"), "-$1"),    // Find negative modifiers
-				std::regex("(c[0-9])[\\.wxyz]*_[a-z0-9]*"), "-$1");    // Find swizzle modifiers
-		std::string tmpLine = "\n" + normalizedSourceCode + "\n";
-		size_t start = tmpLine.substr(0, tmpLine.find("-c")).rfind("\n") + 1;
-		tmpLine = tmpLine.substr(start, tmpLine.find("\n", start) - start);
-		const std::string destReg = std::regex_replace(tmpLine, std::regex("[ \\+]+[a-z_\\.0-9]+ (r[0-9]).*-c[0-9].*"),"$1");
-		const std::string sourceReg = std::regex_replace(tmpLine, std::regex("[ \\+]+[a-z_\\.0-9]+ r[0-9][\\._a-z0-9]*, (.*)-c[0-9](.*)"), "$1$2");
-		if (sourceReg.find(destReg) != std::string::npos)
-		{
-			break;
-		}
-
-		// Replace one constant modifier using the dest register as a temporary register
-		size_t SourceSize = SourceCode.size();
-		SourceCode = std::regex_replace(SourceCode,
-			std::regex("    (...)(_[_satxd248]*|) (r[0-9])([\\.wxyz]*), (1?-?[crtv][0-9][\\.wxyz_abdis2]*, )?(1?-?[crtv][0-9][\\.wxyz_abdis2]*, )?(1?-?[crtv][0-9][\\.wxyz_abdis2]*, )?((1?-)(c[0-9])([\\.wxyz]*)(_bx2|_bias|_x2|_d[zbwa]|)|(1?-?)(c[0-9])([\\.wxyz]*)(_bx2|_bias|_x2|_d[zbwa]))(?![_\\.wxyz])"),
-			"    mov $3$4, $10$11$14$15 /* added line */\n    $1$2 $3$4, $5$6$9$13$3$12$16 /* changed $10$11$14$15 to $3 */", std::regex_constants::format_first_only);
-		// Replace one constant modifier on coissued commands using the dest register as a temporary register
-		if (SourceSize == SourceCode.size())
-		{
-			SourceCode = std::regex_replace(SourceCode,
-				std::regex("(    .*\\n)  \\+ (...)(_[_satxd248]*|) (r[0-9])([\\.wxyz]*), (1?-?[crtv][0-9][\\.wxyz_abdis2]*, )?(1?-?[crtv][0-9][\\.wxyz_abdis2]*, )?(1?-?[crtv][0-9][\\.wxyz_abdis2]*, )?((1?-)(c[0-9])([\\.wxyz]*)(_bx2|_bias|_x2|_d[zbwa]|)|(1?-?)(c[0-9])([\\.wxyz]*)(_bx2|_bias|_x2|_d[zbwa]))(?![_\\.wxyz])"),
-				"    mov $4$5, $11$12$15$16 /* added line */\n$1  + $2$3 $4$5, $6$7$10$14$4$13$17 /* changed $11$12$15$16 to $4 */", std::regex_constants::format_first_only);
-		}
-
-		if (SourceSize == SourceCode.size())
-			break;
-
-		ArithmeticCount++;
-	}
-
-	// Check if this should be converted to ps_1_4
-	if (std::regex_search(SourceCode, std::regex("-c[0-9]|c[0-9][\\.wxyz]*_")) &&	// Check for modifiers on constants
-		!std::regex_search(SourceCode, std::regex("tex[bcdmr]")) &&					// Verify unsupported instructions are not used
-		std::regex_search(SourceCode, std::regex("ps_1_[0-3]")))					// Verify PixelShader is using version 1.0 to 1.3
-	{
-		bool ConvertError = false;
-		bool RegisterUsed[7] = { false, false, false, false, false, false, true };
-
-		struct MyStrings
-		{
-			std::string dest;
-			std::string source;
-		};
-
-		std::vector<MyStrings> ReplaceReg;
-		std::string NewSourceCode = "    ps_1_4 /* converted */\n";
-
-		// Ensure at least one command will be above the phase marker
-		bool PhaseMarkerSet = (ArithmeticCount14 >= 8);
-		if (SourceCode14.find("def c") == std::string::npos && !PhaseMarkerSet)
-		{
-			for (size_t j = 0; j < 8; j++)
-			{
-				const std::string reg = "c" + std::to_string(j);
-
-				if (SourceCode14.find(reg) == std::string::npos)
-				{
-					PhaseMarkerSet = true;
-					NewSourceCode.append("    def " + reg + ", 0, 0, 0, 0 /* added line */\n");
-					break;
-				}
-			}
-		}
-
-		// Update registers to use different numbers from textures
-		size_t FirstReg = 0;
-		for (size_t j = 0; j < 2; j++)
-		{
-			const std::string reg = "r" + std::to_string(j);
-
-			if (SourceCode14.find(reg) != std::string::npos)
-			{
-				while (SourceCode14.find("t" + std::to_string(FirstReg)) != std::string::npos ||
-					(SourceCode14.find("r" + std::to_string(FirstReg)) != std::string::npos && j != FirstReg))
-				{
-					FirstReg++;
-				}
-				SourceCode14 = std::regex_replace(SourceCode14, std::regex(reg), "r" + std::to_string(FirstReg));
-				FirstReg++;
-			}
-		}
-
-		// Set phase location
-		size_t PhasePosition = NewSourceCode.length();
-		size_t TexturePosition = 0;
-
-		// Loop through each line
-		size_t LinePosition = 1;
-		std::string NewLine = SourceCode14;
-		while (true)
-		{
-			// Get next line
-			size_t tmpLinePos = SourceCode14.find("\n", LinePosition) + 1;
-			if (tmpLinePos == std::string::npos || tmpLinePos < LinePosition)
-			{
-				break;
-			}
-			LinePosition = tmpLinePos;
-			NewLine = SourceCode14.substr(LinePosition, SourceCode14.length());
-			tmpLinePos = NewLine.find("\n");
-			if (tmpLinePos != std::string::npos)
-			{
-				NewLine.resize(tmpLinePos);
-			}
-
-			// Skip 'ps_x_x' lines
-			if (std::regex_search(NewLine, std::regex("ps_._.")))
-			{
-				// Do nothing
-			}
-
-			// Check for 'def' and add before 'phase' statement
-			else if (NewLine.find("def c") != std::string::npos)
-			{
-				PhaseMarkerSet = true;
-				const std::string tmpLine = NewLine + "\n";
-				NewSourceCode.insert(PhasePosition, tmpLine);
-				PhasePosition += tmpLine.length();
-			}
-
-			// Check for 'tex' and update to 'texld'
-			else if (NewLine.find("tex t") != std::string::npos)
-			{
-				const std::string regNum = std::regex_replace(NewLine, std::regex(".*tex t([0-9]).*"), "$1");
-				const std::string tmpLine = "    texld r" + regNum + ", t" + regNum + "\n";
-
-				// Mark as a texture register and add 'texld' statement before or after the 'phase' statement
-				const unsigned long Num = strtoul(regNum.c_str(), nullptr, 10);
-				RegisterUsed[(Num < 6) ? Num : 6] = true;
-				NewSourceCode.insert(PhasePosition, tmpLine);
-				if (PhaseMarkerSet)
-				{
-					TexturePosition += tmpLine.length();
-				}
-				else
-				{
-					PhaseMarkerSet = true;
-					PhasePosition += tmpLine.length();
-				}
-			}
-
-			// Other instructions
-			else
-			{
-				// Check for constant modifiers and update them to use unused temp register
-				if (std::regex_search(NewLine, std::regex("-c[0-9]|c[0-9][\\.wxyz]*_")))
-				{
-					for (size_t j = 0; j < 6; j++)
-					{
-						std::string reg = "r" + std::to_string(j);
-
-						if (NewSourceCode.find(reg) == std::string::npos)
-						{
-							const std::string constReg = std::regex_replace(NewLine, std::regex(".*-(c[0-9]).*|.*(c[0-9])[\\.wxyz]*_.*"), "$1$2");
-
-							// Check if this constant has modifiers in more than one line
-							if (std::regex_search(SourceCode14.substr(LinePosition + NewLine.length(), SourceCode14.length()), std::regex("-" + constReg + "|" + constReg + "[\\.wxyz]*_")))
-							{
-								// Find an unused register
-								while (j < 6 &&
-									(NewSourceCode.find("r" + std::to_string(j)) != std::string::npos ||
-									SourceCode14.find("r" + std::to_string(j)) != std::string::npos))
-								{
-									j++;
-								}
-								// Replace all constants with the unused register
-								if (j < 6)
-								{
-									reg = "r" + std::to_string(j);
-									SourceCode14 = std::regex_replace(SourceCode14, std::regex(constReg), reg);
-								}
-							}
-
-							const std::string tmpLine = "    mov " + reg + ", " + constReg + "\n";
-
-							// Update the constant in this line and add 'mov' statement before or after the 'phase' statement
-							NewLine = std::regex_replace(NewLine, std::regex(constReg), reg);
-							if (ArithmeticCount14 < 8)
-							{
-								NewSourceCode.insert(PhasePosition + TexturePosition, tmpLine);
-								ArithmeticCount14++;
-							}
-							else
-							{
-								PhaseMarkerSet = true;
-								NewSourceCode.insert(PhasePosition, tmpLine);
-								PhasePosition += tmpLine.length();
-							}
-							break;
-						}
-					}
-				}
-
-				// Update register from vector once it is used for the last time
-				if (ReplaceReg.size() > 0)
-				{
-					for (size_t x = 0; x < ReplaceReg.size(); x++)
-					{
-						// Check if register is used in this line
-						if (NewLine.find(ReplaceReg[x].dest) != std::string::npos)
-						{
-							// Get position of all lines after this line
-							size_t start = LinePosition + NewLine.length();
-							// Move position to next line if the first line is a co-issed command
-							start = (SourceCode14.substr(start, 4).find("+") == std::string::npos) ? start : SourceCode14.find("\n", start + 1);
-
-							// Check if register is used in the code after this position
-							if (SourceCode14.find(ReplaceReg[x].dest, start) == std::string::npos)
-							{
-								// Update dest register using source register from the vector
-								NewLine = std::regex_replace(NewLine, std::regex("([ \\+]+[a-z_\\.0-9]+ )r[0-9](.*)"), "$1" + ReplaceReg[x].source + "$2");
-								ReplaceReg.erase(ReplaceReg.begin() + x);
-								break;
-							}
-						}
-					}
-				}
-
-				// Check if texture is no longer being used and update the dest register
-				if (std::regex_search(NewLine, std::regex("t[0-9]")))
-				{
-					const std::string texNum = std::regex_replace(NewLine, std::regex(".*t([0-9]).*"), "$1");
-
-					// Get position of all lines after this line
-					size_t start = LinePosition + NewLine.length();
-					// Move position to next line if the first line is a co-issed command
-					start = (SourceCode14.substr(start, 4).find("+") == std::string::npos) ? start : SourceCode14.find("\n", start + 1);
-
-					// Check if texture is used in the code after this position
-					if (SourceCode14.find("t" + texNum, start) == std::string::npos)
-					{
-						const std::string destRegNum = std::regex_replace(NewLine, std::regex("[ \\+]+[a-z_\\.0-9]+ r([0-9]).*"), "$1");
-
-						// Check if destination register is already being used by a texture register
-						const unsigned long Num = strtoul(destRegNum.c_str(), nullptr, 10);
-						if (!RegisterUsed[(Num < 6) ? Num : 6])
-						{
-							// Check if line is using more than one texture and error out
-							if (std::regex_search(std::regex_replace(NewLine, std::regex("t" + texNum), "r" + texNum), std::regex("t[0-9]")))
-							{
-								ConvertError = true;
-								break;
-							}
-							// Check if this is the first or last time the register is used
-							if (NewSourceCode.find("r" + destRegNum) == std::string::npos ||
-								SourceCode14.find("r" + destRegNum, start) == std::string::npos)
-							{
-								// Update dest register using texture register
-								NewLine = std::regex_replace(NewLine, std::regex("([ \\+]+[a-z_\\.0-9]+ )r[0-9](.*)"), "$1r" + texNum + "$2");
-								// Update code replacing all regsiters after the marked position with the texture register
-								const std::string tempSourceCode = std::regex_replace(SourceCode14.substr(start, SourceCode14.length()), std::regex("r" + destRegNum), "r" + texNum);
-								SourceCode14.resize(start);
-								SourceCode14.append(tempSourceCode);
-							}
-							else
-							{
-								// If register is still being used then add registers to vector to be replaced later
-								RegisterUsed[(Num < 6) ? Num : 6] = true;
-								MyStrings tempReplaceReg;
-								tempReplaceReg.dest = "r" + destRegNum;
-								tempReplaceReg.source = "r" + texNum;
-								ReplaceReg.push_back(tempReplaceReg);
-							}
-						}
-					}
-				}
-
-				// Add line to SourceCode
-				NewLine = std::regex_replace(NewLine, std::regex("t([0-9])"), "r$1") + "\n";
-				NewSourceCode.append(NewLine);
-			}
-		}
-
-		// Add 'phase' instruction
-		NewSourceCode.insert(PhasePosition, "    phase\n");
-
-		// If no errors were encountered then check if code assembles
-		if (!ConvertError && D3DXAssembleShader != nullptr)
-		{
-			// Test if ps_1_4 assembles
-			if (SUCCEEDED(D3DXAssembleShader(NewSourceCode.data(), static_cast<UINT>(NewSourceCode.size()), nullptr, nullptr, 0, &Assembly, &ErrorBuffer)))
-			{
-				SourceCode = NewSourceCode;
-				Assembly->Release();
-				Assembly = nullptr;
-			}
-			else
-			{
-#ifndef D3D8TO9NOLOG
-				LOG << "> Failed to convert shader to ps_1_4" << std::endl;
-				LOG << "> Dumping translated shader assembly:" << std::endl << std::endl << NewSourceCode << std::endl;
-#endif
-				if (ErrorBuffer != nullptr)
-				{
-#ifndef D3D8TO9NOLOG
-					LOG << "> Failed to reassemble shader:" << std::endl << std::endl << static_cast<const char*>(ErrorBuffer->GetBufferPointer()) << std::endl;
-#endif
-					ErrorBuffer->Release();
-					ErrorBuffer = nullptr;
-				}
-			}
-		}
-	}
-
-	// Change '-' modifier for constant values when using 'mad' arithmetic by changing it to use 'sub'
-	SourceCode = std::regex_replace(SourceCode,
-		std::regex("(mad)([_satxd248]*) (r[0-9][\\.wxyz]*), (1?-?[crtv][0-9][\\.wxyz_abdis2]*), (1?-?[crtv][0-9][\\.wxyz_abdis2]*), (-)(c[0-9][\\.wxyz]*)(_bx2|_bias|_x2|_d[zbwa]|)(?![_\\.wxyz])"),
-		"sub$2 $3, $4, $7$8 /* changed 'mad' to 'sub' removed $5 removed modifier $6 */");
-
-	// Remove trailing modifiers for constant values
-	SourceCode = std::regex_replace(SourceCode,
-		std::regex("(c[0-9][\\.wxyz]*)(_bx2|_bias|_x2|_d[zbwa])"),
-		"$1 /* removed modifier $2 */");
-
-	// Remove remaining modifiers for constant values
-	SourceCode = std::regex_replace(SourceCode,
-		std::regex("(1?-)(c[0-9][\\.wxyz]*(?![\\.wxyz]))"),
-		"$2 /* removed modifier $1 */");
-
-#ifndef D3D8TO9NOLOG
-	LOG << "> Dumping translated shader assembly:" << std::endl << std::endl << SourceCode << std::endl;
-#endif
-
-	if (D3DXAssembleShader != nullptr)
-	{
-		hr = D3DXAssembleShader(SourceCode.data(), static_cast<UINT>(SourceCode.size()), nullptr, nullptr, D3DXASM_FLAGS, &Assembly, &ErrorBuffer);
-	}
-	else
-	{
-		hr = D3DERR_INVALIDCALL;
-	}
-
-	Disassembly->Release();
-
-	if (FAILED(hr))
-	{
-		if (ErrorBuffer != nullptr)
-		{
-#ifndef D3D8TO9NOLOG
-			LOG << "> Failed to reassemble shader:" << std::endl << std::endl << static_cast<const char *>(ErrorBuffer->GetBufferPointer()) << std::endl;
-#endif
-			ErrorBuffer->Release();
-		}
-		else
-		{
-#ifndef D3D8TO9NOLOG
-			LOG << "> Failed to reassemble shader with error code " << std::hex << hr << std::dec << "!" << std::endl;
-#endif
-		}
-
-		return hr;
-	}
-
-	hr = ProxyInterface->CreatePixelShader(static_cast<const DWORD *>(Assembly->GetBufferPointer()), reinterpret_cast<IDirect3DPixelShader9 **>(pHandle));
-
-	Assembly->Release();
-
-	if (FAILED(hr))
-	{
-#ifndef D3D8TO9NOLOG
-		LOG << "> 'IDirect3DDevice9::CreatePixelShader' failed with error code " << std::hex << hr << std::dec << "!" << std::endl;
-#endif
-	}
-	else
-	{
-		PixelShaderHandles.insert(*pHandle);
-	}
-
-	return hr;
+	return D3D_OK;
 }
 HRESULT STDMETHODCALLTYPE Direct3DDevice8::SetPixelShader(DWORD Handle)
 {
@@ -2322,6 +1693,7 @@ HRESULT STDMETHODCALLTYPE Direct3DDevice8::DeletePixelShader(DWORD Handle)
 		SetPixelShader(0);
 
 	reinterpret_cast<IDirect3DPixelShader9 *>(Handle)->Release();
+	PixelShaderFunctions.erase(Handle);
 
 	return D3D_OK;
 }
@@ -2335,20 +1707,12 @@ HRESULT STDMETHODCALLTYPE Direct3DDevice8::GetPixelShaderConstant(DWORD Register
 }
 HRESULT STDMETHODCALLTYPE Direct3DDevice8::GetPixelShaderFunction(DWORD Handle, void *pData, DWORD *pSizeOfData)
 {
-#ifndef D3D8TO9NOLOG
-	LOG << "Redirecting '" << "IDirect3DDevice8::GetPixelShaderFunction" << "(" << this << ", " << Handle << ", " << pData << ", " << pSizeOfData << ")' ..." << std::endl;
-#endif
-
-	if (Handle == 0)
+	// Madeira: the D3D8 tokens the application created the shader from.
+	const auto Function = PixelShaderFunctions.find(Handle);
+	if (Handle == 0 || Function == PixelShaderFunctions.end())
 		return D3DERR_INVALIDCALL;
 
-	IDirect3DPixelShader9 *const PixelShaderInterface = reinterpret_cast<IDirect3DPixelShader9 *>(Handle);
-
-#ifndef D3D8TO9NOLOG
-	LOG << "> Returning translated shader byte code." << std::endl;
-#endif
-
-	return PixelShaderInterface->GetFunction(pData, reinterpret_cast<UINT *>(pSizeOfData));
+	return CopyD3D8Tokens(Function->second, pData, pSizeOfData);
 }
 HRESULT STDMETHODCALLTYPE Direct3DDevice8::DrawRectPatch(UINT Handle, const float *pNumSegs, const D3DRECTPATCH_INFO *pRectPatchInfo)
 {

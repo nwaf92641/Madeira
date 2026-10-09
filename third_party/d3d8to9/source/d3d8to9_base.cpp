@@ -4,6 +4,7 @@
  */
 
 #include "d3d8to9.hpp"
+#include "madeira_log.hpp"
 
 static const D3DFORMAT AdapterFormats[] = {
 	D3DFMT_A8R8G8B8,
@@ -183,6 +184,12 @@ HRESULT STDMETHODCALLTYPE Direct3D8::CreateDevice(UINT Adapter, D3DDEVTYPE Devic
 	IDirect3DDevice9 *DeviceInterface = nullptr;
 
 	const HRESULT hr = ProxyInterface->CreateDevice(Adapter, DeviceType, hFocusWindow, BehaviorFlags, &PresentParams, &DeviceInterface);
+	// Madeira: one line per device request, the shape of DXMT's
+	// "[d3d9-modes] CreateDevice ... -> hr 0x..." so a failure is placed in the
+	// launch record as a device failure of the Direct3D 8 path.
+	madeira_d3d8::log("CreateDevice %ux%u fmt %u %s behavior 0x%lx -> hr 0x%lx",
+		PresentParams.BackBufferWidth, PresentParams.BackBufferHeight, static_cast<unsigned>(PresentParams.BackBufferFormat),
+		PresentParams.Windowed ? "windowed" : "fullscreen", static_cast<unsigned long>(BehaviorFlags), static_cast<unsigned long>(hr));
 	if (FAILED(hr))
 		return hr;
 

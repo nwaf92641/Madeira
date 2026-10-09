@@ -7,6 +7,7 @@
 
 #include <vector>
 #include <unordered_set>
+#include <unordered_map>
 #include "d3d8.hpp"
 #include "interface_query.hpp"
 
@@ -183,6 +184,8 @@ private:
 
 	// Store shader handles and state block tokens so they can be destroyed later to mirror D3D8 behavior
 	std::unordered_set<DWORD> PixelShaderHandles, VertexShaderHandles, StateBlockTokens;
+	// Madeira: the D3D8 tokens of each pixel shader, for GetPixelShaderFunction.
+	std::unordered_map<DWORD, std::vector<DWORD>> PixelShaderFunctions;
 	unsigned int VertexShaderAndDeclarationCount = 0;
 };
 

@@ -152,6 +152,11 @@ int main(int argc, char **argv)
     feed("0024:fixme:actctx:parse_depend_manifests Could not find dependent assembly L\"Microsoft.VC90.CRT\" (9.0.21022.8)");
     dump("sxs");
 
+    madeira_diag_reset("C:\\Games\\Cc6\\cc6.exe", dir);
+    madeira_diag_stage(MD_STAGE_WINE_STARTED, "__wine_main");
+    feed("wine: Call from 00006FFFFFD55EF8 to unimplemented function COMCTL32.dll.TaskDialogIndirect, aborting");
+    dump("cc6-stub");
+
     madeira_diag_reset("C:\\Games\\Bad\\bad.exe", dir);
     feed("wine: failed to start L\"\\\\??\\\\C:\\\\Games\\\\Bad\\\\bad.exe\": c000007b");
     dump("wine-init");
@@ -341,6 +346,11 @@ with tempfile.TemporaryDirectory() as work:
     a = s['sxs']
     check([x['category'] for x in a['json']['problems']] == ['dependency-load-failure'], 'sxs: dependent assembly')
     check('winsxs' in a['json']['problems'][0]['hint'], 'sxs: hint names winsxs')
+    a = s['cc6-stub']
+    check(a['verdict'] == 'unimplemented-function', 'comctl32 6 stub: verdict (%s)' % a['verdict'])
+    check('Common Controls 6.0' in a['json']['problems'][0]['hint'] and 'winsxs' in a['json']['problems'][0]['hint'],
+          'comctl32 6 stub: hint names Common Controls 6 and winsxs')
+    check('Common Controls' not in (s['unimplemented']['json']['problems'][0].get('hint') or ''), 'other stubs do not get the Common Controls hint')
     check(s['wine-init']['verdict'] == 'wine-init-failure', 'wine init: failed to start (%s)' % s['wine-init']['verdict'])
     check(s['audio']['verdict'] == 'audio-init-failure', 'audio: xaudio2 error (%s)' % s['audio']['verdict'])
     a = s['launcher']

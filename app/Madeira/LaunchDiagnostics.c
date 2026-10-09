@@ -8,6 +8,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <sys/stat.h>
 #include <time.h>
 
@@ -382,15 +383,24 @@ static void md_feed_locked(const char *line)
         char fn[96];
         md_dll_from(p + 26, fn, sizeof fn);
         if (fn[0] && fn[strlen(fn) - 1] == ',') fn[strlen(fn) - 1] = 0;
-        md_problem_locked(MD_CAT_UNIMPLEMENTED, "running", fn[0] ? fn : "stub called", line, len, NULL);
+        /* TaskDialog / TaskDialogIndirect are exported by comctl32 6.0 only: a
+         * stub here means the program's Common Controls 6 dependency was not
+         * resolved, so comctl32 5.x was loaded (build/host-tests/check-winsxs.py). */
+        md_problem_locked(MD_CAT_UNIMPLEMENTED, "running", fn[0] ? fn : "stub called", line, len,
+                          !strncasecmp(fn, "comctl32.dll.TaskDialog", 23)
+                          ? "Only Common Controls 6.0 exports this. The program asked for it in its manifest, but "
+                            "C:\\windows\\winsxs had no Common Controls assembly for its architecture, so comctl32 5.x "
+                            "was loaded. The '[WineProc] winsxs:' line of this launch says what was seeded."
+                          : NULL);
         return;
     }
     /* dlls/ntdll/actctx.c: a side-by-side dependency (VC80/VC90 CRT, Common Controls 6) */
     if (md_find(line, "Could not find dependent assembly")) {
         md_problem_locked(MD_CAT_DEPENDENCY, "side-by-side", "dependent assembly not found", line, len,
                           "A side-by-side assembly the program's manifest declares is not in C:\\windows\\winsxs. "
-                          "The loader still finds the DLL in system32 when it is in the DLL folder, so this is "
-                          "fatal only when that DLL is missing too or the program checks its activation context.");
+                          "The loader still finds a CRT DLL in system32 when it is in the DLL folder, so this is "
+                          "fatal only when that DLL is missing too. For Common-Controls 6.0 the program gets "
+                          "comctl32 5.x instead, and a later TaskDialog call aborts.");
         return;
     }
     /* dlls/ntdll/unix/env.c, unix/loader.c, loader.c: Wine never reached the program */

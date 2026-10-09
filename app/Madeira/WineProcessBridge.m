@@ -28,6 +28,7 @@
 
 #include "WineProcessBridge.h"
 #include "LaunchDiagnostics.h"
+#include "WinSxS.h"
 #include "WineServerBridge.h"
 #include "PrefixExtractor.h"
 #include "FEXBridge.h"  // fex_get_jit_write_offset()
@@ -546,160 +547,24 @@ static void madeira_link_wbem(NSFileManager *fm, NSString *prefix, NSString *bun
             sysdir.UTF8String, linked, sizeof(wbem) / sizeof(wbem[0]), farm.UTF8String);
 }
 
-/* C:\windows\winsxs for 32-bit targets: the x86 side-by-side assemblies Wine
- * ships.
+/* C:\windows\winsxs: the side-by-side assemblies Wine ships (Common
+ * Controls 6, VC80/VC90 CRT and ATL, GDI+, MSXML), linked from a farm.
  *
- * The prefix has no winsxs directory: the template does not carry one and
- * this port never runs wineboot's fake-DLL install, which is what builds it on
- * a normal Wine prefix. Without it no 32-bit program gets a Common-Controls
- * 6.0 activation context (comdlg32 gives up in DllMain with 14001), and a
- * program built with Visual Studio 2005/2008, which carries its CRT as a
- * side-by-side dependency ("Microsoft.VC80.CRT"), fails the activation
- * context for every DLL with the same dependency.
+ * The prefix template carries no winsxs and this port never runs wineboot's
+ * fake-DLL install, which is what builds it on a normal Wine prefix. The
+ * table, the file layout and why each architecture is written the way it is
+ * are in WinSxS.h / WinSxS.c (plain C, so build/host-tests/check-winsxs.py
+ * runs the same code under a real Wine).
  *
- * This writes what dlls/setupapi/fakedll.c writes for each WINE_MANIFEST
- * assembly in the tree:
- *   windows\winsxs\manifests\<DIR>.manifest
- *   windows\winsxs\<DIR>\<file>          (linked from the i386 farm)
- *   <DIR> = x86_<lower-case name>_<publicKeyToken>_<version>_none_deadbeef
- * with the architecture filled into processorArchitecture, because actctx.c
- * checks the identity in the file against the one in its name. actctx.c pins
- * only major.minor, and accepts any build/revision >= the one requested, so
- * one assembly per major.minor serves every service pack of it.
- *
- * Only the x86 architecture is written: ntdll looks for "x86_" assemblies in
- * a 32-bit process and for "arm64_"/"amd64_" ones in 64-bit processes, so
- * 64-bit processes in the same prefix see no difference. An assembly whose
- * first file is missing from the i386 farm is skipped: a manifest without its
- * DLL would redirect that DLL's loads into an empty directory. */
-static void madeira_seed_winsxs_x86(NSFileManager *fm, NSString *prefix, NSString *bundle)
+ * x86: for a 32-bit target, from the i386 farm (this was an Objective-C
+ * function with the same table before it moved to WinSxS.c).
+ * arm64: for every session, from the session's own 64-bit farm. Before this,
+ * a 64-bit program asking for Common Controls 6 got comctl32 5.x and aborted
+ * at its first TaskDialog / TaskDialogIndirect call (bound to a stub). */
+static void madeira_seed_winsxs(NSString *prefix, NSString *bundle, NSString *farmSubdir, const char *arch)
 {
-    struct sxs_file { const char *in_assembly; const char *in_farm; };
-    struct sxs_assembly { const char *name, *lname, *key, *version; struct sxs_file files[4]; };
-    static const char *comctl32_body =
-        "    <windowClass>Button</windowClass>\n"
-        "    <windowClass>ButtonListBox</windowClass>\n"
-        "    <windowClass>ComboBoxEx32</windowClass>\n"
-        "    <windowClass>ComboLBox</windowClass>\n"
-        "    <windowClass>ComboBox</windowClass>\n"
-        "    <windowClass>Edit</windowClass>\n"
-        "    <windowClass>ListBox</windowClass>\n"
-        "    <windowClass>NativeFontCtl</windowClass>\n"
-        "    <windowClass>ReBarWindow32</windowClass>\n"
-        "    <windowClass>ScrollBar</windowClass>\n"
-        "    <windowClass>Static</windowClass>\n"
-        "    <windowClass>SysAnimate32</windowClass>\n"
-        "    <windowClass>SysDateTimePick32</windowClass>\n"
-        "    <windowClass>SysHeader32</windowClass>\n"
-        "    <windowClass>SysIPAddress32</windowClass>\n"
-        "    <windowClass>SysLink</windowClass>\n"
-        "    <windowClass>SysListView32</windowClass>\n"
-        "    <windowClass>SysMonthCal32</windowClass>\n"
-        "    <windowClass>SysPager</windowClass>\n"
-        "    <windowClass>SysTabControl32</windowClass>\n"
-        "    <windowClass>SysTreeView32</windowClass>\n"
-        "    <windowClass>ToolbarWindow32</windowClass>\n"
-        "    <windowClass>msctls_hotkey32</windowClass>\n"
-        "    <windowClass>msctls_progress32</windowClass>\n"
-        "    <windowClass>msctls_statusbar32</windowClass>\n"
-        "    <windowClass>msctls_trackbar32</windowClass>\n"
-        "    <windowClass>msctls_updown32</windowClass>\n"
-        "    <windowClass>tooltips_class32</windowClass>\n";
-    /* One entry per WINE_MANIFEST resource in the Wine tree (the file the
-     * values come from is named on each entry). */
-    static const struct sxs_assembly asms[] = {
-        /* dlls/comctl32_v6/comctl32.manifest (index 0: gets comctl32_body) */
-        { "Microsoft.Windows.Common-Controls", "microsoft.windows.common-controls",
-          "6595b64144ccf1df", "6.0.2600.2982", { { "comctl32.dll", "comctl32_v6.dll" } } },
-        /* dlls/msvcr80/msvcr80.manifest */
-        { "Microsoft.VC80.CRT", "microsoft.vc80.crt", "1fc8b3b9a1e18e3b", "8.0.50727.9672",
-          { { "msvcr80.dll", "msvcr80.dll" }, { "msvcp80.dll", "msvcp80.dll" },
-            { "msvcm80.dll", "msvcm80.dll" } } },
-        /* dlls/msvcr90/msvcr90.manifest */
-        { "Microsoft.VC90.CRT", "microsoft.vc90.crt", "1fc8b3b9a1e18e3b", "9.0.30729.6161",
-          { { "msvcr90.dll", "msvcr90.dll" }, { "msvcp90.dll", "msvcp90.dll" },
-            { "msvcm90.dll", "msvcm90.dll" } } },
-        /* dlls/atl80/atl80.manifest */
-        { "Microsoft.VC80.ATL", "microsoft.vc80.atl", "1fc8b3b9a1e18e3b", "8.0.50727.4053",
-          { { "atl80.dll", "atl80.dll" } } },
-        /* dlls/atl90/atl90.manifest */
-        { "Microsoft.VC90.ATL", "microsoft.vc90.atl", "1fc8b3b9a1e18e3b", "9.0.30729.6161",
-          { { "atl90.dll", "atl90.dll" } } },
-        /* dlls/gdiplus/gdiplus.manifest and gdiplus11.manifest: one DLL */
-        { "Microsoft.Windows.GdiPlus", "microsoft.windows.gdiplus", "6595b64144ccf1df",
-          "1.0.6000.16386", { { "gdiplus.dll", "gdiplus.dll" } } },
-        { "Microsoft.Windows.GdiPlus", "microsoft.windows.gdiplus", "6595b64144ccf1df",
-          "1.1.7601.23038", { { "gdiplus.dll", "gdiplus.dll" } } },
-        /* dlls/msxml3, msxml4 and msxml6 manifests */
-        { "Microsoft-Windows-MSXML30", "microsoft-windows-msxml30", "31bf3856ad364e35",
-          "6.0.6000.16386", { { "msxml3.dll", "msxml3.dll" } } },
-        { "Microsoft.MSXML2", "microsoft.msxml2", "6bd6b9abf345378f", "4.1.0.0",
-          { { "msxml4.dll", "msxml4.dll" } } },
-        { "Microsoft-Windows-MSXML60", "microsoft-windows-msxml60", "31bf3856ad364e35",
-          "6.0.6000.16386", { { "msxml6.dll", "msxml6.dll" } } },
-    };
-    NSString *winsxs = [prefix stringByAppendingPathComponent:@"drive_c/windows/winsxs"];
-    NSString *manifests = [winsxs stringByAppendingPathComponent:@"manifests"];
-    NSString *source = [bundle stringByAppendingPathComponent:@"i386-windows"];
-    const size_t count = sizeof(asms) / sizeof(asms[0]);
-    int seeded = 0, skipped = 0;
-
-    [fm createDirectoryAtPath:manifests withIntermediateDirectories:YES attributes:nil error:nil];
-    for (size_t a = 0; a < count; a++)
-    {
-        const struct sxs_assembly *def = &asms[a];
-        const char *body = a == 0 ? comctl32_body : NULL;
-        NSString *first = [source stringByAppendingPathComponent:
-                           [NSString stringWithUTF8String:def->files[0].in_farm]];
-        if (![fm fileExistsAtPath:first])
-        {
-            dprintf(STDERR_FILENO, "[WineProc] winsxs: x86 %s skipped, i386-windows has no %s\n",
-                    def->name, def->files[0].in_farm);
-            skipped++;
-            continue;
-        }
-        NSString *dirName = [NSString stringWithFormat:@"x86_%s_%s_%s_none_deadbeef",
-                             def->lname, def->key, def->version];
-        NSString *asmDir = [winsxs stringByAppendingPathComponent:dirName];
-        NSString *manifest = [manifests stringByAppendingPathComponent:
-                              [dirName stringByAppendingString:@".manifest"]];
-        [fm createDirectoryAtPath:asmDir withIntermediateDirectories:YES attributes:nil error:nil];
-
-        /* Build the manifest and the directory together so the <file> list
-         * and the directory cannot disagree: a file missing from the farm is
-         * left out of both. UTF-8, LF, no BOM. */
-        NSMutableString *text = [NSMutableString stringWithString:
-            @"<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n"
-            @"<assembly xmlns=\"urn:schemas-microsoft-com:asm.v1\" manifestVersion=\"1.0\">\n"];
-        [text appendFormat:@"  <assemblyIdentity type=\"win32\" name=\"%s\" version=\"%s\" "
-                           @"processorArchitecture=\"x86\" publicKeyToken=\"%s\"/>\n",
-                           def->name, def->version, def->key];
-        BOOL ok = YES;
-        for (size_t f = 0; f < sizeof(def->files) / sizeof(def->files[0]) && def->files[f].in_assembly; f++)
-        {
-            NSString *src = [source stringByAppendingPathComponent:
-                             [NSString stringWithUTF8String:def->files[f].in_farm]];
-            NSString *link = [asmDir stringByAppendingPathComponent:
-                              [NSString stringWithUTF8String:def->files[f].in_assembly]];
-            [fm removeItemAtPath:link error:nil];  /* the bundle path changes on reinstall */
-            if (![fm fileExistsAtPath:src]) continue;
-            if (![fm createSymbolicLinkAtPath:link withDestinationPath:src error:nil]) { ok = NO; break; }
-            if (body)
-                [text appendFormat:@"  <file name=\"%s\">\n%s  </file>\n", def->files[f].in_assembly, body];
-            else
-                [text appendFormat:@"  <file name=\"%s\"/>\n", def->files[f].in_assembly];
-        }
-        [text appendString:@"</assembly>\n"];
-        if (!ok || ![[text dataUsingEncoding:NSUTF8StringEncoding] writeToFile:manifest atomically:YES])
-        {
-            dprintf(STDERR_FILENO, "[WineProc] winsxs: x86 %s FAILED\n", def->name);
-            skipped++;
-            continue;
-        }
-        seeded++;
-    }
-    dprintf(STDERR_FILENO, "[WineProc] winsxs: %d/%zu x86 assemblies seeded, %d skipped\n",
-            seeded, count, skipped);
+    NSString *farm = [bundle stringByAppendingPathComponent:farmSubdir];
+    madeira_winsxs_seed(prefix.fileSystemRepresentation, farm.fileSystemRepresentation, arch, NULL);
 }
 
 /* FEX's WOW64 module cannot call sysctl, and without an answer it assumes the
@@ -1248,9 +1113,13 @@ static void *wine_process_thread(void *arg) {
                 madeira_link_syswow64(fm, prefix, bundlePath);
                 if (is_i386_target) {
                     madeira_link_wbem(fm, prefix, bundlePath, @"syswow64", @"i386-windows");
-                    madeira_seed_winsxs_x86(fm, prefix, bundlePath);
+                    madeira_seed_winsxs(prefix, bundlePath, @"i386-windows", "x86");
                 }
             }
+
+            /* The arm64_ side-by-side store follows the session's 64-bit farm,
+             * as system32 does above (WinSxS.h). */
+            madeira_seed_winsxs(prefix, bundlePath, [NSString stringWithUTF8String:bundle_subdir], "arm64");
 
             /* ml719: REPAIR THE SHELL FOLDERS. They ship as symlinks to the BUILD
              * MACHINE's home directory.

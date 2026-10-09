@@ -68,6 +68,8 @@ find "$PREFIX/drive_c/windows/system32" -maxdepth 1 -name "*.nls" -delete 2>/dev
 rm -rf "$PREFIX/drive_c/windows/globalization"
 
 # Heavy trees we don't need for Phase 3A (cmd.exe / single-exe games)
+# winsxs holds copies of the PE builtins; the app writes the manifests and
+# links them to the bundle's farms at launch (app/Madeira/WinSxS.c, docs/WINSXS.md).
 rm -rf "$PREFIX/drive_c/windows/winsxs"
 rm -rf "$PREFIX/drive_c/windows/Microsoft.NET"
 rm -rf "$PREFIX/drive_c/windows/resources"

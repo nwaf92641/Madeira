@@ -51,6 +51,7 @@
 		A1000077 /* MadeiraConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000077 /* MadeiraConfig.swift */; };
 		A1000004 /* JITAllocator.c in Sources */ = {isa = PBXBuildFile; fileRef = A2000004 /* JITAllocator.c */; };
 		A1000D1A /* LaunchDiagnostics.c in Sources */ = {isa = PBXBuildFile; fileRef = A2000D1A /* LaunchDiagnostics.c */; };
+		A1000D1C /* WinSxS.c in Sources */ = {isa = PBXBuildFile; fileRef = A2000D1C /* WinSxS.c */; };
 		A1000005 /* EntitlementChecker.swift in Sources */ = {isa = PBXBuildFile; fileRef = A200000A /* EntitlementChecker.swift */; };
 		A1000006 /* FEXBridge.mm in Sources */ = {isa = PBXBuildFile; fileRef = A200000B /* FEXBridge.mm */; };
 		A1000010 /* libFEXCore.a in Frameworks */ = {isa = PBXBuildFile; fileRef = A2000010 /* libFEXCore.a */; };
@@ -169,6 +170,8 @@
 		A2000005 /* JITAllocator.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = JITAllocator.h; sourceTree = "<group>"; };
 		A2000D1A /* LaunchDiagnostics.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = LaunchDiagnostics.c; sourceTree = "<group>"; };
 		A2000D1B /* LaunchDiagnostics.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = LaunchDiagnostics.h; sourceTree = "<group>"; };
+		A2000D1C /* WinSxS.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = WinSxS.c; sourceTree = "<group>"; };
+		A2000D1D /* WinSxS.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = WinSxS.h; sourceTree = "<group>"; };
 		A2000006 /* Madeira-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "Madeira-Bridging-Header.h"; sourceTree = "<group>"; };
 		A2000007 /* Madeira.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Madeira.entitlements; sourceTree = "<group>"; };
 		A2000008 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
@@ -366,6 +369,8 @@
 				A2000005 /* JITAllocator.h */,
 				A2000D1A /* LaunchDiagnostics.c */,
 				A2000D1B /* LaunchDiagnostics.h */,
+				A2000D1C /* WinSxS.c */,
+				A2000D1D /* WinSxS.h */,
 				A200000B /* FEXBridge.mm */,
 				A200000C /* FEXBridge.h */,
 				A200001E /* WineServerBridge.m */,
@@ -601,6 +606,7 @@
 				A1000622 /* CompatDiagnosis.swift in Sources */,
 				A1000004 /* JITAllocator.c in Sources */,
 				A1000D1A /* LaunchDiagnostics.c in Sources */,
+				A1000D1C /* WinSxS.c in Sources */,
 				A1000005 /* EntitlementChecker.swift in Sources */,
 				A1000006 /* FEXBridge.mm in Sources */,
 				A1000020 /* WineServerBridge.m in Sources */,

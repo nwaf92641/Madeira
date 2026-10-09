@@ -39,8 +39,8 @@
 
 **التراخيص:**
 
-- كل ما أُضيف إلى المزرعة وحدات Wine ‏(LGPL، موثّقة في `docs/wine-lgpl-provenance.md`).
-- ‏Wine Mono لا يُشحن مع التطبيق، بل يضعه المستخدم بنفسه. تراخيصه (MIT/LGPL وغيرها) مذكورة في `docs/WINE_MONO.md`.
+- كل ما أُضيف إلى المزرعة وحدات Wine ‏(LGPL، موثّقة في `docs/LICENSING.md` ضمن "PE DLLs in arm64ec-windows").
+- ‏Wine Mono لا يُشحن مع التطبيق ولا يُعدَّل، بل يضعه المستخدم بنفسه. تراخيصه بحسب ملف COPYING الخاص به: ‏LGPL/MIT X11، وMS-PL، وzlib، وMIT. وهي مذكورة في `docs/WINE_MONO.md` وفي `docs/LICENSING.md`.
 - لا ملفات من Microsoft.
 
 ## 3. نتائج الاختبارات (ملخص)

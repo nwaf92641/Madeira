@@ -73,3 +73,16 @@ the 10.1.0 MSIs because its Wine is older.
     process.
 
 Not tested: ARM64EC mscoree with FEX on an iPad, and XNA / FNA games.
+
+## Licence
+
+Madeira does not ship or modify Wine Mono. The user puts the unmodified
+upstream release into `Documents/Components`; Madeira links that folder into
+the prefix. Wine Mono's own `COPYING` lists its licences: Mono under LGPL or
+MIT X11 (ICSharpCode.SharpZipLib GPL with an exception), mono-basic MIT X11,
+FNA MS-PL and MIT with zlib-licensed FAudio, FNA3D, MojoShader and SDL3, and
+winforms, wpf, monoDX, System.Speech and the remaining code MIT. See also
+`docs/LICENSING.md`.
+
+Upstream also carries `toolchain-arm64ec.cmake`; an ARM64EC build of Mono's
+runtime would avoid FEX for the runtime itself. Not tried here.

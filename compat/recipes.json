@@ -1,0 +1,614 @@
+{
+  "schema": 1,
+  "updated": "2026-10-01",
+  "_comment": "Reusable fixes. A profile or a dependency references a recipe by name and the engine applies it, so the same remedy is written once instead of being repeated for every title. Fields mean the same as in a game profile: dll_overrides, registry, env, launch_arguments, windows_version, dependencies, and requires for other recipes. 'category' is the failure class the fix belongs to (see app/Madeira/CompatDiagnosis.swift). Nothing here needs Linux, Vulkan or a Proton runtime: each recipe is an override, a registry value, an environment variable, an argument or a component.",
+  "recipes": {
+    "native-ddraw": {
+      "title": "Native ddraw",
+      "category": "dx9",
+      "summary": "Prefer the game's own ddraw.dll; Wine's builtin one lacks the DirectDraw-era behaviour some 1998-2003 titles need.",
+      "dll_overrides": {"ddraw": "n,b"},
+      "source": "protonfixes"
+    },
+    "cnc-ddraw": {
+      "title": "DirectDraw through cnc-ddraw",
+      "category": "dx9",
+      "summary": "Runs a DirectDraw game on cnc-ddraw, which keeps the game's surfaces in memory and presents them with Direct3D 9 (DXMT on Metal), for 2D DirectDraw titles that show a black screen with Wine's ddraw. 32-bit games only.",
+      "env": {"MADEIRA_DDRAW": "cnc", "MADEIRA_GAME_GDI_FULLSCREEN": "1"},
+      "dll_overrides": {"ddraw": "n,b"},
+      "notes": "The app links C:\\windows\\syswow64\\ddraw.dll to the bundle's cnc-ddraw (third_party/cnc-ddraw, MIT) for this launch only and points CNC_DDRAW_CONFIG_FILE at C:\\ProgramData\\cnc-ddraw\\ddraw.ini, whose [ddraw] renderer is direct3d9 (cnc-ddraw's auto never chooses Direct3D 9 under Wine). ddraw=n,b is what makes Wine load it instead of its builtin ddraw. MADEIRA_GAME_GDI_FULLSCREEN covers cnc-ddraw's GDI fallback, used when Direct3D 9 cannot start (the launch log then says why). A ddraw.dll the game ships beside itself still wins. docs/DIRECTDRAW.md.",
+      "source": "winlator,cnc-ddraw"
+    },
+    "native-d3d8": {
+      "title": "Native Direct3D 8",
+      "category": "dx9",
+      "summary": "Some D3D8 titles only render with a native d3d8.dll from the DirectX redistributable.",
+      "dependencies": ["d3d8"],
+      "dll_overrides": {"d3d8": "n,b"},
+      "source": "protonfixes"
+    },
+    "native-dsound": {
+      "title": "Native DirectSound",
+      "category": "audio",
+      "summary": "Titles whose mixer or EAX support exists only in the native dsound.dll.",
+      "dependencies": ["directx9"],
+      "dll_overrides": {"dsound": "n,b"},
+      "source": "protonfixes"
+    },
+    "native-winmm": {
+      "title": "Native winmm",
+      "category": "audio",
+      "summary": "Native winmm for titles that open MIDI or the MCI sequencer, or that must see a specific winmm version.",
+      "dll_overrides": {"winmm": "n,b"},
+      "source": "protonfixes"
+    },
+    "native-dinput": {
+      "title": "Native DirectInput",
+      "category": "input",
+      "summary": "Prefer the game's own dinput.dll so a bundled proxy or mapper is loaded.",
+      "dll_overrides": {"dinput": "n,b"},
+      "source": "protonfixes"
+    },
+    "broad-dinput8": {
+      "title": "Broad dinput8",
+      "category": "input",
+      "summary": "Prefer a native dinput8.dll when the game ships one, and fall back to Wine's builtin otherwise.",
+      "dll_overrides": {"dinput8": "n,b"},
+      "source": "protonfixes"
+    },
+    "builtin-dinput8": {
+      "title": "Builtin dinput8",
+      "category": "input",
+      "summary": "Force Wine's builtin dinput8 for titles broken by a native one.",
+      "dll_overrides": {"dinput8": "b"},
+      "source": "protonfixes"
+    },
+    "native-xinput": {
+      "title": "Native XInput",
+      "category": "input",
+      "summary": "Native xinput1_3/1_4 for titles that reject Wine's builtin stubs.",
+      "dependencies": ["xinput"],
+      "dll_overrides": {"xinput1_3": "n,b", "xinput1_4": "n,b"},
+      "source": "winetricks"
+    },
+    "native-winhttp": {
+      "title": "Native winhttp",
+      "category": "dependency",
+      "summary": "Native winhttp for launchers whose TLS or proxy handling fails on the builtin.",
+      "dll_overrides": {"winhttp": "n,b"},
+      "source": "protonfixes"
+    },
+    "native-dwmapi": {
+      "title": "Native dwmapi",
+      "category": "dll",
+      "summary": "Native dwmapi for titles that query DWM composition and refuse to start on the stub.",
+      "dll_overrides": {"dwmapi": "n,b"},
+      "source": "protonfixes"
+    },
+    "native-dwrite": {
+      "title": "Native dwrite",
+      "category": "dll",
+      "summary": "Native dwrite for titles whose text layout needs the real DirectWrite.",
+      "dll_overrides": {"dwrite": "n,b"},
+      "source": "protonfixes"
+    },
+    "disable-dcomp": {
+      "title": "Disable DirectComposition",
+      "category": "dx11",
+      "summary": "Titles that pick DirectComposition for their swapchain and then fail to present.",
+      "dll_overrides": {"dcomp": ""},
+      "source": "protonfixes"
+    },
+    "native-version": {
+      "title": "Native version.dll",
+      "category": "dll",
+      "summary": "Titles that read version resources from a native version.dll.",
+      "dll_overrides": {"version": "n,b"},
+      "source": "protonfixes"
+    },
+    "native-d3dcompiler": {
+      "title": "Native D3D shader compilers",
+      "category": "dx9",
+      "summary": "Native d3dcompiler_43/46/47 for titles that hit a compiler bug in the builtin compiler.",
+      "dependencies": ["d3dcompiler_43", "d3dcompiler_46", "d3dcompiler_47"],
+      "dll_overrides": {"d3dcompiler_43": "n,b", "d3dcompiler_46": "n,b", "d3dcompiler_47": "n,b"},
+      "source": "winetricks"
+    },
+    "native-d3dx9": {
+      "title": "Native D3DX9",
+      "category": "dx9",
+      "summary": "The D3DX9 helper DLLs are not implemented by Wine; a Direct3D 9 title that links them needs the native files.",
+      "dependencies": ["d3dx9"],
+      "dll_overrides": {"d3dx9_43": "n,b"},
+      "source": "winetricks"
+    },
+    "native-gdiplus": {
+      "title": "Native gdiplus",
+      "category": "dll",
+      "summary": "Native gdiplus for titles that hit a rendering or image-decoding bug in the builtin.",
+      "dependencies": ["gdiplus"],
+      "dll_overrides": {"gdiplus": "n,b"},
+      "source": "winetricks"
+    },
+    "native-msxml": {
+      "title": "Native MSXML",
+      "category": "dependency",
+      "summary": "Native MSXML 3, 4 and 6 for launchers and games that parse XML through MSXML.",
+      "dependencies": ["msxml3", "msxml4"],
+      "dll_overrides": {"msxml3": "n,b", "msxml4": "n,b"},
+      "source": "winetricks"
+    },
+    "native-richedit": {
+      "title": "Native rich edit",
+      "category": "dll",
+      "summary": "Native riched20/riched30 for titles whose in-game text or console needs the real control.",
+      "dependencies": ["riched20"],
+      "dll_overrides": {"riched20": "n,b", "riched30": "n,b"},
+      "source": "winetricks"
+    },
+    "video-quartz": {
+      "title": "Native DirectShow video",
+      "category": "media",
+      "summary": "Wine's builtin quartz has no working decoders on iOS, so titles that play a video need the native filter graph and codecs.",
+      "dependencies": ["quartz", "l3codecx"],
+      "dll_overrides": {"quartz": "n,b", "devenum": "n,b", "qasf": "n,b", "qcap": "n,b"},
+      "source": "winetricks"
+    },
+    "video-media-foundation": {
+      "title": "Media Foundation video",
+      "category": "media",
+      "summary": "Titles that decode video through Media Foundation (mfplat/mfreadwrite) instead of DirectShow.",
+      "dependencies": ["mfplat", "quartz"],
+      "dll_overrides": {"mfplat": "n,b", "mfreadwrite": "n,b", "mf": "n,b"},
+      "source": "winetricks"
+    },
+    "video-wmv": {
+      "title": "Windows Media video",
+      "category": "media",
+      "summary": "WMV/VC-1 playback, used by many intros and cutscenes.",
+      "dependencies": ["wmv9vcm", "l3codecx"],
+      "dll_overrides": {"wmvdecod": "n,b", "wmasf": "n,b"},
+      "source": "winetricks"
+    },
+    "audio-xact": {
+      "title": "XACT audio",
+      "category": "audio",
+      "summary": "xactengine2_0..3_7 plus X3DAudio/XAPOFX: the DirectX sound engine of the D3D9 era.",
+      "dependencies": ["xact"],
+      "dll_overrides": {"xactengine3_7": "n,b", "xactengine3_6": "n,b", "xaudio2_7": "n,b", "xaudio2_8": "n,b"},
+      "source": "winetricks"
+    },
+    "audio-openal": {
+      "title": "OpenAL",
+      "category": "audio",
+      "summary": "OpenAL32/wrap_oal for id Tech and other engines that ship or link OpenAL.",
+      "dependencies": ["openal"],
+      "source": "winetricks"
+    },
+    "audio-directmusic": {
+      "title": "DirectMusic",
+      "category": "audio",
+      "summary": "The DirectX 9 DirectMusic set, used by 2000s titles for soundtrack playback.",
+      "dependencies": ["directmusic"],
+      "source": "winetricks"
+    },
+    "physx-legacy": {
+      "title": "Legacy PhysX",
+      "category": "dependency",
+      "summary": "PhysXLoader/PhysXCore for titles from the Unreal Engine 3 era that link the pre-2.8 runtime.",
+      "dependencies": ["physx"],
+      "source": "winetricks"
+    },
+    "dotnet-desktop": {
+      "title": ".NET desktop runtime",
+      "category": "dependency",
+      "summary": "Titles that need the .NET Framework rather than wine-mono, at a Windows 10 version.",
+      "dependencies": ["dotnet40"],
+      "windows_version": "win10",
+      "source": "winetricks"
+    },
+    "unicode-fonts": {
+      "title": "Core and Unicode fonts",
+      "category": "other",
+      "summary": "Arial, Times, Courier and the CJK-capable fonts some engines measure text against.",
+      "dependencies": ["corefonts", "tahoma"],
+      "source": "winetricks"
+    },
+    "launcher-webview": {
+      "title": "Launcher web view",
+      "category": "dependency",
+      "summary": "Launchers and store clients that render their UI in an embedded browser need wininet/urlmon and WebView2.",
+      "dependencies": ["wininet", "urlmon", "webview2"],
+      "dll_overrides": {"wininet": "n,b", "urlmon": "n,b"},
+      "source": "winetricks"
+    },
+    "steam-offline": {
+      "title": "Steam offline launch",
+      "category": "launch",
+      "summary": "Start a Steam title as its own program in offline mode, without waiting for the client.",
+      "launch_arguments": "-offline",
+      "source": "madeira"
+    },
+    "steam-no-overlay": {
+      "title": "Disable the Steam overlay",
+      "category": "dll",
+      "summary": "The overlay hook can crash older D3D9 titles; the game still runs without it.",
+      "dll_overrides": {"gameoverlayrenderer": ""},
+      "source": "madeira"
+    },
+    "engine-dx11": {
+      "title": "Direct3D 11 renderer",
+      "category": "dx11",
+      "summary": "Unreal Engine 3 and 4 titles that default to another RHI but work through -dx11.",
+      "launch_arguments": "-dx11",
+      "source": "protonfixes"
+    },
+    "engine-dx9": {
+      "title": "Direct3D 9 renderer",
+      "category": "dx9",
+      "summary": "Titles whose Direct3D 11 path fails on DXMT but whose Direct3D 9 path works.",
+      "launch_arguments": "-dx9",
+      "source": "madeira"
+    },
+    "engine-fna-d3d11": {
+      "title": "FNA Direct3D 11 backend",
+      "category": "dx11",
+      "summary": "FNA has no OpenGL backend on iOS, so its D3D11 backend is selected explicitly.",
+      "env": {"FNA3D_FORCE_DRIVER": "D3D11"},
+      "source": "madeira"
+    },
+    "windowed-borderless": {
+      "title": "Borderless window",
+      "category": "launch",
+      "summary": "Some titles only present correctly in a borderless window on iOS.",
+      "launch_arguments": "-borderless",
+      "source": "protonfixes"
+    },
+    "skip-splash": {
+      "title": "Skip the splash screen",
+      "category": "launch",
+      "summary": "A splash that hangs on a video or a network check can be skipped.",
+      "launch_arguments": "-NoSplash",
+      "source": "protonfixes"
+    },
+    "windows-xp": {
+      "title": "Report Windows XP",
+      "category": "wine_fex",
+      "summary": "Pre-2007 titles that refuse to start on a newer reported Windows version.",
+      "windows_version": "winxp",
+      "source": "winetricks"
+    },
+    "windows-7": {
+      "title": "Report Windows 7",
+      "category": "wine_fex",
+      "summary": "Titles that check for a Windows 7-or-later API set.",
+      "windows_version": "win7",
+      "source": "winetricks"
+    },
+    "windows-10": {
+      "title": "Report Windows 10",
+      "category": "wine_fex",
+      "summary": "Titles that require Windows 10 to start or to expose their D3D11/D3D12 path.",
+      "windows_version": "win10",
+      "source": "winetricks"
+    },
+    "installer-mode-msi": {
+      "title": "MSI installation supported",
+      "category": "dependency",
+      "summary": "Wine's builtin msi can run a self-extracting redistributable's MSI payload; keep it builtin.",
+      "dll_overrides": {"msi": "b"},
+      "source": "winetricks"
+    },
+    "nocd-disc-check": {
+      "title": "Disc-check bypass",
+      "category": "drm",
+      "summary": "Titles whose SafeDisc/SecuROM check reads the original disc; no disc image can satisfy it on iOS.",
+      "source": "madeira"
+    },
+    "no-3d-for-helper": {
+      "title": "No 3D for this program",
+      "category": "launch",
+      "summary": "Tells Wine not to initialise Direct3D for a helper process: embedded browsers and launchers ask for a device they never draw with, and creating it is a graphics initialisation in the middle of a game's startup.",
+      "registry": [
+        {
+          "hive": "HKCU",
+          "key": "Software\\Wine\\AppDefaults\\{app}\\Direct3D",
+          "name": "renderer",
+          "type": "REG_SZ",
+          "value": "no3d"
+        }
+      ],
+      "notes": "Wine reads renderer=no3d from the application's own Direct3D key (dlls/wined3d/wined3d_main.c). Winlator reaches the same effect through its WINE_D3D_CONFIG variable; the registry key is upstream Wine's.",
+      "source": "wine,winlator"
+    },
+    "software-3d-renderer": {
+      "title": "Software 3D renderer",
+      "category": "launch",
+      "summary": "Runs this program's Direct3D through Wine's GDI renderer, for a launcher or a browser helper that asks for a device but never draws with it.",
+      "registry": [
+        {
+          "hive": "HKCU",
+          "key": "Software\\Wine\\AppDefaults\\{app}\\Direct3D",
+          "name": "renderer",
+          "type": "REG_SZ",
+          "value": "gdi"
+        }
+      ],
+      "source": "winlator"
+    },
+    "legacy-d3d-tuning": {
+      "title": "Legacy Direct3D configuration",
+      "category": "dx9",
+      "summary": "The DirectDraw/Direct3D 8 era Windows settings: a fixed adapter identity and video memory report, a multithreaded command stream and strict shader arithmetic. Titles of that era size their buffers, pick their detail level and choose their renderer from what the adapter claims, and mis-detect a modern one.",
+      "registry": [
+        {
+          "hive": "HKCU",
+          "key": "Software\\Wine\\AppDefaults\\{app}\\Direct3D",
+          "name": "csmt",
+          "type": "REG_DWORD",
+          "value": "3"
+        },
+        {
+          "hive": "HKCU",
+          "key": "Software\\Wine\\AppDefaults\\{app}\\Direct3D",
+          "name": "VideoMemorySize",
+          "type": "REG_SZ",
+          "value": "2048"
+        },
+        {
+          "hive": "HKCU",
+          "key": "Software\\Wine\\AppDefaults\\{app}\\Direct3D",
+          "name": "VideoPciVendorID",
+          "type": "REG_DWORD",
+          "value": "4318"
+        },
+        {
+          "hive": "HKCU",
+          "key": "Software\\Wine\\AppDefaults\\{app}\\Direct3D",
+          "name": "VideoPciDeviceID",
+          "type": "REG_DWORD",
+          "value": "1728"
+        },
+        {
+          "hive": "HKCU",
+          "key": "Software\\Wine\\AppDefaults\\{app}\\Direct3D",
+          "name": "strict_shader_math",
+          "type": "REG_DWORD",
+          "value": "1"
+        }
+      ],
+      "notes": "Wine's own wined3d settings, which Winlator passes through WINE_D3D_CONFIG (WineD3DConfigDialog.java); the ids are its default card in gpu_cards.json (vendor 4318 = 0x10de, device 1728 = 0x06c0). They only take effect on the wined3d path, which Madeira reaches through a DirectDraw wrapper or a native d3d8; D3D9/10/11 through DXMT ignore them, and DXMT's equivalents are DXMT_MAX_VRAM_MB and dxgi.customVendorId/customDeviceId.",
+      "source": "wine,winlator"
+    },
+    "directshow-wave-renderer": {
+      "title": "DirectShow wave audio renderer",
+      "category": "audio",
+      "summary": "Registers the Wave Audio Renderer filter in the DirectShow filter category, so a title that builds its playback graph by filter class finds an audio device. Without the registration such a title plays silently, and some never leave their first splash.",
+      "registry": [
+        {
+          "hive": "HKLM",
+          "key": "Software\\Classes\\Wow6432Node\\CLSID\\{E30629D1-27E5-11CE-875D-00608CB78066}\\Instance\\{083863F1-70DE-11D0-BD40-00A0C911CE86}",
+          "name": "CLSID",
+          "type": "REG_SZ",
+          "value": "E30629D1-27E5-11CE-875D-00608CB78066"
+        },
+        {
+          "hive": "HKLM",
+          "key": "Software\\Classes\\Wow6432Node\\CLSID\\{E30629D1-27E5-11CE-875D-00608CB78066}\\Instance\\{083863F1-70DE-11D0-BD40-00A0C911CE86}",
+          "name": "FriendlyName",
+          "type": "REG_SZ",
+          "value": "Wave Audio Renderer"
+        },
+        {
+          "hive": "HKLM",
+          "key": "Software\\Classes\\Wow6432Node\\CLSID\\{E30629D1-27E5-11CE-875D-00608CB78066}\\Instance\\{083863F1-70DE-11D0-BD40-00A0C911CE86}",
+          "name": "FilterData",
+          "type": "REG_BINARY",
+          "value": "02 00 00 00 00 00 80 00 01 00 00 00 00 00 00 00 30 70 69 33 02 00 00 00 00 00 00 00 01 00 00 00 00 00 00 00 00 00 00 00 30 74 79 33 00 00 00 00 38 00 00 00 48 00 00 00 61 75 64 73 00 00 10 00 80 00 00 aa 00 38 9b 71 01 00 00 00 00 00 10 00 80 00 00 aa 00 38 9b 71"
+        },
+        {
+          "hive": "HKLM",
+          "key": "Software\\Classes\\CLSID\\{E30629D1-27E5-11CE-875D-00608CB78066}\\Instance\\{083863F1-70DE-11D0-BD40-00A0C911CE86}",
+          "name": "CLSID",
+          "type": "REG_SZ",
+          "value": "E30629D1-27E5-11CE-875D-00608CB78066"
+        },
+        {
+          "hive": "HKLM",
+          "key": "Software\\Classes\\CLSID\\{E30629D1-27E5-11CE-875D-00608CB78066}\\Instance\\{083863F1-70DE-11D0-BD40-00A0C911CE86}",
+          "name": "FriendlyName",
+          "type": "REG_SZ",
+          "value": "Wave Audio Renderer"
+        },
+        {
+          "hive": "HKLM",
+          "key": "Software\\Classes\\CLSID\\{E30629D1-27E5-11CE-875D-00608CB78066}\\Instance\\{083863F1-70DE-11D0-BD40-00A0C911CE86}",
+          "name": "FilterData",
+          "type": "REG_BINARY",
+          "value": "02 00 00 00 00 00 80 00 01 00 00 00 00 00 00 00 30 70 69 33 02 00 00 00 00 00 00 00 01 00 00 00 00 00 00 00 00 00 00 00 30 74 79 33 00 00 00 00 38 00 00 00 48 00 00 00 61 75 64 73 00 00 10 00 80 00 00 aa 00 38 9b 71 01 00 00 00 00 00 10 00 80 00 00 aa 00 38 9b 71"
+        }
+      ],
+      "notes": "Wine's builtin quartz registers its own audio renderer, so this matters once a native DirectShow payload (native-quartz, wmv9vcm) is installed and the registration has to point at it. The values are Winlator's, which registers the filter when it uses its native directsound component.",
+      "source": "winlator"
+    },
+    "winegstreamer-off": {
+      "title": "Built-in streaming decoder off",
+      "category": "media",
+      "summary": "Disables winegstreamer, the component that decodes WMA, ASF and MPEG streams for Wine's DirectShow. Some titles fail inside it and play correctly through their own or a native decoder.",
+      "dll_overrides": {"winegstreamer": ""},
+      "notes": "On Madeira winegstreamer is the decoder itself (docs/MEDIA.md), so this only helps when a native codec payload is installed; alone it removes playback instead of fixing it. Winlator ships native codecs with its prefixes, which is why its fix for those titles is to disable the built-in one.",
+      "source": "winlator"
+    },
+    "mouse-grab-force": {
+      "title": "Force mouse warping",
+      "category": "input",
+      "summary": "Makes Wine warp the pointer to the centre of the window whenever a title re-acquires the mouse in exclusive mode. Titles that do their own mouse look and expect the pointer to be recentred need it.",
+      "registry": [
+        {
+          "hive": "HKCU",
+          "key": "Software\\Wine\\DirectInput",
+          "name": "MouseWarpOverride",
+          "type": "REG_SZ",
+          "value": "force"
+        }
+      ],
+      "source": "wine"
+    },
+    "mouse-grab-disable": {
+      "title": "Disable mouse warping",
+      "category": "input",
+      "summary": "Stops Wine recentring the pointer when a title acquires the mouse. Fixes titles whose camera spins, or whose menus cannot be clicked, because the pointer is moved out from under them.",
+      "registry": [
+        {
+          "hive": "HKCU",
+          "key": "Software\\Wine\\DirectInput",
+          "name": "MouseWarpOverride",
+          "type": "REG_SZ",
+          "value": "disable"
+        }
+      ],
+      "source": "wine"
+    },
+    "windows-services-minimal": {
+      "title": "Windows services a game does not need",
+      "category": "launch",
+      "summary": "Disables the services Windows uses for updates, printing, imaging and remote access. Wine implements them, so they start with the prefix and answer the service control manager in every session, and a game never asks for any of them.",
+      "registry": [
+        {
+          "hive": "HKLM",
+          "key": "System\\ControlSet001\\Services\\BITS",
+          "name": "Start",
+          "type": "REG_DWORD",
+          "value": "4"
+        },
+        {
+          "hive": "HKLM",
+          "key": "System\\ControlSet001\\Services\\wuauserv",
+          "name": "Start",
+          "type": "REG_DWORD",
+          "value": "4"
+        },
+        {
+          "hive": "HKLM",
+          "key": "System\\ControlSet001\\Services\\TermService",
+          "name": "Start",
+          "type": "REG_DWORD",
+          "value": "4"
+        },
+        {
+          "hive": "HKLM",
+          "key": "System\\ControlSet001\\Services\\LanmanServer",
+          "name": "Start",
+          "type": "REG_DWORD",
+          "value": "4"
+        },
+        {
+          "hive": "HKLM",
+          "key": "System\\ControlSet001\\Services\\HTTP",
+          "name": "Start",
+          "type": "REG_DWORD",
+          "value": "4"
+        },
+        {
+          "hive": "HKLM",
+          "key": "System\\ControlSet001\\Services\\StiSvc",
+          "name": "Start",
+          "type": "REG_DWORD",
+          "value": "4"
+        },
+        {
+          "hive": "HKLM",
+          "key": "System\\ControlSet001\\Services\\Spooler",
+          "name": "Start",
+          "type": "REG_DWORD",
+          "value": "4"
+        }
+      ],
+      "notes": "Start=3 is demand start and 4 is disabled, and Wine creates these keys itself; Winlator rewrites the same values for its container (its list also covers phone, bluetooth and search services Wine does not have). CurrentControlSet is a symlink to ControlSet001 in a Wine prefix, so the value is written under the real name.",
+      "source": "winlator"
+    },
+    "fex-strong-memory": {
+      "title": "Strict memory ordering",
+      "category": "wine_fex",
+      "summary": "Turns on FEX's emulation of the x86 memory model's total store order. Titles whose threads rely on x86 ordering without explicit barriers hang, corrupt state or crash when the emulator reorders them; making the emulator strict costs speed and fixes them.",
+      "env": {"FEX_TSOENABLED": "1"},
+      "notes": "The FEX form of the box64 setting Winlator applies to these titles (BOX64_DYNAREC_STRONGMEM=1 in box64/default.box64rc). FEX is Madeira's x86 emulator (docs/LIBRARY.md, docs/WOW64.md) and the variable is FEX's own; app/Madeira/ConfigCatalog.swift already names env.FEX_TSOENABLED as the way to set it.",
+      "source": "winlator,fex"
+    },
+    "dxmt-gpu-identity": {
+      "title": "Report a known adapter",
+      "category": "dx11",
+      "summary": "Reports a specific video card to the game instead of the Apple GPU. Titles that refuse to start, disable their high quality assets or choose the wrong renderer for an adapter they do not recognise are given one from their own era.",
+      "env": {
+        "DXMT_CONFIG": "dxgi.customVendorId=10de;dxgi.customDeviceId=06c0;dxgi.customDeviceDesc=NVIDIA GeForce GTX 480"
+      },
+      "notes": "DXMT applies exactly this to Genshin Impact, Yuanshen and Zenless Zone Zero by itself (dxmt:src/util/config/config.cpp g_profiles); the recipe exists so a profile can apply it to another title. The ids are Winlator's default card in gpu_cards.json (GeForce GTX 480, vendor 4318 = 0x10de, device 1728 = 0x06c0); DXMT parses them as exactly four hexadecimal digits.",
+      "source": "winlator,dxmt"
+    },
+    "dxmt-force-sdr": {
+      "title": "Force standard dynamic range",
+      "category": "dx11",
+      "summary": "Makes DXMT present in standard dynamic range when a title mis-detects HDR support and shows washed out or black frames.",
+      "env": {"DXMT_CONFIG": "dxgi.forceSDR=True"},
+      "notes": "DXMT applies this to OMORI by itself; the recipe makes the same remedy available to another title.",
+      "source": "dxmt"
+    },
+    "dxmt-ignore-map-flag-nowait": {
+      "title": "Ignore the no-wait map flag",
+      "category": "dx11",
+      "summary": "Treats a buffer map with D3D11_MAP_FLAG_DO_NOT_WAIT as a normal map. Titles that map a staging buffer that way and never retry read an empty or torn buffer.",
+      "env": {"DXMT_CONFIG": "d3d11.ignoreMapFlagNoWait=True"},
+      "notes": "DXMT applies this to Sonic X Shadow Generations by itself.",
+      "source": "dxmt"
+    },
+    "dxmt-sample-nan-to-zero": {
+      "title": "Sanitise shader NaNs",
+      "category": "dx11",
+      "summary": "Returns zero instead of a NaN from shader arithmetic, as Direct3D does and Metal does not. Titles that feed an uninitialised value into a shader then draw black or invisible geometry.",
+      "env": {"DXMT_CONFIG": "d3d11.sampleNaNToZero=True"},
+      "notes": "DXMT applies this to Outcast: A New Beginning by itself.",
+      "source": "dxmt"
+    },
+    "dxmt-defuse-fma": {
+      "title": "Separate fused multiply-add",
+      "category": "dx11",
+      "summary": "Splits fused multiply-add instructions, whose single rounding differs from Direct3D's two. Titles whose shaders compare against an exact value drift or flicker without it.",
+      "env": {"DXMT_CONFIG": "d3d11.defuseFma=True"},
+      "notes": "DXMT applies this to Shadow of the Tomb Raider by itself.",
+      "source": "dxmt"
+    },
+    "dxmt-feature-level-12-1": {
+      "title": "Report feature level 12_1",
+      "category": "dx12",
+      "summary": "Raises the reported Direct3D 11 feature level to 12_1, so a title that gates its renderer on the feature level takes the path it expects.",
+      "env": {"DXMT_CONFIG": "d3d11.maxFeatureLevel=12_1"},
+      "notes": "DXMT applies this to Helldivers 2 by itself.",
+      "source": "dxmt"
+    },
+    "dxmt-vram-report": {
+      "title": "Fixed video memory report",
+      "category": "dx9",
+      "summary": "Reports a fixed amount of video memory to a Direct3D 9 title. Unified memory otherwise makes them allocate as if the whole device were available, or fall back to recreating every resource each frame.",
+      "env": {"DXMT_MAX_VRAM_MB": "2048"},
+      "notes": "DXMT_MAX_VRAM_MB belongs to Madeira's DXMT (app/Madeira/ConfigCatalog.generated.swift, research/dxmt/src/d3d9/d3d9_device.cpp): the Direct3D 9 counterpart of wined3d's VideoMemorySize in legacy-d3d-tuning.",
+      "source": "madeira"
+    },
+    "steam-client-compat": {
+      "title": "Steam client on Wine",
+      "category": "launch",
+      "summary": "Starts the Steam client with its embedded browser's GPU, sandbox and seccomp paths off, and disables the overlay and the DirectX setup helper, so no other component takes over the session.",
+      "launch_arguments": "-noshaders -nooverlay -no-browser -nocrashmonitor -no-shared-textures -cef-disable-gpu -cef-disable-gpu-compositing -cef-disable-gpu-sandbox -cef-disable-d3d11 -cef-disable-sandbox -no-cef-sandbox -cef-disable-seccomp-sandbox",
+      "dll_overrides": {
+        "gameoverlayrenderer": "",
+        "gameoverlayrenderer64": "",
+        "gameoverlayui.exe": "",
+        "gameoverlayui64.exe": "",
+        "x86launcher.exe": "",
+        "x64launcher.exe": "",
+        "dxsetup.exe": ""
+      },
+      "notes": "Winlator's steam.exe section (box64/default.box64rc). The flags are the Steam client's own, the overrides keep the overlay and the DirectX installer from being loaded, and Winlator additionally runs a pre-exec hook for this executable, which Madeira has no equivalent of.",
+      "source": "winlator"
+    }
+  }
+}

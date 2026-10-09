@@ -318,6 +318,10 @@ static void ios_register_proc_socket(void *peb_id, int fd)
         return;
     }
     ios_fdt_reg( fd, FDT_MASTER, peb_id );
+    {   /* process_ios.c: the child booted far enough to keep a waiting session */
+        extern void madeira_child_socket_registered( int fd );
+        madeira_child_socket_registered( fd );
+    }
     ios_proc_sockets[idx].fd = fd;
     ios_proc_sockets[idx].exiting = FALSE;
     __sync_synchronize();
@@ -3503,6 +3507,12 @@ void process_exit_wrapper( int status )
          * last moment we have one while still on the owning process's thread. */
         ios_retire_own_fixed_base_image( dead_peb );
         ios_fdt_note_close( ios_proc_sockets[i].fd, "exit-master", dead_peb );
+        {   /* process_ios.c: this child no longer keeps a waiting session, whichever
+             * thread ended it (a worker thread's ExitProcess never returns to the
+             * boot thread that would otherwise release it) */
+            extern void madeira_child_socket_closed( int fd );
+            madeira_child_socket_closed( ios_proc_sockets[i].fd );
+        }
         close( ios_proc_sockets[i].fd );
         ios_proc_sockets[i].peb = NULL;
         /* ml571: drop this pseudo-process's fd cache and close what it held.

@@ -50,6 +50,9 @@
 		A1000003 /* LogStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000003 /* LogStore.swift */; };
 		A1000077 /* MadeiraConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000077 /* MadeiraConfig.swift */; };
 		A1000004 /* JITAllocator.c in Sources */ = {isa = PBXBuildFile; fileRef = A2000004 /* JITAllocator.c */; };
+		A1000D1A /* LaunchDiagnostics.c in Sources */ = {isa = PBXBuildFile; fileRef = A2000D1A /* LaunchDiagnostics.c */; };
+		A1000D1C /* WinSxS.c in Sources */ = {isa = PBXBuildFile; fileRef = A2000D1C /* WinSxS.c */; };
+		A1000D1E /* WineMono.c in Sources */ = {isa = PBXBuildFile; fileRef = A2000D1E /* WineMono.c */; };
 		A1000005 /* EntitlementChecker.swift in Sources */ = {isa = PBXBuildFile; fileRef = A200000A /* EntitlementChecker.swift */; };
 		A1000006 /* FEXBridge.mm in Sources */ = {isa = PBXBuildFile; fileRef = A200000B /* FEXBridge.mm */; };
 		A1000010 /* libFEXCore.a in Frameworks */ = {isa = PBXBuildFile; fileRef = A2000010 /* libFEXCore.a */; };
@@ -83,6 +86,7 @@
 		A1000070 /* Winios/Winios.m in Sources */ = {isa = PBXBuildFile; fileRef = A2000070 /* Winios/Winios.m */; };
 		A1000080 /* arm64ec-windows in Resources */ = {isa = PBXBuildFile; fileRef = A2000080 /* arm64ec-windows */; };
 		A1000210 /* i386-windows in Resources */ = {isa = PBXBuildFile; fileRef = A2000210 /* i386-windows */; };
+		A1000211 /* cnc-ddraw in Resources */ = {isa = PBXBuildFile; fileRef = A2000211 /* cnc-ddraw */; };
 		A1000081 /* x86_64-vcruntime in Resources */ = {isa = PBXBuildFile; fileRef = A2000081 /* x86_64-vcruntime */; };
 		A1000090 /* libgnutls.a in Frameworks */ = {isa = PBXBuildFile; fileRef = A2000090 /* libgnutls.a */; };
 		A1000091 /* libhogweed.a in Frameworks */ = {isa = PBXBuildFile; fileRef = A2000091 /* libhogweed.a */; };
@@ -106,6 +110,10 @@
 		A1000202 /* FPSOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000202 /* FPSOverlay.swift */; };
 		A1000400 /* Library.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000400 /* Library.swift */; };
 		A1000401 /* GuestDisplay.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000401 /* GuestDisplay.swift */; };
+		A1000620 /* GameCompat.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000620 /* GameCompat.swift */; };
+		A1000621 /* GameCompatView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000621 /* GameCompatView.swift */; };
+		A1000622 /* CompatDiagnosis.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000622 /* CompatDiagnosis.swift */; };
+		A1000622 /* compat.json in Resources */ = {isa = PBXBuildFile; fileRef = A2000622 /* compat.json */; };
 		A1000243 /* GamepadInput.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000243 /* GamepadInput.swift */; };
 		A1000244 /* Winios/WiniosGamepad.c in Sources */ = {isa = PBXBuildFile; fileRef = A2000244 /* Winios/WiniosGamepad.c */; };
 		A1000203 /* HardwareInput.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000203 /* HardwareInput.swift */; };
@@ -162,6 +170,12 @@
 		A2000077 /* MadeiraConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MadeiraConfig.swift; sourceTree = "<group>"; };
 		A2000004 /* JITAllocator.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = JITAllocator.c; sourceTree = "<group>"; };
 		A2000005 /* JITAllocator.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = JITAllocator.h; sourceTree = "<group>"; };
+		A2000D1A /* LaunchDiagnostics.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = LaunchDiagnostics.c; sourceTree = "<group>"; };
+		A2000D1B /* LaunchDiagnostics.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = LaunchDiagnostics.h; sourceTree = "<group>"; };
+		A2000D1C /* WinSxS.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = WinSxS.c; sourceTree = "<group>"; };
+		A2000D1D /* WinSxS.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = WinSxS.h; sourceTree = "<group>"; };
+		A2000D1E /* WineMono.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = WineMono.c; sourceTree = "<group>"; };
+		A2000D1F /* WineMono.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = WineMono.h; sourceTree = "<group>"; };
 		A2000006 /* Madeira-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "Madeira-Bridging-Header.h"; sourceTree = "<group>"; };
 		A2000007 /* Madeira.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Madeira.entitlements; sourceTree = "<group>"; };
 		A2000008 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
@@ -205,6 +219,7 @@
 		A2000071 /* Winios/Winios.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = Winios/Winios.h; sourceTree = "<group>"; };
 		A2000080 /* arm64ec-windows */ = {isa = PBXFileReference; lastKnownFileType = folder; path = "arm64ec-windows"; sourceTree = "<group>"; };
 		A2000210 /* i386-windows */ = {isa = PBXFileReference; lastKnownFileType = folder; path = "i386-windows"; sourceTree = "<group>"; };
+		A2000211 /* cnc-ddraw */ = {isa = PBXFileReference; lastKnownFileType = folder; path = "cnc-ddraw"; sourceTree = "<group>"; };
 		A2000081 /* x86_64-vcruntime */ = {isa = PBXFileReference; lastKnownFileType = folder; path = "x86_64-vcruntime"; sourceTree = "<group>"; };
 		A2000090 /* libgnutls.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; path = libgnutls.a; sourceTree = "<group>"; };
 		A2000091 /* libhogweed.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; path = libhogweed.a; sourceTree = "<group>"; };
@@ -228,6 +243,10 @@
 		A2000202 /* FPSOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FPSOverlay.swift; sourceTree = "<group>"; };
 		A2000400 /* Library.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Library.swift; sourceTree = "<group>"; };
 		A2000401 /* GuestDisplay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GuestDisplay.swift; sourceTree = "<group>"; };
+		A2000620 /* GameCompat.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameCompat.swift; sourceTree = "<group>"; };
+		A2000621 /* GameCompatView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameCompatView.swift; sourceTree = "<group>"; };
+		A2000622 /* CompatDiagnosis.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompatDiagnosis.swift; sourceTree = "<group>"; };
+		A2000622 /* compat.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = compat.json; sourceTree = "<group>"; };
 		A2000243 /* GamepadInput.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "GamepadInput.swift"; sourceTree = "<group>"; };
 		A2000244 /* Winios/WiniosGamepad.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = "Winios/WiniosGamepad.c"; sourceTree = "<group>"; };
 		A2000203 /* HardwareInput.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HardwareInput.swift; sourceTree = "<group>"; };
@@ -347,8 +366,18 @@
 				A2000202 /* FPSOverlay.swift */,
 				A2000400 /* Library.swift */,
 				A2000401 /* GuestDisplay.swift */,
+				A2000620 /* GameCompat.swift */,
+				A2000621 /* GameCompatView.swift */,
+				A2000622 /* CompatDiagnosis.swift */,
+				A2000622 /* compat.json */,
 				A2000004 /* JITAllocator.c */,
 				A2000005 /* JITAllocator.h */,
+				A2000D1A /* LaunchDiagnostics.c */,
+				A2000D1B /* LaunchDiagnostics.h */,
+				A2000D1C /* WinSxS.c */,
+				A2000D1D /* WinSxS.h */,
+				A2000D1E /* WineMono.c */,
+				A2000D1F /* WineMono.h */,
 				A200000B /* FEXBridge.mm */,
 				A200000C /* FEXBridge.h */,
 				A200001E /* WineServerBridge.m */,
@@ -362,6 +391,7 @@
 				A20000F1 /* legal */,
 				A2000080 /* arm64ec-windows */,
 				A2000210 /* i386-windows */,
+				A2000211 /* cnc-ddraw */,
 				A20000D1 /* d3d12 */,
 				A20000D2 /* licenses */,
 				A2000081 /* x86_64-vcruntime */,
@@ -492,11 +522,13 @@
 				A10000F1 /* legal in Resources */,
 				A1000080 /* arm64ec-windows in Resources */,
 				A1000210 /* i386-windows in Resources */,
+				A1000211 /* cnc-ddraw in Resources */,
 				A10000D1 /* d3d12 in Resources */,
 				A10000D2 /* licenses in Resources */,
 				A1000081 /* x86_64-vcruntime in Resources */,
 				A1000040 /* prefix-template.tar.gz in Resources */,
 				A1000094 /* cacert.pem in Resources */,
+				A1000622 /* compat.json in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -578,7 +610,13 @@
 				A1000202 /* FPSOverlay.swift in Sources */,
 				A1000400 /* Library.swift in Sources */,
 				A1000401 /* GuestDisplay.swift in Sources */,
+				A1000620 /* GameCompat.swift in Sources */,
+				A1000621 /* GameCompatView.swift in Sources */,
+				A1000622 /* CompatDiagnosis.swift in Sources */,
 				A1000004 /* JITAllocator.c in Sources */,
+				A1000D1A /* LaunchDiagnostics.c in Sources */,
+				A1000D1C /* WinSxS.c in Sources */,
+				A1000D1E /* WineMono.c in Sources */,
 				A1000005 /* EntitlementChecker.swift in Sources */,
 				A1000006 /* FEXBridge.mm in Sources */,
 				A1000020 /* WineServerBridge.m in Sources */,

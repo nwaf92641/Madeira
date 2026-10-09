@@ -3,6 +3,7 @@
 #import "WineServerBridge.h"
 #import "WineProcessBridge.h"
 #import "IOSDisplayShim.h"
+#import "LaunchDiagnostics.h"
 #import "Winios/Winios.h"
 #import "Winios/WiniosCursor.h"
 // Steam content decoders (liblzma shim, zstd decoder, zip chunks), used by the owned library's downloads.

@@ -1,0 +1,147 @@
+{
+ "schema": 1,
+ "updated": "2026-10-01",
+ "_comment": "General compatibility rules: a fix that follows from what a program *is* (the DLLs it imports, the files beside it, its name, its architecture) rather than from which title it is. They apply to any executable, known or not, which is what makes an unprofiled program work without a profile. A rule's conditions all have to hold; within one condition list any name is enough. `remedies` maps a diagnosis category (CompatDiagnosis.swift) to the variation tried on the next launch when a session failed that way, so an unknown program is retried with the fix for what actually went wrong instead of being retried blindly.",
+ "rules": [
+  {
+   "id": "media-foundation-64bit",
+   "title": "64-bit Media Foundation",
+   "when": {
+    "imports": ["mfplat", "mfreadwrite", "mf", "mfcore"],
+    "bits": 64
+   },
+   "env": {
+    "MADEIRA_WG_64BIT": "1"
+   },
+   "note": "A 64-bit program that decodes through Media Foundation needs the runtime's real media unix side; without MADEIRA_WG_64BIT=1 it gets the stub table and playback fails. 32-bit (WoW64) callers have it by default, so this is set only for 64-bit images. See docs/MEDIA.md.",
+   "source": "madeira"
+  },
+  {
+   "id": "helper-no-3d",
+   "title": "Helper process, no Direct3D",
+   "when": {
+    "executable_contains": ["crashhandler", "crashreport", "crashpad", "webhelper", "bugreporter"]
+   },
+   "recipes": ["no-3d-for-helper"],
+   "note": "Crash handlers, web helpers and reporters ask Wine for a Direct3D device they never draw with; creating it is a graphics initialisation in the middle of the game's startup. This program runs without one.",
+   "source": "madeira"
+  },
+  {
+   "id": "embedded-browser",
+   "title": "Embedded browser launcher",
+   "when": {
+    "imports": ["libcef", "cef", "cef_child", "chrome_elf"],
+    "files": ["libcef", "cef", "chrome_elf", "chrome_elf64"]
+   },
+   "dll_overrides": {
+    "wininet": "n,b",
+    "urlmon": "n,b"
+   },
+   "recipes": ["no-3d-for-helper"],
+   "note": "A launcher that renders its UI in an embedded browser (CEF/Chromium) wants the native wininet/urlmon ahead of Wine's builtin ones, and does not need a Direct3D device.",
+   "source": "madeira"
+  },
+  {
+   "id": "legacy-directdraw",
+   "title": "DirectDraw-era Direct3D",
+   "when": {
+    "imports": ["ddraw", "d3d8"]
+   },
+   "recipes": ["legacy-d3d-tuning"],
+   "note": "Titles that link DirectDraw or Direct3D 8 size their buffers, pick their detail level and choose a renderer from what the adapter claims, and mis-detect a modern one. The adapter identity and video-memory report are fixed for this program; nothing here changes a title that does not link them.",
+   "source": "winlator,winetricks"
+  },
+  {
+   "id": "steam-drm-stub",
+   "title": "Steam DRM stub",
+   "when": {
+    "files": ["steamstub", "steamstub_var", "steam_api", "steam_api64", "steamclient", "steamclient64"]
+   },
+   "dependencies": ["steamworks"],
+   "note": "A Steam-wrapped executable needs a running Steam client for its DRM handshake. Madeira Dock starts Steam for exactly this; a DRM-free build of the same title needs nothing.",
+   "source": "madeira"
+  },
+  {
+   "id": "anticheat-eac-files",
+   "title": "Easy Anti-Cheat files",
+   "when": {
+    "files": ["easyanticheat", "easyanticheat_x64", "easyanticheat_x86", "easyanticheat_eos", "easyanticheat_eos_x64", "eac_launcher"]
+   },
+   "dependencies": ["eac"],
+   "note": "The Easy Anti-Cheat runtime is beside the program, so this launch is either an online anti-cheat title (cannot work on iOS) or an offline title that merely bundles it (runs without it). Reported before the first session instead of after a crash.",
+   "source": "madeira"
+  },
+  {
+   "id": "anticheat-battleye-files",
+   "title": "BattlEye files",
+   "when": {
+    "files": ["beclient", "beclient_x64", "beclient_x86", "beservice", "bedaisy", "battleye"]
+   },
+   "dependencies": ["battleye"],
+   "note": "The BattlEye client and service are beside the program. Same split as Easy Anti-Cheat: online play cannot be supported, an offline title that bundles it still can.",
+   "source": "madeira"
+  },
+  {
+   "id": "gfwl-client",
+   "title": "Games for Windows LIVE client",
+   "when": {
+    "files": ["gfwlivesetup", "xlivesetup", "gfwlclient"]
+   },
+   "dependencies": ["gfwl"],
+   "note": "The game ships the Games for Windows LIVE installer, or its own updater runs it. The client cannot be installed on Madeira and the LIVE service is gone, so a title that needs sign-in stops there; a title that only links xlive.dll for an offline mode is unaffected.",
+   "source": "madeira"
+  },
+  {
+   "id": "drm-files",
+   "title": "Copy protection files",
+   "when": {
+    "files": ["vmprotect", "themida", "denuvo", "securom", "safedisc", "starforce", "cdialog", "protect"]
+   },
+   "dependencies": ["drm-generic"],
+   "note": "A known copy-protection runtime is beside the program. These need kernel and hypervisor behaviour iOS does not expose; a DRM-free build of the same title is the way to play it.",
+   "source": "madeira"
+  }
+ ],
+ "remedies": {
+  "dx9": {
+   "name": "Legacy Direct3D settings",
+   "recipes": ["legacy-d3d-tuning", "native-d3d8"],
+   "note": "A Direct3D 9/8/7 failure after the first attempt is retried with the DirectDraw-era adapter identity, video-memory report and shader arithmetic, plus the native Direct3D 8 DLL when one is present."
+  },
+  "dx11": {
+   "name": "DirectComposition disabled",
+   "recipes": ["disable-dcomp"],
+   "note": "Titles that pick DirectComposition for their swapchain and then fail to present are retried with Wine's own DirectComposition."
+  },
+  "media": {
+   "name": "Native DirectShow path",
+   "recipes": ["directshow-wave-renderer", "video-quartz"],
+   "note": "After a video failure the DirectShow wave renderer is registered and the native filter graph preferred, which is what titles that build a graph by filter class need."
+  },
+  "audio": {
+   "name": "DirectShow and XACT audio",
+   "recipes": ["directshow-wave-renderer", "audio-xact"],
+   "note": "After an audio failure the DirectShow wave renderer is registered and the XACT/XAudio2 components are added when they are present."
+  },
+  "input": {
+   "name": "Broad DirectInput",
+   "recipes": ["broad-dinput8"],
+   "note": "A program that ships its own DirectInput wrapper and fails to read input is retried preferring the shipped dinput8.dll, falling back to Wine's builtin."
+  },
+  "launch": {
+   "name": "Software Direct3D device",
+   "recipes": ["software-3d-renderer"],
+   "note": "A program that starts but never presents a frame is retried with Wine's GDI renderer. It is a registry change rather than a launch argument, because an unknown program can misread an argument it does not know."
+  },
+  "wine_fex": {
+   "name": "Strict x86 memory ordering",
+   "recipes": ["fex-strong-memory"],
+   "note": "After an unimplemented call, a hang or an emulator crash, FEX is retried with the x86 total-store-order model emulated, which is what titles whose threads rely on it need."
+  },
+  "dependency": {
+   "name": "Windows 7 behaviour",
+   "recipes": ["windows-7"],
+   "note": "Some missing-component reports are a version check. The next attempt reports Windows 7, which exposes the older API set the title is looking for."
+  }
+ }
+}

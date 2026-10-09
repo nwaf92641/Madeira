@@ -196,6 +196,17 @@ struct LibraryEntry: Codable, Identifiable {
     /// D3D9 anisotropic filtering limit (DXMT_D9_ANISO_LIMIT: 1, 2, 4 or 8);
     /// nil = the application's own choice.
     var anisotropyLimit: Int?
+    /// The user's game-compatibility override for this entry (GameCompat.swift).
+    /// nil means fully automatic: the compatibility database decides. Anything
+    /// set here wins over the database and applies to this game's launches only.
+    var compat: CompatOverrides?
+    /// Which compatibility alternative to try (GameCompat.swift). A title with
+    /// fallbacks advances this automatically when an attempt fails, so the next
+    /// launch tries the next configuration without the user changing anything.
+    var compatAttempt: Int?
+    /// How the last session ended: works, works with problems or did not work,
+    /// with the failure classified (CompatDiagnosis.swift).
+    var compatResult: CompatResult?
     /// A Steam game (SteamGames.swift): Madeira Dock starts it by this App ID
     /// through Valve's client, with Steam's default launch option.
     /// `relativePath` is then its install folder, relative to drive_c.
@@ -281,6 +292,106 @@ struct LibraryEntry: Codable, Identifiable {
         madeira_set_vsync_locked(effectiveFPSMode)
         fputs("[frontend] launch profile applied\n", stderr)
         LogStore.shared.log("[display-shape] resolution=\(resolution) mode=\(displayMode.rawValue)")
+        applyCompatibility()
+    }
+
+    /// Everything the compatibility engine needs to know about this launch.
+    /// Built fresh each time: applying the plan and recording the result must
+    /// see the same input.
+    func compatLaunch() -> CompatLaunch {
+        CompatLaunch(
+            executable: (launchRelativePath as NSString).lastPathComponent,
+            relativePath: launchRelativePath,
+            appid: steamAppID,
+            environment: ["WINEDLLOVERRIDES": getenv("WINEDLLOVERRIDES").map { String(cString: $0) } ?? "",
+                          "DXMT_CONFIG": getenv("DXMT_CONFIG").map { String(cString: $0) } ?? ""],
+            payloadDirectories: LibraryModel.compatPayloadDirectories(),
+            importedDLLs: LibraryModel.importedDLLs(for: launchRelativePath),
+            files: LibraryModel.folderNames(for: launchRelativePath),
+            bits: LibraryModel.programBits(for: launchRelativePath),
+            previousFailure: compatResult?.categories ?? [],
+            overrides: compat)
+    }
+
+    /// Classify how the session ended and remember it on the entry, then move
+    /// the title to its next alternative when this attempt failed and one is
+    /// left. A fatal classification (anti-cheat, DRM) stops the ladder: no
+    /// configuration will help.
+    mutating func recordCompatibilityOutcome(presented: Bool, duration: TimeInterval) -> CompatResult? {
+        let attempt = max(compatAttempt ?? 0, 0)
+        let plan = GameCompatibility.plan(compatLaunch(), database: LibraryModel.compatDatabase(), alternative: attempt)
+        var status: UInt32 = 0
+        let exitStatus = wine_crash_exit_status(&status) != 0 ? status : nil
+        let name = plan.alternatives.indices.contains(plan.alternativeIndex)
+            ? plan.alternatives[plan.alternativeIndex].name : nil
+        let result = CompatLogDiagnosis.classify(log: LogStore.shared.diagnosticSnapshot(),
+                                                 exitStatus: exitStatus, presented: presented,
+                                                 duration: duration, attempt: attempt, alternative: name)
+        compatResult = result
+        if result.isFailure, !result.isFatal, attempt + 1 < plan.alternatives.count {
+            compatAttempt = attempt + 1
+        }
+        return result
+    }
+
+    /// What the last recorded result says the next attempt will be, if any.
+    var nextCompatibilityAlternative: String? {
+        guard let attempt = compatAttempt, attempt > 0 else { return nil }
+        let plan = GameCompatibility.plan(compatLaunch(), database: LibraryModel.compatDatabase(), alternative: attempt)
+        guard plan.alternatives.indices.contains(attempt) else { return nil }
+        return plan.alternatives[attempt].name
+    }
+
+    /// Match this title against the compatibility database, resolve its
+    /// dependencies and apply the environment, DLL overrides, Windows version
+    /// and registry for this launch only (GameCompat.swift). Everything here is
+    /// per-game: DLL overrides go through WINEDLLOVERRIDES and the Windows
+    /// version through AppDefaults\<exe>, so two games in the one shared prefix
+    /// cannot affect each other.
+    func applyCompatibility() {
+        let plan = GameCompatibility.plan(compatLaunch(), database: LibraryModel.compatDatabase(),
+                                          alternative: max(compatAttempt ?? 0, 0))
+        // Drop any compatibility variable a previous launch in this app run
+        // set, so one game's overrides cannot follow another into its session.
+        CompatEnvironmentRegistry.shared.reconcile(keeping: Set(plan.environment.keys),
+                                                   unset: { unsetenv($0) })
+        guard !plan.isEmpty else { return }
+        GameCompatibility.applyEnvironment(plan, set: { setenv($0, $1, 1) }, unset: { unsetenv($0) })
+        // A profile may start another program than the entry picked (a launcher
+        // that does not run under Wine) and may drop arguments the launcher
+        // added; both happen before the bridge reads MADEIRA_EXE/MADEIRA_ARGS.
+        if let run = plan.launchExecutable { setenv("MADEIRA_EXE", run, 1) }
+        if !plan.removeArguments.isEmpty {
+            let existing = getenv("MADEIRA_ARGS").map { String(cString: $0) } ?? ""
+            let dropped = Set(plan.removeArguments.map { $0.lowercased() })
+            let kept = CompatGame.splitArguments(existing).filter { !dropped.contains($0.lowercased()) }
+            setenv("MADEIRA_ARGS", kept.joined(separator: " "), 1)
+        }
+        // A profile's launch arguments join the entry's own (MADEIRA_ARGS was
+        // set from them by configureLaunch, above).
+        if !plan.launchArguments.isEmpty {
+            let existing = getenv("MADEIRA_ARGS").map { String(cString: $0) } ?? ""
+            let combined = ([existing] + plan.launchArguments).filter { !$0.isEmpty }.joined(separator: " ")
+            setenv("MADEIRA_ARGS", combined, 1)
+        }
+        // Registry values are written before wineserver starts, into the prefix
+        // the session will use; the seeder makes sure it exists first.
+        let prefix = LibraryModel.documents.appendingPathComponent("wine")
+        madeira_seed_prefix_if_needed(prefix.path)
+        let (written, error) = GameCompatibility.writeRegistry(plan, prefix: prefix)
+        for line in GameCompatibility.summary(plan) { LogStore.shared.log("[compat] \(line)") }
+        if written > 0 { LogStore.shared.log("[compat] registry: \(written) value(s) written") }
+        if let error { LogStore.shared.log("[compat] registry write failed: \(error)", level: .error) }
+        // Files a title needs moved aside or removed (an old ddraw.dll beside
+        // the game). Applied once; a second launch changes nothing.
+        if !plan.files.isEmpty {
+            let gameDirectory = URL(fileURLWithPath: prefix.path)
+                .appendingPathComponent("drive_c")
+                .appendingPathComponent((launchRelativePath as NSString).deletingLastPathComponent).path
+            let outcome = GameCompatibility.applyFiles(plan, gameDirectory: gameDirectory, prefix: prefix.path)
+            if outcome.applied > 0 { LogStore.shared.log("[compat] files: \(outcome.applied) change(s) applied") }
+            for failure in outcome.failures { LogStore.shared.log("[compat] file fix failed: \(failure)", level: .error) }
+        }
     }
 
     /// What the bridge starts. Set on the main thread before the session begins.
@@ -318,6 +429,94 @@ final class LibraryModel: ObservableObject {
     static let shared = LibraryModel()
     static var documents: URL { FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0] }
     static var drive: URL { documents.appendingPathComponent("wine/drive_c", isDirectory: true).resolvingSymlinksInPath() }
+
+    /// The game-compatibility database (GameCompat.swift): the seed bundled as
+    /// compat.json, then an update in Documents/madeira-compat/compat.json when
+    /// one has been placed there, so a new profile needs no rebuild.
+    static func compatDatabase() -> CompatDatabase {
+        let bundled = Bundle.main.url(forResource: "compat", withExtension: "json").flatMap { try? Data(contentsOf: $0) }
+        let overlay = documents.appendingPathComponent("madeira-compat/compat.json")
+        return GameCompatibility.load(bundled: bundled, overlays: [overlay])
+    }
+
+    /// Where a dependency's native payload files (runtime DLLs, fonts) may be
+    /// found: the Microsoft VC++ runtime shipped in the bundle, and anything
+    /// dropped in Documents/madeira-compat.
+    static func compatPayloadDirectories() -> [String] {
+        var directories: [String] = []
+        if let resource = Bundle.main.resourceURL {
+            directories.append(resource.appendingPathComponent("x86_64-vcruntime").path)
+        }
+        let compat = documents.appendingPathComponent("madeira-compat")
+        for sub in ["dlls/x86_64", "dlls/i386", "dlls", "fonts"] {
+            directories.append(compat.appendingPathComponent(sub).path)
+        }
+        return directories
+    }
+
+    /// The names in the executable's own folder, files and subdirectories both,
+    /// lowercased. General rules use them for what a program loads at runtime
+    /// rather than links — an anti-cheat, a DRM layer, a store client's own
+    /// files — which never appear in an import table. One listing, bounded.
+    static func folderNames(for relativePath: String) -> [String] {
+        let target = drive.appendingPathComponent(relativePath)
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: target.path, isDirectory: &isDirectory) else { return [] }
+        let folder = isDirectory.boolValue ? target : target.deletingLastPathComponent()
+        let contents = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? []
+        return Array(contents.map { $0.lastPathComponent.lowercased() }.prefix(256).sorted())
+    }
+
+    /// 32 or 64, from the PE header of the program this entry starts: the named
+    /// executable, or a folder entry's own programs when they agree. nil when
+    /// it cannot be read or two architectures are mixed, so an architecture
+    /// rule applies only where the answer is unambiguous.
+    static func programBits(for relativePath: String) -> Int? {
+        let target = drive.appendingPathComponent(relativePath)
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: target.path, isDirectory: &isDirectory) else { return nil }
+        let programs: [URL]
+        if isDirectory.boolValue {
+            let contents = (try? FileManager.default.contentsOfDirectory(at: target, includingPropertiesForKeys: nil)) ?? []
+            programs = contents.filter { $0.pathExtension.lowercased() == "exe" }.sorted { $0.path < $1.path }.prefix(8).map { $0 }
+        } else {
+            programs = [target]
+        }
+        let bits = Set(programs.compactMap { machineBits($0) })
+        return bits.count == 1 ? bits.first : nil
+    }
+
+    /// The bits of one PE image: 32 for i386/ARM, 64 for AMD64/ARM64. The
+    /// header is parsed by the engine (GameCompatibility.machineBits), which is
+    /// where the rules that use it are tested.
+    static func machineBits(_ url: URL) -> Int? {
+        guard let handle = try? FileHandle(forReadingFrom: url),
+              let header = try? handle.read(upToCount: 4096) else { return nil }
+        try? handle.close()
+        return GameCompatibility.machineBits(header)
+    }
+
+    /// The DLLs an entry's programs import, for automatic dependency detection
+    /// (GameCompat.swift). Reuses the import reader the renderer badge already
+    /// uses (importNames, delayed imports included); the named executable is
+    /// read, or a folder entry's top-level programs, so a huge install costs a
+    /// few small reads rather than a scan.
+    static func importedDLLs(for relativePath: String) -> [String] {
+        let target = drive.appendingPathComponent(relativePath)
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: target.path, isDirectory: &isDirectory) else { return [] }
+        let files: [URL]
+        if isDirectory.boolValue {
+            let contents = (try? FileManager.default.contentsOfDirectory(at: target, includingPropertiesForKeys: nil)) ?? []
+            files = contents.filter { ["exe", "dll"].contains($0.pathExtension.lowercased()) }.prefix(8).map { $0 }
+        } else {
+            files = [target]
+        }
+        var names: Set<String> = []
+        for file in files { names.formUnion(importNames(file)) }
+        return names.sorted()
+    }
+
     @Published var enabled = false
     @Published var entries: [LibraryEntry] = []
     @Published var current: UUID?
@@ -350,6 +549,9 @@ final class LibraryModel: ObservableObject {
     var blocksGameplayTouch: Bool { current != nil && (menu || launching) }
     private var timer: Timer?
     private var sawProcess = false
+    /// Whether the running session belongs to a library entry (a Madeira Dock
+    /// start does not, and is not given a compatibility result).
+    private var activeRemembered = false
     // Why a session ended by itself (not Quit): the program the app launched
     // exited with a Windows error (wine_crash_exit_status, WineProcessBridge.m).
     // MADEIRA_EXIT_REPORT=0 returns to the library without a message.
@@ -583,6 +785,7 @@ final class LibraryModel: ObservableObject {
     func begin(_ entry: LibraryEntry, remember: Bool = true) {
         wine_exit_status_reset()
         quitRequested = false
+        activeRemembered = remember
         LibraryController.shared.configure(enabled: enabled, ownsInput: false)
         Self.sessionsThisRun += 1
         launchPresent = madeira_get_present_count(); launchStarted = Date(); launchSlow = false; launchLogs = entry.liveLogs
@@ -692,10 +895,30 @@ final class LibraryModel: ObservableObject {
             save(entry)
         }
     }
+    /// Classify how the session ended and keep the result on the entry, which
+    /// is also what advances a title to its next compatibility alternative. A
+    /// session the user quit is not a compatibility result.
+    private func recordCompatibility() {
+        guard !quitRequested, activeRemembered, wine_process_is_running() == 0,
+              let id = current ?? activeEntry?.id,
+              var entry = entries.first(where: { $0.id == id }) else { return }
+        let presented = madeira_get_present_count() > launchPresent
+        let duration = Date().timeIntervalSince(launchStarted)
+        guard let result = entry.recordCompatibilityOutcome(presented: presented, duration: duration) else { return }
+        LogStore.shared.log(CompatLogDiagnosis.report(result))
+        if let first = result.categories.first.flatMap({ CompatDiagnosis(rawValue: $0) }) {
+            LogStore.shared.log("[compat] \(first.title): \(first.explanation)")
+        }
+        if let next = entry.nextCompatibilityAlternative {
+            LogStore.shared.log("[compat] the next launch of this game will try: \(next)")
+        }
+        save(entry)
+    }
     private func finish() {
         if sawProcess, let report = exitReport() { error = report }
         timer?.invalidate(); timer = nil
         saveCurrentProfile()
+        recordCompatibility()
         let controls = TouchControlsModel.shared
         controls.editing = false; controls.selected = nil
         controls.controls = savedControls; controls.visible = savedVisible; controls.sizeScale = savedSize
@@ -890,15 +1113,21 @@ struct LibraryBadges: View {
         HStack(spacing: 4) {
             if entry.bits == 32 || entry.bits == 64 { badge("\(entry.bits)-bit") }
             if let api = LibraryRendererBadge.compact(entry.graphicsAPI) { badge(api) }
+            // The last session's verdict, so a title that needs attention is
+            // visible in the library rather than only after opening it.
+            if let result = entry.compatResult, result.isFailure {
+                badge(result.categoriesTitle.isEmpty ? result.outcomeTitle : result.categoriesTitle, tint: .orange)
+            }
         }
     }
     @ViewBuilder private var size: some View {
         if let bytes = entry.folderBytes { badge(String(format: bytes < 1_000_000_000 ? "%.2f GB" : "%.1f GB", Double(bytes) / 1_000_000_000)) }
     }
-    private func badge(_ text: String) -> some View {
+    private func badge(_ text: String, tint: Color? = nil) -> some View {
         Text(text).font(.caption2.weight(.medium)).lineLimit(1).minimumScaleFactor(0.8)
             .padding(.horizontal, 5).padding(.vertical, 4)
-            .background(.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 6))
+            .foregroundStyle(tint ?? .primary)
+            .background((tint ?? .secondary).opacity(tint == nil ? 0.12 : 0.18), in: RoundedRectangle(cornerRadius: 6))
     }
 }
 
@@ -1385,6 +1614,7 @@ struct LibraryDetail: View {
                 } header: { Text("Compatibility & performance") } footer: {
                     Text("Reduced-precision x87 can make older games faster at some cost in accuracy; it is off by default. Settings apply to the next launch; a precision change may still require restarting Madeira.")
                 }
+                if entry.desktop != true { GameCompatSection(entry: $entry) }
                 Section("On screen") {
                     Toggle("Performance overlay", isOn: $entry.performance)
                     Toggle("Live logs", isOn: $entry.liveLogs)

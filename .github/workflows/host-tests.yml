@@ -1,0 +1,44 @@
+# Host tests that need only Python and a C/C++ compiler. They compile the
+# production C/C++ (ntdll-unix, launch diagnostics, DXMT, the D3D12 runtime)
+# with sanitizers and drive it with fake inputs. Tests that need swiftc, a Wine
+# build, the FFmpeg tarball or a Mac are not listed here; run them on a Mac
+# (see docs/LAUNCH_DIAGNOSTICS.md). Nothing here proves on-device behaviour.
+name: host-tests
+
+on:
+  pull_request:
+  push:
+    branches-ignore: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  host-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
+      - name: Run host tests
+        run: |
+          set -u
+          tests="
+            check-audio-wow64 check-cfg-early-docs check-child-desktop
+            check-child-slots check-config-catalog check-d3d9-splitlock
+            check-d9-upload-commit check-filtering-cap check-gamepad
+            check-image-retire check-launch-diagnostics check-launch-routing
+            check-arm64ec-farm check-layer-format check-lazy-windows check-nav-keys
+            check-scene-batching check-small-va-band check-unixlib-binder
+            check-win32u-zero-bits check-wow-context check-wow-cpu-area
+            check-wow-sweep check-wine-mono check-winsxs check-d3d8-shader"
+          failed=""
+          for t in $tests; do
+            echo "::group::$t"
+            if python3 "build/host-tests/$t.py"; then echo "PASS $t"; else failed="$failed $t"; fi
+            echo "::endgroup::"
+          done
+          if [ -n "$failed" ]; then echo "FAILED:$failed"; exit 1; fi

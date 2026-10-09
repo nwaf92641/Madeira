@@ -96,6 +96,10 @@ final class LogStore: ObservableObject {
         // Tail the log file. Reads everything Wine + DXMT + FEX write via
         // dprintf(STDERR_FILENO, ...), wine_log_write, etc.
         tail = LogTail(path: logFileURL.path) { [weak self] line in
+            // Launch diagnostics see every line, also while the on-screen log
+            // is suppressed (LaunchDiagnostics.h); the feed is a cheap check
+            // on most lines.
+            line.withCString { madeira_diag_feed_line($0) }
             self?.handleRawLine(line)
         }
         tail?.start()
@@ -133,6 +137,28 @@ final class LogStore: ObservableObject {
         handleRawLine(message)
         // Also append to the file so it shows up in pulled logs alongside Wine output
         appendToFile(message, level: level)
+    }
+
+    /// A bounded slice of the raw log for compatibility diagnosis
+    /// (CompatDiagnosis.swift): the head, where a missing DLL is reported as the
+    /// program loads, and the tail, where a crash is. The middle of a session
+    /// can be hundreds of megabytes of frame logging, so it is skipped.
+    func diagnosticSnapshot(head: Int = 512 * 1024, tail: Int = 2 * 1024 * 1024) -> String {
+        guard let handle = try? FileHandle(forReadingFrom: logFileURL) else { return "" }
+        defer { try? handle.close() }
+        guard let size = try? handle.seekToEnd(), size > 0 else { return "" }
+        var text = ""
+        if let data = try? handle.read(upToCount: min(head, Int(size))) {
+            text += String(decoding: data, as: UTF8.self)
+        }
+        let tailStart = UInt64(max(head, 0))
+        if size > tailStart + UInt64(tail) {
+            if (try? handle.seek(toOffset: size - UInt64(tail))) != nil,
+               let data = try? handle.read(upToCount: tail) {
+                text += "\n" + String(decoding: data, as: UTF8.self)
+            }
+        }
+        return text
     }
 
     /// Called from tail-file callback (background queue) or C callback.

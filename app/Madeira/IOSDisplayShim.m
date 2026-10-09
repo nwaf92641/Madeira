@@ -9,6 +9,8 @@
 #import <UIKit/UIKit.h>
 #import <QuartzCore/CAMetalLayer.h>
 #import <Metal/Metal.h>
+#include <time.h>
+#include "LaunchDiagnostics.h"
 #import <pthread.h>
 
 #include "IOSDisplayShim.h"
@@ -46,10 +48,14 @@ struct macdrv_functions_t {
 
 static CAMetalLayer *g_layer = nil;
 static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
+/* Signalled when the game view registers its layer, so a swapchain created
+ * while the view is still coming up waits for it instead of failing. */
+static pthread_cond_t g_layer_cond = PTHREAD_COND_INITIALIZER;
 
 void madeira_display_set_layer(CAMetalLayer *layer) {
     pthread_mutex_lock(&g_lock);
     g_layer = layer;
+    pthread_cond_broadcast(&g_layer_cond);
     pthread_mutex_unlock(&g_lock);
 }
 
@@ -152,6 +158,9 @@ static int madeira_desktop_mode(void) {
 // Winios.m compositor: per-window CAMetalLayer inside the window's
 // compositor layer (desktop mode only).
 extern CAMetalLayer *winios_metal_layer_for_hwnd(void *hwnd);
+// Game sessions: the window a swapchain presents from is the game's own;
+// Winios.m's game-mode window overlay must not draw its GDI bits.
+extern void winios_note_game_metal_hwnd(void *hwnd);
 
 static macdrv_metal_device my_create_metal_device(void) {
     // DXMT also has a separate code path that creates its own MTLDevice;
@@ -173,20 +182,49 @@ static macdrv_metal_view my_view_create_metal_view(macdrv_view v, macdrv_metal_d
     if (madeira_desktop_mode()) {
         CAMetalLayer *layer = winios_metal_layer_for_hwnd((void *)v);
         if (!layer) {
-            NSLog(@"[madeira-display] desktop metal layer creation failed for hwnd=%p", (void *)v);
+            fprintf(stderr, "[madeira-display] desktop metal layer creation failed for hwnd=%p\n", (void *)v);
+            fflush(stderr);
             return NULL;
         }
         fprintf(stderr, "[madeira-display] desktop metal view for hwnd=%p layer=%p\n", (void *)v, layer);
+        madeira_diag_stage(MD_STAGE_METAL_LAYER, "desktop-mode window layer");
         fflush(stderr);
         return (macdrv_metal_view)CFBridgingRetain(layer);
     }
+    /* Game mode: every swapchain presents into the one layer of the game
+     * view. A game that creates its swapchain while that view is still being
+     * set up used to get NULL here, which DXMT turns into an abort (a black
+     * screen and a closed session). Wait for the registration for a bounded
+     * time instead -- never on the main thread, which is the thread that
+     * registers it. MADEIRA_LAYER_WAIT_MS overrides the 5 s bound. */
     pthread_mutex_lock(&g_lock);
     CAMetalLayer *layer = g_layer;
+    if (!layer && ![NSThread isMainThread]) {
+        /* ms a swapchain waits for the game view's layer before it gets no surface (default 5000, 0 = no wait) */
+        const char *w = getenv("MADEIRA_LAYER_WAIT_MS");
+        long wait_ms = (w && *w) ? atol(w) : 5000;
+        if (wait_ms > 0) {
+            struct timespec deadline;
+            clock_gettime(CLOCK_REALTIME, &deadline);
+            deadline.tv_sec += wait_ms / 1000;
+            deadline.tv_nsec += (wait_ms % 1000) * 1000000L;
+            if (deadline.tv_nsec >= 1000000000L) { deadline.tv_sec++; deadline.tv_nsec -= 1000000000L; }
+            fprintf(stderr, "[madeira-display] hwnd=%p asked for a Metal view before the game view registered "
+                    "its layer; waiting up to %ld ms\n", (void *)v, wait_ms);
+            while (!g_layer && pthread_cond_timedwait(&g_layer_cond, &g_lock, &deadline) == 0) {}
+            layer = g_layer;
+        }
+    }
     pthread_mutex_unlock(&g_lock);
     if (!layer) {
-        NSLog(@"[madeira-display] view_create_metal_view called before layer registered!");
+        fprintf(stderr, "[madeira-display] view_create_metal_view called before layer registered! "
+                "(hwnd=%p; the swapchain gets no surface)\n", (void *)v);
+        fflush(stderr);
+        /* the line above is classified by LaunchDiagnostics (fed from the log) */
         return NULL;
     }
+    madeira_diag_stage(MD_STAGE_METAL_LAYER, "game view layer");
+    winios_note_game_metal_hwnd((void *)v);
     return (macdrv_metal_view)CFBridgingRetain(layer);
 }
 

@@ -52,6 +52,7 @@ git-ignored and consumed by the app project.
      `build/win32u-unix/build.sh` -> `app/Madeira/lib{ntdll_unix,wineserver,win32u_unix}.a`. Verified on the development machine.
    - PE side: `build/wine-pe/build-ntdll.sh` (configures `wine/build-arm64ec` with `--enable-archs=arm64ec --without-x --disable-tests --enable-winegstreamer` on first run, builds `dlls/ntdll`, strips, pads to SizeOfImage + 0x50000, copies to the app). Other PE modules: `make -C dlls/<name>` in that tree and copy the DLL, as the script's header says; winegstreamer (enabled by `--enable-winegstreamer` although GStreamer is absent, since its unix side is `build/ntdll-unix/winegstreamer_unixlib_ios.c`) is built as the target `dlls/winegstreamer/arm64ec-windows/winegstreamer.dll`, never with `make -C`. The strip/pad step was verified this session; the configure step is UNVERIFIED from clean.
    - `app/Madeira/arm64ec-windows/` is the DLL farm: every file in it is linked into the prefix (`system32` for x64 sessions, and `sysx64`), so a Wine module is only available if it was built and copied there. The native D3D12 path needs two stock modules in addition to the existing ones: `dcomp.dll` (`make -C dlls/dcomp`; a 64-bit Godot 4 engine loads it before it creates its D3D12 device, and gives up on D3D12 without it) and `ktmw32.dll` (`make -C dlls/ktmw32`; an optional import the same engine probes).
+   - Compatibility modules for 64-bit programs (the layers Winlator ships as Microsoft redistributables or Wine builtins: DirectShow, Media Foundation, WMF, VfW/ACM, XAudio2/XACT, DirectPlay, D3DX/d3dcompiler, D3D10 front ends, legacy VC++ runtimes, gdiplus/msxml/WMI and friends): `build/wine-pe/build-arm64ec-farm.sh` builds every module in `build/wine-pe/arm64ec-farm.json` in `wine/build-arm64ec` (or `$WINE_ARM64EC_BUILD`), refuses to install anything if one of their imports or delay imports would not resolve in the farm, strips debug sections and copies them in. `--check` only verifies that the farm has them; `--refresh` rebuilds modules already present. On Linux it builds native tools in `wine/build-tools` and cross-configures the tree for `aarch64-linux-gnu` (needs `gcc-aarch64-linux-gnu`), since Wine's configure does not enable arm64ec on an x86_64 host. Verified this session on Linux (llvm-mingw 20260421, ubuntu x86_64) from the `wine` submodule sources; UNVERIFIED on macOS. The x86_64 run of `build/x64-tests/compat-layers-x64.exe` was done under a desktop build of upstream wine-11.4, whose sources match the submodule for all of these modules. `build/host-tests/check-arm64ec-farm.py` checks the result.
 4. DXMT (submodule, branch ios-port):
    - unix side: `build/dxmt-ios/build.sh` (needs `toolchains/llvm-ios-build`) -> `app/Madeira/libdxmt_combined.a` (ignored; the app links it). Verified this session.
    - PE side: `meson setup research/dxmt/build-arm64ec research/dxmt -Dbuildtype=release -Dwine_build_path=../../wine/build-arm64ec --cross-file=research/dxmt/build-arm64ec-win.txt` then `ninja -C research/dxmt/build-arm64ec src/winemetal/winemetal.dll` (and d3d11.dll) -> copied to `app/Madeira/arm64ec-windows/`. Verified this session (winemetal.dll).
@@ -61,6 +62,11 @@ git-ignored and consumed by the app project.
    -> `app/Madeira/i386-windows/`), `build/fex-wow64/build.sh` (FEX WOW64 module
    -> `app/Madeira/aarch64-windows/xtajit.dll`) and the aarch64 `wow64.dll` /
    `wow64win.dll`; see docs/WOW64.md, "Building". UNVERIFIED on macOS.
+   The i386 farm build also runs `build/d3d8/build.sh` (Direct3D 8 over DXMT's
+   Direct3D 9, docs/D3D8.md); that step was verified on Linux with llvm-mingw.
+   It also runs `build/ddraw/build.sh` (cnc-ddraw: DirectDraw over the same
+   Direct3D 9, opt-in per game -> `app/Madeira/cnc-ddraw/`, docs/DIRECTDRAW.md);
+   verified on Linux with llvm-mingw.
 
 ## Status of the LGPL relink question
 

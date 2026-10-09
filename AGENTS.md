@@ -1,9 +1,3 @@
-# AGENTS.md
-
-Madeira: an iOS application that runs Windows x86/x86-64 games (Steam) through
-Wine + FEX (ARM64EC / WoW64) and DXMT (D3D11/D3D12 via Metal). The app is
-`app/Madeira.xcodeproj`; the emulation stack is built by the scripts in `build/`.
-
 ## Build: what actually works, and what does not
 
 `docs/BUILDING.md` is the authoritative record. Read it first. Its own
@@ -44,41 +38,4 @@ Metal Shader Converter is **not** missing: the vendored headers and
 * FEX iOS: `CMAKE_SYSTEM_PROCESSOR` is empty when cross-compiling (FEX aborts),
   and `TUNE_CPU=native` reads `/proc/cpuinfo`. Use `arm64` and `none`.
 * `FEX_IOS_HOST` belongs to the **Windows PE** builds. FEXCore compiles for
-  Darwin too, and has code that uses its symbols unguarded:
-  `Interface/Core/Core.cpp` (IosFfsBypassLog/IosCbEntryLog) and
-  `Utils/ArchHelpers/Arm64.cpp` (VirtualQuery/MEMORY_BASIC_INFORMATION). Either
-  guard both or the Darwin build fails; prefer guarding over defining the macro.
-* `wine/server/` archives need `llvm-objcopy` for the symbol-rename sweep.
-* Generated headers are not tracked, and the Xcode phase is where their absence
-  surfaces last. `build/dxmt-ios/build.sh` needs
-  `shader-headers/air_{msad,samplepos,tessellation}.h` as well as
-  `dxmt_command.h`/`version.h`; meson produces the three from
-  `research/dxmt/src/airconv/shaders/*.metal` with `xcrun metal` +
-  `xxd -n <name> -i` (`src/airconv/meson.build:59-71`), and the script now runs
-  that chain itself.
-* `libJemallocLibs.a` must exist **and** define `rpm_cas_snapshot_take`: FEXCore
-  calls it unguarded (`Interface/Core/Core.cpp`, the ml622 CAS sampler), FEX's
-  `CMakeLists.txt` never builds `External/rpmalloc` on APPLE
-  (`ENABLE_FEX_ALLOCATOR` is forced FALSE there for the whole platform), and the
-  pinned `rpmalloc.c` cannot compile for iOS anyway (its diagnostics call
-  `WriteFile`/`GetStdHandle` with no `#ifdef`). With the allocator disabled 0 is
-  the real function's "nothing pending" answer, so
-  `build/fex-ios/rpm_cas_snapshot_stub.c` supplies it and the archive is merged
-  with `libtool`.
-* Beware cache guards that skip work instead of doing it. A saved
-  `FEX/build-ios` has `libFEXCore.a`, so a block guarded on that alone never
-  builds missing sibling targets (`JemallocLibs`) and never re-applies the FEX
-  source patches even though submodules are re-checked out unpatched every run.
-
-## CI
-
-`.github/workflows/build-ipa.yml` + `ci/build-ipa.sh` produce an unsigned IPA on
-`macos-15` (`Madeira-unsigned-ipa`, ~74 MB). The cache is split (restore/save) so
-failed runs still keep progress; build the chain in `ci/build-ipa.sh`, not ad hoc.
-
-The pipeline is green end to end (run 36607403696, commit `64864b7`): LLVM for
-iOS -> FEX -> Wine host tree + the three unix libraries -> DXMT -> Dock ->
-`xcodebuild` -> unsigned IPA. When it breaks, read the stage banners in the log
-first: each stage prints `=== ... ===`, the unix-side scripts print
-`succeeded/failed` counts and dump the per-file `.err` files, and
-`ci/build-ipa.sh` asserts on the exact archive it expects to hand to Xcode.
+  Darwin too, and has code that uses its symbols unguarded.

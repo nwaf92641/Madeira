@@ -271,6 +271,13 @@ enum StikJITHelper {
             vm_deallocate(mach_task_self_, earlyPoolBase, vm_size_t(earlyPoolSize))
             LogStore.shared.log(String(format: "ml1040: released the early pool placeholder 0x%lx+%luMB for the debugger",
                                        Int(earlyPoolBase), Int(earlyPoolSize >> 20)))
+            if madeira_early_pool_fallback != 0 {
+                // JITPoolPlacement.h: the run above the window was taken at image
+                // load, so the constructor held the largest legal hole instead.
+                LogStore.shared.log(String(format: "[jit-pool-placement] the run above 0x148000000 was taken at image load; "
+                    + "held the largest legal hole 0x%lx+%luMB instead (FEX low bound .. guest window, executable window excluded)",
+                    Int(earlyPoolBase), Int(earlyPoolSize >> 20)))
+            }
         } else {
             LogStore.shared.log("ml1040: no early pool placeholder was obtained — placement is left to chance", level: .error)
             // ml1135: what was already mapped above the window at image load (user_tag

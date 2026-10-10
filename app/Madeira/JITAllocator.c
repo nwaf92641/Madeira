@@ -861,6 +861,8 @@ unsigned long madeira_early_window_base, madeira_early_window_size;
 unsigned long madeira_early_pool_base, madeira_early_pool_size;
 unsigned long madeira_early_intruder_base, madeira_early_intruder_size;   /* ml1135 */
 unsigned madeira_early_intruder_tag, madeira_early_intruder_prot;
+int madeira_early_pool_fallback;   /* 1: the placeholder is the largest legal hole, not the run above the window */
+#include "JITPoolPlacement.h"
 
 __attribute__((constructor(101), used)) static void madeira_early_va_claim(void)
 {
@@ -896,6 +898,36 @@ __attribute__((constructor(101), used)) static void madeira_early_va_claim(void)
             && ra < 0x190000000ul) {
             madeira_early_intruder_base = ra; madeira_early_intruder_size = rs;
             madeira_early_intruder_tag = info.user_tag; madeira_early_intruder_prot = (unsigned)info.protection;
+        }
+    }
+
+    /* MADEIRA: the run above the window was taken, so hold the LARGEST legal
+     * hole instead of none (JITPoolPlacement.h). Without this the pool was
+     * sized from whatever survived until launch -- the "SHRINKING to 624MB"
+     * line -- and placement was left to chance. */
+    if (!madeira_early_pool_size) {
+        static struct jpp_region regs[1024];
+        unsigned n = 0;
+        vm_address_t ra = 0x119000000ul;
+        unsigned long pb = 0, ps = 0;
+        while (n < sizeof(regs) / sizeof(regs[0]) && ra < 0x7000000000ul) {
+            vm_size_t rs = 0;
+            vm_region_basic_info_data_64_t binfo;
+            mach_msg_type_number_t bcnt = VM_REGION_BASIC_INFO_COUNT_64;
+            mach_port_t obj = MACH_PORT_NULL;
+            if (vm_region_64(mach_task_self(), &ra, &rs, VM_REGION_BASIC_INFO_64,
+                             (vm_region_info_t)&binfo, &bcnt, &obj) != KERN_SUCCESS) break;
+            regs[n].base = (unsigned long)ra; regs[n].size = (unsigned long)rs; n++;
+            ra += rs;
+        }
+        if (jpp_pick(regs, n, 0x119000000ul, 0x7000000000ul, win, win + winsz,
+                     256ul << 20, 1024ul << 20, 16ul << 20, &pb, &ps)) {
+            vm_address_t fa = (vm_address_t)pb;
+            if (vm_allocate(mach_task_self(), &fa, (vm_size_t)ps, VM_FLAGS_FIXED) == KERN_SUCCESS && fa == pb) {
+                vm_protect(mach_task_self(), fa, (vm_size_t)ps, 0, VM_PROT_NONE);
+                madeira_early_pool_base = fa; madeira_early_pool_size = ps;
+                madeira_early_pool_fallback = 1;
+            }
         }
     }
 }

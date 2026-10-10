@@ -5313,6 +5313,12 @@ static int ios_scan_stop;   /* see ios_scan_stop_name() */
  * address AND its errno, then ask the kernel what actually lives there. */
 static void *ios_scan_fail_addr;
 static int   ios_scan_fail_errno;
+/* MADEIRA: the LENGTH of the mapping that failed at ios_scan_fail_addr. Without
+ * it ios_va_describe() can only look at the first page, and calls a range whose
+ * head is free but whose tail is occupied "iOS REFUSED A FREE ADDRESS" -- the
+ * exact false accusation ios_va_describe_range() was written to retire (see its
+ * comment). With it the verdict is PARTIALLY OCCUPIED / OCCUPIED / FREE RANGE. */
+static size_t ios_scan_fail_len;
 
 /* Describe what the kernel believes is at addr: the enclosing region, or the
  * hole it falls in. Non-destructive (query only). */
@@ -5442,7 +5448,7 @@ static void ios_va_describe_range( void *addr, ULONG_PTR len, char *buf, size_t 
               (len && a + size < end) ? " (and the range continues past this region)" : "" );
 }
 
-static void ios_va_describe( void *addr, char *buf, size_t buflen )
+static void __attribute__((unused)) ios_va_describe( void *addr, char *buf, size_t buflen )
 {
     ios_va_describe_range( addr, 0, buf, buflen );
 }
@@ -9885,7 +9891,7 @@ static void* try_map_free_area( void *base, void *end, ptrdiff_t step,
         if (anon_mmap_tryfixed( start, size, unix_prot, 0 ) != MAP_FAILED) return start;
         TRACE( "Found free area is already mapped, start %p.\n", start );
         ios_va_scan_tries++;
-        if (!ios_scan_fail_addr) { ios_scan_fail_addr = start; ios_scan_fail_errno = errno; }
+        if (!ios_scan_fail_addr) { ios_scan_fail_addr = start; ios_scan_fail_errno = errno; ios_scan_fail_len = size; }
 #ifdef WINE_IOS
         /* iOS: mach_vm_map can return KERN_INVALID_ADDRESS (→ ENOMEM) at certain
          * addresses due to ASLR/system mappings.  Keep scanning instead of aborting. */
@@ -9978,6 +9984,7 @@ static void *map_free_area_inner( void *base, void *end, size_t size, int top_do
     ios_scan_tailgap = 0;
     ios_scan_stop = first ? 0 : 9;
     ios_scan_fail_addr = NULL;
+    ios_scan_fail_len = 0;
     ios_scan_fail_errno = 0;
 
     if (top_down)
@@ -13673,7 +13680,7 @@ static NTSTATUS map_view( struct file_view **view_ret, void *base, size_t size,
             if (!ptr || ios_va_scan_tries - tries0 >= 64)
             {
                 static int described;
-                char what[128];
+                char what[256];   /* range verdicts run to ~200 chars */
 
                 /* ml207: latch furniture pressure — see ios_va_pressure. Deliberately a
                  * much stricter test than this probe's own 64-try "SLOW" threshold: an
@@ -13692,7 +13699,9 @@ static NTSTATUS map_view( struct file_view **view_ret, void *base, size_t size,
                  * of verdicts settle the question. */
                 what[0] = 0;
                 if (ios_scan_fail_addr && described++ < 12)
-                    ios_va_describe( ios_scan_fail_addr, what, sizeof(what) );
+                    /* range-aware: name what occupies the tail instead of
+                     * blaming iOS for refusing a free first page */
+                    ios_va_describe_range( ios_scan_fail_addr, ios_scan_fail_len, what, sizeof(what) );
 
                 {
                 static unsigned long vs_storm;
@@ -15273,7 +15282,8 @@ static void ios_clamp_user_space_limit( const char *when )
 
     dprintf( 2, "ml990: %s user_space_limit %p -> %p -- refusing to advertise address space this "
              "device cannot map (HighestUserAddress / ullTotalVirtual / "
-             "lpMaximumApplicationAddress all derive from it)\n",
+             "lpMaximumApplicationAddress all derive from it) -- informational: games are told the "
+             "real ceiling instead of 128 TB, nothing is refused at run time\n",
              when, user_space_limit, host_addr_space_limit );
     user_space_limit = host_addr_space_limit;
 }

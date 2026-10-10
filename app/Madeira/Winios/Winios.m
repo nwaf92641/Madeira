@@ -202,6 +202,40 @@ static void winios_bg_observe(void) {
                     wfz_bg_exit = winios_now_mono(); wfz_bg_now = 0; }];
 }
 
+/* Main-thread probe. The worker above measures ITS OWN thread, so a wedged
+ * main thread -- the one UIKit, Core Animation and every guest thread's
+ * main-queue hop wait on -- went unnoticed. Each tick posts a no-op to the
+ * main queue unless one is still outstanding; one outstanding longer than
+ * MAIN_GAP_S while the app is in the foreground is reported once, with every
+ * thread's stack, and its recovery is reported too. Worker thread only. */
+static volatile double wfz_main_answered;     /* mono time the last probe ran on main */
+static volatile int    wfz_main_outstanding;
+extern void ios_dump_all_thread_stacks(void);
+static void winios_main_probe(double now, double t0) {
+    const double MAIN_GAP_S = 5.0;
+    static double posted, reported_for;
+    if (!wfz_main_outstanding) {
+        if (reported_for > 0.0) {
+            dprintf(STDERR_FILENO, "[freeze] main thread answered again after %.1fs (t+%.1fs)\n",
+                    wfz_main_answered - reported_for, wfz_main_answered - t0);
+            reported_for = 0.0;
+        }
+        wfz_main_outstanding = 1;
+        posted = now;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            wfz_main_answered = winios_now_mono();
+            wfz_main_outstanding = 0;
+        });
+        return;
+    }
+    if (wfz_bg_now || reported_for > 0.0 || now - posted < MAIN_GAP_S) return;
+    reported_for = posted;
+    dprintf(STDERR_FILENO, "[freeze] MAIN THREAD unresponsive for %.1fs (since t+%.1fs) while in the "
+            "foreground; guest threads that hop to it wait (bounded by MADEIRA_MAIN_HOP_TIMEOUT_MS). "
+            "Thread stacks follow.\n", now - posted, posted - t0);
+    ios_dump_all_thread_stacks();
+}
+
 static void *winios_freeze_watch(void *arg) {
     const double SLEEP_S = 0.25;
     const double GAP_S   = 2.0;    /* well above any scheduling delay */
@@ -264,6 +298,8 @@ static void *winios_freeze_watch(void *arg) {
                 dprintf(STDERR_FILENO, "[freeze]   bg-enter t+%.1fs bg-exit t+%.1fs bg_now=%d\n",
                         wfz_bg_enter - t0, wfz_bg_exit - t0, wfz_bg_now);
         }
+
+        winios_main_probe(now, t0);
 
         if (now - last_beat >= BEAT_S) {
             beats++;
@@ -978,6 +1014,31 @@ static void winios_place_metal_layer(NSNumber *key) {
                           c.size.width * s, c.size.height * s);
 }
 
+/* One-shot claim for a bounded main-thread hop: whichever side (1 = the main
+ * thread, 2 = the waiting caller) claims first runs or abandons the work. */
+@interface WiniosHopClaim : NSObject
+- (BOOL)claimFor:(int)who;
+@end
+@implementation WiniosHopClaim {
+    int _state;
+}
+- (BOOL)claimFor:(int)who {
+    int expect = 0;
+    return __atomic_compare_exchange_n(&_state, &expect, who, 0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE);
+}
+@end
+
+/* ms a guest thread waits for the iOS main thread before it stops waiting (default 2000, 0 = forever) */
+static long winios_main_hop_timeout_ms(void) {
+    static long v = -1;
+    if (v < 0) {
+        const char *e = getenv("MADEIRA_MAIN_HOP_TIMEOUT_MS");
+        long t = (e && *e) ? atol(e) : 2000;
+        v = t < 0 ? 2000 : t;
+    }
+    return v;
+}
+
 /* Called by IOSDisplayShim on a wine thread when DXMT creates a swapchain
  * view for an HWND in desktop mode. Returns the (unretained) CAMetalLayer;
  * the shim CFRetains it for DXMT's lifetime handling. */
@@ -1008,8 +1069,42 @@ CAMetalLayer *winios_metal_layer_for_hwnd(void *hwnd) {
         }
         result = ml;
     };
-    if ([NSThread isMainThread]) make();
-    else dispatch_sync(dispatch_get_main_queue(), make);
+    if ([NSThread isMainThread]) {
+        make();
+        return result;
+    }
+    /* Bounded hop (was dispatch_sync). The caller is the game's render thread
+     * inside DXMT's swapchain constructor; with dispatch_sync, a main thread
+     * that does not drain its queue held swapchain creation forever with
+     * nothing logged. The layer is only created ON the main thread (the
+     * compositor dictionaries are main-thread state), so on timeout the queued
+     * block is cancelled through the claim flag and the swapchain gets no
+     * surface: DXMT fails CreateSwapChain (DXGI_ERROR_UNSUPPORTED) instead of
+     * hanging, and the game may retry. MADEIRA_MAIN_HOP_TIMEOUT_MS (default
+     * 2000, 0 = wait forever) is the same knob winemetal uses. */
+    long timeout_ms = winios_main_hop_timeout_ms();
+    if (timeout_ms == 0) {
+        dispatch_sync(dispatch_get_main_queue(), make);
+        return result;
+    }
+    WiniosHopClaim *claim = [WiniosHopClaim new];
+    dispatch_semaphore_t done = dispatch_semaphore_create(0);
+    dispatch_async(dispatch_get_main_queue(), ^{
+        if (![claim claimFor:1]) return;     /* the caller gave up: create nothing */
+        make();
+        dispatch_semaphore_signal(done);
+    });
+    if (dispatch_semaphore_wait(done, dispatch_time(DISPATCH_TIME_NOW, (int64_t)timeout_ms * NSEC_PER_MSEC)) == 0)
+        return result;
+    if ([claim claimFor:2]) {
+        fprintf(stderr, "[madeira-main-hop] winios: the main thread did not create the Metal layer for hwnd=%p "
+                "within %ld ms; the swapchain gets no surface (the main thread is busy or blocked)\n",
+                hwnd, timeout_ms);
+        fflush(stderr);
+        return nil;
+    }
+    /* The main thread claimed it at the deadline and is running it now. */
+    dispatch_semaphore_wait(done, DISPATCH_TIME_FOREVER);
     return result;
 }
 

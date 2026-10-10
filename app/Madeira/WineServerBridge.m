@@ -6,6 +6,7 @@
 #import <sys/stat.h>
 #import <pthread.h>
 #import <stdarg.h>
+#include <unistd.h>
 
 #include "WineServerBridge.h"
 #include <sys/time.h>
@@ -47,6 +48,10 @@ extern void wineserver_log_set_file(const char *path);
 // Set NLS directory for wineserver (defined in unicode_ios.c)
 extern void wineserver_set_nls_dir(const char *path);
 
+/* Set by the wineserver thread as its last act (normal return or fatal_error),
+ * so wineserver_stop() can bound its wait instead of joining blindly. */
+static volatile int g_wineserver_exited = 0;
+
 // Override wineserver's fatal_error to use logging and pthread_exit instead of exit(1)
 void fatal_error( const char *err, ... ) {
     va_list args;
@@ -55,6 +60,7 @@ void fatal_error( const char *err, ... ) {
     vsnprintf(buf, sizeof(buf), err, args);
     va_end(args);
     wine_log_msg_impl("[Wine] FATAL: %s", buf);
+    g_wineserver_exited = 1;   /* wineserver_stop() polls this before it joins */
     // Don't call exit(1) — that kills the whole app.
     // Instead, terminate just this thread.
     pthread_exit(NULL);
@@ -126,6 +132,7 @@ static void *wineserver_thread_func(void *arg) {
 
         g_wineserver_running = 0;
     }
+    g_wineserver_exited = 1;
     return NULL;
 }
 
@@ -152,6 +159,7 @@ int wineserver_start(const char *prefix_path) {
     }
 
     g_wineserver_running = 1;
+    g_wineserver_exited = 0;
 
     /* 2026-07-04 perf: the wineserver thread used to be created at LOWERED
      * priority (sched_priority 20, "so wineserver doesn't starve the main
@@ -188,11 +196,33 @@ void wineserver_stop(void) {
     g_wineserver_should_stop = 1;
     // Join the wineserver thread to ensure it actually stops before we return.
     // This prevents iOS from killing us for excessive CPU from a spinning wineserver.
+    //
+    // Bounded: the join used to be unconditional, so a server loop that never
+    // looked at the stop flag again (wedged on a lock a hung guest thread
+    // holds) kept the session thread here forever and the session never
+    // ended. Wait up to MADEIRA_WINESERVER_STOP_MS (default 5000, 0 = forever)
+    // for the thread to finish, then join it; past that, log it, detach it
+    // and go on.
     pthread_t t = g_wineserver_thread;
     if (t) {
+        /* ms the session end waits for the wineserver thread to stop (default 5000, 0 = forever) */
+        const char *e = getenv("MADEIRA_WINESERVER_STOP_MS");
+        long limit_ms = (e && *e) ? atol(e) : 5000;
+        long waited_ms = 0;
         wine_log_msg("Joining wineserver thread...");
-        pthread_join(t, NULL);
-        wine_log_msg("Wineserver thread joined");
+        while (limit_ms > 0 && !g_wineserver_exited && waited_ms < limit_ms) {
+            usleep(10 * 1000);
+            waited_ms += 10;
+        }
+        if (limit_ms > 0 && !g_wineserver_exited) {
+            wine_log_msg("[session-cleanup] wineserver thread did not stop within %ld ms; detaching it "
+                         "(a guest thread may hold a server lock)", limit_ms);
+            pthread_detach(t);
+        } else {
+            pthread_join(t, NULL);
+            wine_log_msg("Wineserver thread joined");
+        }
+        g_wineserver_thread = NULL;
     }
     g_wineserver_running = 0;
 }

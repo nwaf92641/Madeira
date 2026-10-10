@@ -1,0 +1,309 @@
+diff --git a/src/d3d11/d3d11_context_impl.cpp b/src/d3d11/d3d11_context_impl.cpp
+index 701e163..1ffe832 100644
+--- a/src/d3d11/d3d11_context_impl.cpp
++++ b/src/d3d11/d3d11_context_impl.cpp
+@@ -2970,13 +2970,20 @@ public:
+     IMPLEMENT_ME
+   };
+ 
+-  WINBOOL STDMETHODCALLTYPE IsAnnotationEnabled() override { IMPLEMENT_ME };
++  /* Madeira: these four used to be IMPLEMENT_ME, i.e. abort(). They are
++   * debugger annotations (PIX / RenderDoc event markers): on Windows, with no
++   * capture tool attached, IsAnnotationEnabled() is FALSE and the markers do
++   * nothing, which is exactly what ID3DUserDefinedAnnotation already does here
++   * (d3d11_annotation.hpp). Engines that profile their frames (Unity among
++   * them) call them unconditionally, so an abort here ended the game at its
++   * first annotated frame. */
++  WINBOOL STDMETHODCALLTYPE IsAnnotationEnabled() override { return FALSE; };
+ 
+-  void STDMETHODCALLTYPE SetMarkerInt(const WCHAR *label, int data) override { IMPLEMENT_ME };
++  void STDMETHODCALLTYPE SetMarkerInt(const WCHAR *label, int data) override {};
+ 
+-  void STDMETHODCALLTYPE BeginEventInt(const WCHAR *label, int data) override { IMPLEMENT_ME };
++  void STDMETHODCALLTYPE BeginEventInt(const WCHAR *label, int data) override {};
+ 
+-  void STDMETHODCALLTYPE EndEvent() override { IMPLEMENT_ME };
++  void STDMETHODCALLTYPE EndEvent() override {};
+ 
+ #pragma endregion
+ 
+diff --git a/src/d3d11/d3d11_device.cpp b/src/d3d11/d3d11_device.cpp
+index 3cb10ab..7a78c93 100644
+--- a/src/d3d11/d3d11_device.cpp
++++ b/src/d3d11/d3d11_device.cpp
+@@ -998,10 +998,15 @@ public:
+       CheckMultisampleQualityLevels1(DXGI_FORMAT Format, UINT SampleCount,
+                                      UINT Flags,
+                                      UINT *pNumQualityLevels) override {
+-    if (Flags) {
+-      IMPLEMENT_ME;
+-    }
++    if (!pNumQualityLevels)
++      return E_INVALIDARG;
+     *pNumQualityLevels = 0;
++    /* Madeira: was IMPLEMENT_ME (abort()). The only flag is
++     * D3D11_CHECK_MULTISAMPLE_QUALITY_LEVELS_TILED_RESOURCE, and this device
++     * reports no tiled-resource support, so the answer is zero levels -- the
++     * documented "this combination is not supported" reply. */
++    if (Flags)
++      return S_OK;
+     MTL_DXGI_FORMAT_DESC desc;
+     if (FAILED(MTLQueryDXGIFormat(GetMTLDevice(), Format, desc)) ||
+         desc.PixelFormat == WMTPixelFormatInvalid) {
+@@ -1150,7 +1155,12 @@ public:
+ 
+   HRESULT STDMETHODCALLTYPE CreateQuery1(const D3D11_QUERY_DESC1 *desc,
+                                          ID3D11Query1 **query) override {
+-    IMPLEMENT_ME
++    /* Madeira: was IMPLEMENT_ME (abort()). The queries here do not implement
++     * ID3D11Query1, so this fails the call instead of ending the process. */
++    if (query)
++      *query = nullptr;
++    WARN("CreateQuery1: not supported (ID3D11Query1)");
++    return E_NOTIMPL;
+   }
+ 
+   void STDMETHODCALLTYPE
+@@ -1386,12 +1396,28 @@ public:
+   HRESULT STDMETHODCALLTYPE
+   CreateSurface(const DXGI_SURFACE_DESC *desc, UINT surface_count,
+                 DXGI_USAGE usage, const DXGI_SHARED_RESOURCE *shared_resource,
+-                IDXGISurface **surface) override{IMPLEMENT_ME}
++                IDXGISurface **surface) override {
++    /* Madeira: was IMPLEMENT_ME (abort()); fail the call instead. */
++    if (surface)
++      *surface = nullptr;
++    WARN("IDXGIDevice::CreateSurface: not supported");
++    return E_NOTIMPL;
++  }
+ 
+   HRESULT STDMETHODCALLTYPE
+       QueryResourceResidency(IUnknown *const *resources,
+                              DXGI_RESIDENCY *residency,
+-                             UINT resource_count) override{IMPLEMENT_ME}
++                             UINT resource_count) override {
++    /* Madeira: was IMPLEMENT_ME (abort()). Apple GPUs share memory with the
++     * CPU and Metal does not evict resources behind the program's back, so
++     * every resource is resident -- the answer DXGI gives when nothing has
++     * been paged out. */
++    if (!resources || !residency)
++      return E_INVALIDARG;
++    for (UINT i = 0; i < resource_count; i++)
++      residency[i] = DXGI_RESIDENCY_FULLY_RESIDENT;
++    return S_OK;
++  }
+ 
+   HRESULT STDMETHODCALLTYPE SetGPUThreadPriority(INT Priority) override {
+     if (Priority < -7 || Priority > 7)
+diff --git a/src/d3d11/d3d11_swapchain.cpp b/src/d3d11/d3d11_swapchain.cpp
+index 6475fbb..fbc385d 100644
+--- a/src/d3d11/d3d11_swapchain.cpp
++++ b/src/d3d11/d3d11_swapchain.cpp
+@@ -976,33 +976,67 @@ public:
+ 
+   BOOL STDMETHODCALLTYPE IsTemporaryMonoSupported() final { return FALSE; };
+ 
++  /* Madeira: the IDXGISwapChain1/2 queries below used to be IMPLEMENT_ME
++   * (abort()), so a game that merely asked ended. They now answer as DXGI
++   * does for a swapchain created with CreateSwapChain / CreateSwapChainForHwnd:
++   * no output restriction, an identity rotation, a stored (unused) background
++   * colour, and a source size equal to the buffers (SetSourceSize is only
++   * valid on composition swapchains, which this layer does not create). */
+   HRESULT
+   STDMETHODCALLTYPE
+-  GetRestrictToOutput(IDXGIOutput **ppRestrictToOutput) final { IMPLEMENT_ME; };
++  GetRestrictToOutput(IDXGIOutput **ppRestrictToOutput) final {
++    if (!ppRestrictToOutput)
++      return E_INVALIDARG;
++    *ppRestrictToOutput = nullptr;
++    return S_OK;
++  };
+ 
+   HRESULT
+   STDMETHODCALLTYPE
+-  SetBackgroundColor(const DXGI_RGBA *pColor) final { IMPLEMENT_ME; };
++  SetBackgroundColor(const DXGI_RGBA *pColor) final {
++    if (!pColor)
++      return E_INVALIDARG;
++    madeira_background_color_ = *pColor;
++    return S_OK;
++  };
+ 
+   HRESULT
+   STDMETHODCALLTYPE
+-  GetBackgroundColor(DXGI_RGBA *pColor) final { IMPLEMENT_ME; };
++  GetBackgroundColor(DXGI_RGBA *pColor) final {
++    if (!pColor)
++      return E_INVALIDARG;
++    *pColor = madeira_background_color_;
++    return S_OK;
++  };
+ 
+   HRESULT
+   STDMETHODCALLTYPE
+-  SetRotation(DXGI_MODE_ROTATION Rotation) final { IMPLEMENT_ME; };
++  SetRotation(DXGI_MODE_ROTATION Rotation) final {
++    if (Rotation == DXGI_MODE_ROTATION_IDENTITY || Rotation == DXGI_MODE_ROTATION_UNSPECIFIED)
++      return S_OK;
++    WARN("SetRotation: rotation ", (uint32_t)Rotation, " is not supported");
++    return DXGI_ERROR_UNSUPPORTED;
++  };
+ 
+   HRESULT
+   STDMETHODCALLTYPE
+-  GetRotation(DXGI_MODE_ROTATION *pRotation) final { IMPLEMENT_ME; };
++  GetRotation(DXGI_MODE_ROTATION *pRotation) final {
++    if (!pRotation)
++      return E_INVALIDARG;
++    *pRotation = DXGI_MODE_ROTATION_IDENTITY;
++    return S_OK;
++  };
+ 
+   HRESULT STDMETHODCALLTYPE SetSourceSize(UINT width, UINT height) override {
+-    IMPLEMENT_ME
+-    return S_OK;
++    WARN("SetSourceSize: only composition swapchains take a source size");
++    return DXGI_ERROR_INVALID_CALL;
+   };
+ 
+   HRESULT STDMETHODCALLTYPE GetSourceSize(UINT *width, UINT *height) override {
+-    IMPLEMENT_ME
++    if (!width || !height)
++      return E_INVALIDARG;
++    *width = desc_.Width;
++    *height = desc_.Height;
+     return S_OK;
+   };
+ 
+@@ -1119,6 +1153,7 @@ private:
+   IMTLD3D11DeviceContext* device_context_;
+   Com<D3D11ResourceCommon, false> backbuffer_;
+   HANDLE present_semaphore_;
++  DXGI_RGBA madeira_background_color_ = {0.0f, 0.0f, 0.0f, 1.0f};
+ 
+   /* [PRESENT_GAP] accumulators — Present1 is only called from the game
+    * thread, so plain members are fine. */
+diff --git a/src/dxgi/dxgi_private.h b/src/dxgi/dxgi_private.h
+index 3cc3fbb..80cd666 100644
+--- a/src/dxgi/dxgi_private.h
++++ b/src/dxgi/dxgi_private.h
+@@ -2,8 +2,12 @@
+ 
+ #include <dxgi1_2.h>
+ 
++/* Madeira: this spun forever (an empty endless loop), so an unimplemented DXGI call
++ * left the caller's thread burning a core with the game hung and nothing
++ * after the one log line. Fail loudly like d3d11_private.h instead, so the
++ * session ends with a reason. Nothing in dxgi/ uses it today. */
+ #define IMPLEMENT_ME                                                           \
+   Logger::err(                                                                 \
+       str::format(__FILE__, ":", __FUNCTION__, " is not implemented."));       \
+-  while (1) {                                                                  \
+-  }
++  abort();                                                                     \
++  __builtin_unreachable();
+diff --git a/src/winemetal/unix/winemetal_unix.c b/src/winemetal/unix/winemetal_unix.c
+index 2b7df0d..99ae2c1 100644
+--- a/src/winemetal/unix/winemetal_unix.c
++++ b/src/winemetal/unix/winemetal_unix.c
+@@ -152,11 +152,82 @@ typedef int NTSTATUS;
+ 
+ void
+ execute_on_main(dispatch_block_t block) {
++  /* Madeira: a bounded hop to the main thread.
++   *
++   * This used to be dispatch_sync(main). The callers are CAMetalLayer property
++   * updates (_MetalLayer_setProps, _MetalLayer_setColorSpace) that DXMT makes
++   * from the game's render thread while it creates a swapchain (the
++   * constructor's ResizeBuffers -> Presenter::changeLayerProperties) and on
++   * the first Present (Presenter::synchronizeLayerProperties, with the D3D11
++   * device mutex held). dispatch_sync has no timeout: whenever the iOS main
++   * thread does not drain its queue -- busy for seconds, or itself waiting on
++   * something a guest thread holds -- swapchain creation never returns, the
++   * game stays at "device created", and nothing is ever logged. That is the
++   * "process alive, NO FRAME PRESENTED" shape.
++   *
++   * Now the update is queued to the main thread and the caller waits at most
++   * MADEIRA_MAIN_HOP_TIMEOUT_MS (default 2000; 0 = wait forever, the old
++   * behaviour). Exactly one side runs the block: whichever claims it first.
++   * When the wait expires the caller claims it and applies the update on its
++   * own thread inside an explicit CATransaction (Core Animation layer
++   * properties may be set off the main thread; a thread without a run loop
++   * needs the explicit transaction), and the queued copy does nothing when the
++   * main thread gets to it. Because the caller never returns before the block
++   * ran, pointers the block reads (the presenter's layer props) are still
++   * valid when it runs. */
+   if ([NSThread isMainThread]) {
+     block();
+-  } else {
++    return;
++  }
++  static long timeout_ms = -1;
++  if (timeout_ms < 0) {
++    const char *e = getenv("MADEIRA_MAIN_HOP_TIMEOUT_MS");
++    long v = (e && *e) ? atol(e) : 2000;
++    timeout_ms = v < 0 ? 2000 : v;
++  }
++  if (timeout_ms == 0) {
++    dispatch_sync(dispatch_get_main_queue(), block);
++    return;
++  }
++  /* 0 pending, 1 claimed by the main thread, 2 claimed by the caller.
++   * Two owners (this frame and the queued block); the last one frees it. */
++  struct hop { _Atomic int state; _Atomic int refs; } *hop = calloc(1, sizeof *hop);
++  if (!hop) {
+     dispatch_sync(dispatch_get_main_queue(), block);
++    return;
++  }
++  atomic_store(&hop->refs, 2);
++  dispatch_semaphore_t done = dispatch_semaphore_create(0);
++  dispatch_async(dispatch_get_main_queue(), ^{
++    int expect = 0;
++    if (atomic_compare_exchange_strong(&hop->state, &expect, 1)) {
++      block();
++      dispatch_semaphore_signal(done);
++    }
++    if (atomic_fetch_sub(&hop->refs, 1) == 1)
++      free(hop);
++  });
++  if (dispatch_semaphore_wait(done, dispatch_time(DISPATCH_TIME_NOW, (int64_t)timeout_ms * NSEC_PER_MSEC)) != 0) {
++    int expect = 0;
++    if (atomic_compare_exchange_strong(&hop->state, &expect, 2)) {
++      static _Atomic unsigned long late;
++      unsigned long n = atomic_fetch_add(&late, 1) + 1;
++      if (n <= 8 || (n % 256) == 0)
++        fprintf(stderr, "[madeira-main-hop] winemetal: the main thread did not run a Metal layer update within "
++                        "%ld ms (%lu times); applied on this thread instead -- the main thread is busy or "
++                        "blocked\n", timeout_ms, n);
++      [CATransaction begin];
++      [CATransaction setDisableActions:YES];
++      block();
++      [CATransaction commit];
++    } else {
++      /* The main thread took it just now and is running it: wait for that. */
++      dispatch_semaphore_wait(done, DISPATCH_TIME_FOREVER);
++    }
+   }
++  dispatch_release(done);
++  if (atomic_fetch_sub(&hop->refs, 1) == 1)
++    free(hop);
+ }
+ 
+ static NTSTATUS
+@@ -3516,6 +3587,16 @@ _CreateMetalViewFromHWND(void *obj) {
+   if (pfn_get_win_data && pfn_release_win_data && pfn_macdrv_view_create_metal_view &&
+       pfn_macdrv_view_get_metal_layer) {
+     struct macdrv_win_data *win_data = pfn_get_win_data((HWND)params->hwnd);
++    /* Madeira: a window the display driver does not know has no win_data;
++     * that is a swapchain without a surface (the caller fails CreateSwapChain),
++     * not a NULL dereference on the game's render thread. */
++    if (!win_data) {
++      fprintf(stderr, "[madeira-display] no window data for hwnd %p; the swapchain gets no surface\n",
++              (void *)(uintptr_t)params->hwnd);
++      params->ret_view = 0;
++      params->ret_layer = 0;
++      return STATUS_SUCCESS;
++    }
+     macdrv_metal_view view =
+         pfn_macdrv_view_create_metal_view(win_data->client_cocoa_view, (macdrv_metal_device)params->device);
+     params->ret_view = (obj_handle_t)view;

@@ -111,3 +111,17 @@ With `patches/dxmt-ios-layer-safety.patch` built in (build/dxmt-ios/README.md):
 `.github/workflows/host-tests.yml` runs these and the other compiler-only host
 tests on every pull request. They run on any machine with a C compiler. What the report says on a device
 for a given game has to be checked on an iPad.
+
+## Engine notes and the engine-stall category
+
+Engine lines that read like errors but are not causes by themselves
+(`[Wine WATCHDOG 2s]`, `ml990 ... refusing to advertise address space`,
+`[va-scan]` attempt details, `SHRINKING to ...MB` JIT pool, FEX
+`Config.json` / `AppConfig\<program>.json` probes, read-only file misses,
+`[waiters]` with no main thread, `[alert-rescue]`) are listed under
+"Engine notes" in last-launch.txt and in a `notes` array in last-launch.json;
+they never become the verdict. `[waiters] ... main_over60s=N` with N > 0 is the
+`engine-stall` problem (the game's main thread parked over a minute on an
+INFINITE wait); `[va-scan] FAILED ... STATUS_NO_MEMORY` and a JIT pool that could
+not be placed are process failures. docs/ENGINE_STALLS.md has the background;
+build/host-tests/check-engine-stalls.py the cases.

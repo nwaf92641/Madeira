@@ -60,6 +60,7 @@ typedef enum {
     MD_CAT_ARCH,             // a DLL of the wrong architecture was found (c000007b)
     MD_CAT_WINE_INIT,        // Wine itself did not get the program started
     MD_CAT_AUDIO,            // an audio component (XAudio2, DirectSound, mmdevapi) failed
+    MD_CAT_ENGINE_STALL,     // the game's main thread sat in an INFINITE wait (Wine/FEX lock), no frame
     MD_CAT_UNCLASSIFIED,     // an error that matched no known shape
     MD_CAT_COUNT
 } md_category;

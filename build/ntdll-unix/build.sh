@@ -19,6 +19,11 @@ compile_one() {
     local src=$1
     local name=$2
     echo -n "  $name... "
+    # MADEIRA: obj/ is restored from the CI cache, so a unit that FAILS to compile
+    # used to leave last run's object behind and `ar` archived it silently (a
+    # source change that broke the build shipped as the old code). Remove it
+    # first: a failed unit is then a missing object and ar stops the build.
+    rm -f "$OBJ_DIR/$name.o"
 
     if xcrun -sdk iphoneos clang \
         -arch arm64 -isysroot "$SDK" -miphoneos-version-min=17.0 \
@@ -58,6 +63,7 @@ compile_unixlib() {
     local src=$1 name=$2 prefix=$3
     shift 3
     echo -n "  $name... "
+    rm -f "$OBJ_DIR/$name.o"   # see compile_one
     if xcrun -sdk iphoneos clang \
         -arch arm64 -isysroot "$SDK" -miphoneos-version-min=17.0 \
         -O2 -fPIC -fvisibility=hidden -fno-stack-protector -fno-strict-aliasing \
@@ -177,6 +183,16 @@ for src in $WINE_SRC/dlls/ntdll/unix/*.c; do
             ;;
         thread)
             compile_one "$BUILD_DIR/thread_ios.c" "thread"
+            ;;
+        sync)
+            # MADEIRA: lost-wake rescue + named [waiters] (ios_alert_rescue.h).
+            # Applied to a generated copy; the submodule file is not modified.
+            if python3 "$BUILD_DIR/patch_sync_ios.py" "$src" "$OBJ_DIR/sync_ios.c"; then
+                compile_one "$OBJ_DIR/sync_ios.c" "sync"
+            else
+                echo "  sync... FAILED (patch_sync_ios.py: anchors did not match this wine checkout)"
+                FAILED=$((FAILED + 1)); FAILED_FILES="$FAILED_FILES sync"
+            fi
             ;;
         *)
             compile_one "$src" "$name"

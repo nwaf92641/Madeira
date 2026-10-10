@@ -57,3 +57,15 @@
 2. لعبة D3D11 حقيقية، وقراءة `last-launch.txt` بعدها.
 3. ‏cnc-ddraw وd3d8to9 مع لعبة 32-bit حقيقية.
 4. ‏Wine Mono تحت FEX.
+
+## D3D11 games stuck at "device creation" (Unity, INSIDE)
+
+See docs/D3D11_DEVICE_STALL.md. Confirmed: the shipped prebuilt DXMT DLLs
+never report a created device, so the report stopped at `graphics-api` for
+every D3D11 game; the swapchain path hopped to the iOS main thread with an
+unbounded `dispatch_sync`; several query/annotation methods were `abort()`.
+Fixed: bounded main-thread hops (`MADEIRA_MAIN_HOP_TIMEOUT_MS`), a main-thread
+responsiveness probe, Windows answers for those methods
+(`patches/dxmt-ios-no-hang.patch`, PE part needs the DLL rebuild), a bounded
+wineserver stop, and diagnostics that say which of these happened. Whether
+INSIDE's stall is one of them needs a device log.

@@ -750,6 +750,11 @@ static int winios_game_gdi_fullscreen(void) {
     return e && *e == '1';
 }
 
+/* IOSDisplayShim.m (declared the same way upstream; its header pulls in
+ * CAMetalLayer API this file does not need). */
+extern void winios_screen_size(int *w, int *h);
+extern NSString * const MadeiraDisplayModeChangedNotification;
+
 /* A window whose rect covers the whole guest desktop: a game's own window. */
 static BOOL winios_covers_desktop(CGRect px) {
     int dw = 0, dh = 0;
@@ -771,7 +776,6 @@ static void winios_drop_compositor(const char *why) {
     [g_surf_sizes removeAllObjects];
     [g_metal_layers removeAllObjects];
     [g_client_rects removeAllObjects];
-    g_fit_key = nil;
     [g_compositor_view removeFromSuperview];
     g_compositor_view = nil;
     g_desk_bg = nil;

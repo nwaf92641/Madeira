@@ -3999,21 +3999,68 @@ void server_init_process_done(void)
             mach_port_t wine_mach_thread = pthread_mach_thread_np(wine_pthread);
             uint64_t watchdog_teb_addr = (uint64_t)(uintptr_t)NtCurrentTeb();
 
+            /* MADEIRA: SAMPLE FIRST, RESUME, THEN LOG.
+             *
+             * This block used to call wine_log_write() while the game thread was
+             * still thread_suspend()ed. wine_log_write() is not async-suspend
+             * safe: it takes g_wine_log_mutex, writes a stdio FILE (its lock),
+             * and wine_ui_log() crosses into Swift, which allocates (the malloc
+             * zone lock) and takes LogStore's own lock. At t+2s the game thread
+             * is in the middle of loading and very often holds one of those
+             * locks itself (it logs and allocates constantly). When it did, this
+             * block blocked on that lock, so thread_resume() below was never
+             * reached and the game thread stayed suspended for the rest of the
+             * session: process alive, no further output from that thread,
+             * NO FRAME PRESENTED -- on any game, at random, at exactly t+2s.
+             * Every other sampler in this file (the [thread-sample] census, the
+             * rip profile, [PROF]) already copies the state, resumes, and only
+             * then formats; this one now does the same. Nothing that can take a
+             * lock or allocate runs between thread_suspend and thread_resume:
+             * only thread_get_state, plain loads of globals, and
+             * vm_read_overwrite (a Mach trap). The "resumed" line is the proof in
+             * the log that the thread was let go. */
             void (^sample_thread)(int secs) = ^(int secs) {
                 int kill_ret = pthread_kill(wine_pthread, 0);
-                wine_log_write("[Wine WATCHDOG %ds] thread alive=%d (0=yes)", secs, kill_ret);
+                arm_thread_state64_t state;
+                mach_msg_type_number_t state_count = ARM_THREAD_STATE64_COUNT;
+                kern_return_t kr, rkr;
+                uint64_t g_disp_x18, g_disp_cnt, g_ret_x18, g_ret_pc, g_ret_cnt;
+                int mach_msgs; long long mach_fixes;
+                int have_frame_x18 = 0;
+                uint64_t frame_ptr = 0, frame_x18 = 0;
+                extern volatile int64_t ios_exc_x18_fixes;
+                extern volatile int ios_exc_msg_count;
 
                 /* Suspend thread for consistent state reading */
                 kern_return_t skr = thread_suspend(wine_mach_thread);
                 if (skr != KERN_SUCCESS) {
-                    wine_log_write("[Wine WATCHDOG %ds] thread_suspend failed: %d", secs, skr);
+                    wine_log_write("[Wine WATCHDOG %ds] thread alive=%d (0=yes) thread_suspend failed: %d",
+                                   secs, kill_ret, skr);
                     return;
                 }
+                kr = thread_get_state(wine_mach_thread, ARM_THREAD_STATE64,
+                                      (thread_state_t)&state, &state_count);
+                g_disp_x18 = (uint64_t)g_wine_dispatcher_x18;
+                g_disp_cnt = (uint64_t)g_wine_dispatcher_count;
+                g_ret_x18 = (uint64_t)g_wine_return_x18;
+                g_ret_pc = (uint64_t)g_wine_return_pc;
+                g_ret_cnt = (uint64_t)g_wine_return_count;
+                mach_msgs = ios_exc_msg_count;
+                mach_fixes = (long long)ios_exc_x18_fixes;
+                if (kr == KERN_SUCCESS && state.__x[18] == 0) {
+                    /* thread_data->syscall_frame is at TEB+0x378; frame->x[18] at frame+0x90.
+                     * vm_read_overwrite is a Mach trap: no lock, no allocation. */
+                    vm_size_t out_size = sizeof(frame_ptr);
+                    if (vm_read_overwrite(mach_task_self(), watchdog_teb_addr + 0x378,
+                                          sizeof(frame_ptr), (vm_address_t)&frame_ptr, &out_size) == KERN_SUCCESS &&
+                        vm_read_overwrite(mach_task_self(), frame_ptr + 0x90,
+                                          sizeof(frame_x18), (vm_address_t)&frame_x18, &out_size) == KERN_SUCCESS)
+                        have_frame_x18 = 1;
+                }
+                rkr = thread_resume(wine_mach_thread);
 
-                arm_thread_state64_t state;
-                mach_msg_type_number_t state_count = ARM_THREAD_STATE64_COUNT;
-                kern_return_t kr = thread_get_state(wine_mach_thread, ARM_THREAD_STATE64,
-                                                    (thread_state_t)&state, &state_count);
+                /* The thread runs again; logging can take any lock it likes now. */
+                wine_log_write("[Wine WATCHDOG %ds] thread alive=%d (0=yes)", secs, kill_ret);
                 if (kr == KERN_SUCCESS) {
                     wine_log_write("[Wine WATCHDOG %ds] PC=0x%llx LR=0x%llx SP=0x%llx FP=0x%llx",
                         secs,
@@ -4025,46 +4072,19 @@ void server_init_process_done(void)
                         secs, state.__x[0], state.__x[1], state.__x[2], state.__x[3]);
                     wine_log_write("[Wine WATCHDOG %ds] x8=0x%llx x16=0x%llx x17=0x%llx x18=0x%llx",
                         secs, state.__x[8], state.__x[16], state.__x[17], state.__x[18]);
-
-                    /* Check dispatcher + return-path globals (combined to avoid os_log rate limiting) */
                     wine_log_write("[Wine WATCHDOG %ds] disp: entry_x18=0x%llx dcnt=%llu | ret: x18=0x%llx pc=0x%llx rcnt=%llu",
-                        secs, (unsigned long long)g_wine_dispatcher_x18,
-                        (unsigned long long)g_wine_dispatcher_count,
-                        (unsigned long long)g_wine_return_x18,
-                        (unsigned long long)g_wine_return_pc,
-                        (unsigned long long)g_wine_return_count);
-
-                    /* Mach handler stats */
-                    {
-                        extern volatile int64_t ios_exc_x18_fixes;
-                        extern volatile int ios_exc_msg_count;
-                        wine_log_write("[Wine WATCHDOG %ds] mach: msgs=%d x18_fixes=%lld",
-                            secs, ios_exc_msg_count, (long long)ios_exc_x18_fixes);
-                    }
-
-                    /* If x18=0, read the syscall frame from memory to check frame->x[18] */
-                    if (state.__x[18] == 0) {
-                        /* thread_data->syscall_frame is at TEB+0x378.
-                         * frame->x[18] is at frame+0x90. */
-                        uint64_t teb_addr = watchdog_teb_addr;
-                        uint64_t frame_ptr = 0;
-                        /* Read syscall_frame pointer from TEB+0x378 */
-                        vm_size_t out_size = sizeof(frame_ptr);
-                        if (vm_read_overwrite(mach_task_self(), teb_addr + 0x378,
-                                              sizeof(frame_ptr), (vm_address_t)&frame_ptr, &out_size) == KERN_SUCCESS) {
-                            uint64_t frame_x18 = 0;
-                            if (vm_read_overwrite(mach_task_self(), frame_ptr + 0x90,
-                                                  sizeof(frame_x18), (vm_address_t)&frame_x18, &out_size) == KERN_SUCCESS) {
-                                wine_log_write("[Wine WATCHDOG %ds] x18=0 but frame->x[18]=0x%llx (frame=%p)",
-                                    secs, (unsigned long long)frame_x18, (void*)frame_ptr);
-                            }
-                        }
-                    }
+                        secs, (unsigned long long)g_disp_x18, (unsigned long long)g_disp_cnt,
+                        (unsigned long long)g_ret_x18, (unsigned long long)g_ret_pc,
+                        (unsigned long long)g_ret_cnt);
+                    wine_log_write("[Wine WATCHDOG %ds] mach: msgs=%d x18_fixes=%lld", secs, mach_msgs, mach_fixes);
+                    if (have_frame_x18)
+                        wine_log_write("[Wine WATCHDOG %ds] x18=0 but frame->x[18]=0x%llx (frame=%p)",
+                            secs, (unsigned long long)frame_x18, (void*)frame_ptr);
                 } else {
                     wine_log_write("[Wine WATCHDOG %ds] thread_get_state failed: %d", secs, kr);
                 }
-
-                thread_resume(wine_mach_thread);
+                wine_log_write("[Wine WATCHDOG %ds] resumed the sampled thread before logging (kr=%d) "
+                               "-- a one-shot register sample at t+2s, not an error", secs, rkr);
             };
 
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 2 * NSEC_PER_SEC),

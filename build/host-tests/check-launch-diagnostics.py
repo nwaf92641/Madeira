@@ -268,6 +268,26 @@ int main(int argc, char **argv)
     feed("[madeira-diag] stage=present ok=0 cat=metal-present-failure detail=d3d12: the drawable (format 80) differs from the back buffer (format 70) and this build has no converting present; frame dropped");
     dump("d3d12-no-convert");
 
+    /* Unity-shaped stall: the prebuilt d3d11.dll logs "Using feature level" and
+     * never a [madeira-diag] device line, then the game waits. */
+    madeira_diag_reset("C:\\Games\\Un\\INSIDE.exe", dir);
+    madeira_diag_stage(MD_STAGE_WINE_STARTED, "64-bit (x86-64) program, ARM64EC");
+    feed("info:  Using feature level D3D_FEATURE_LEVEL_11_0");
+    dump("unity-api-only");
+
+    madeira_diag_reset("C:\\Games\\Un\\hop.exe", dir);
+    madeira_diag_stage(MD_STAGE_WINE_STARTED, "64-bit (x86-64) program, ARM64EC");
+    feed("info:  Using feature level D3D_FEATURE_LEVEL_11_0");
+    madeira_diag_stage(MD_STAGE_METAL_LAYER, "game view layer");
+    feed("[freeze] MAIN THREAD unresponsive for 5.2s (since t+41.0s) while in the foreground; guest threads that hop to it wait (bounded by MADEIRA_MAIN_HOP_TIMEOUT_MS). Thread stacks follow.");
+    feed("[madeira-main-hop] winemetal: the main thread did not run a Metal layer update within 2000 ms (1 times); applied on this thread instead -- the main thread is busy or blocked");
+    dump("main-hop");
+
+    madeira_diag_reset("C:\\Games\\Un\\unimpl.exe", dir);
+    feed("info:  Using feature level D3D_FEATURE_LEVEL_11_0");
+    feed("err:   d3d11_context_impl.cpp:IsAnnotationEnabled is not implemented.");
+    dump("dxmt-unimplemented");
+
     madeira_diag_reset("C:\\Games\\Noise\\noise.exe", dir);
     {
         clock_t c0 = clock();
@@ -458,6 +478,21 @@ with tempfile.TemporaryDirectory() as work:
     check(cats == ['metal-present-failure', 'swapchain-failure'], 'd3d12: refused format + dropped frame (%s)' % cats)
     check(any('converts each frame' in x['hint'] for x in a['json']['problems']), 'd3d12: refused-format hint')
 
+    a = s['unity-api-only']
+    check(a['verdict'] == 'none' or a['json']['problems'] == [], 'unity: no invented problem (%s)' % a['verdict'])
+    check('neither the end of that nor a swapchain' in a['text'] and 'does not prove device creation hung' in a['text'],
+          'unity: a runtime without a device line is not called a device-creation hang')
+    check('created no Direct3D device yet' not in a['text'], 'unity: the "no device yet" hint is not used once the runtime started')
+    a = s['main-hop']
+    check(len(a['json']['problems']) == 2 and all(x['category'] == 'swapchain-failure' for x in a['json']['problems']),
+          'main-hop: the freeze probe and the bounded hop are both reported (%s)' % a['json']['problems'])
+    check(any('Thread stacks' in x['hint'] or 'thread stacks' in x['hint'] for x in a['json']['problems']),
+          'main-hop: hint points at the thread stacks')
+    check('asked for the Metal layer and got it' in a['text'], 'main-hop: stall hint for a layer without a swapchain line')
+    a = s['dxmt-unimplemented']
+    check(a['verdict'] == 'unimplemented-function' and 'abort' in a['json']['problems'][0]['hint'],
+          'dxmt: "is not implemented." is an unimplemented-function problem (%s)' % a['verdict'])
+
     a = s['noise']
     check(a['json']['problems'] == [] and len(a['json']['stages']) == 1, 'noise: nothing recognised')
     ms = [int(l.split('=')[1]) for l in r.stdout.splitlines() if l.startswith('noise-cpu-ms=')]
@@ -469,7 +504,7 @@ with tempfile.TemporaryDirectory() as work:
         j = json.loads((outdir / 'last-launch.json').read_text())
         check(j['exe'].endswith('noise.exe'), 'files: last report is the last launch')
     if (outdir / 'previous-launch.txt').is_file():
-        check('cv.exe' in (outdir / 'previous-launch.txt').read_text(), 'files: previous is the launch before')
+        check('unimpl.exe' in (outdir / 'previous-launch.txt').read_text(), 'files: previous is the launch before')
 
     # The header names every category the request asked for, under one stable name each.
     hdr = (inc / 'LaunchDiagnostics.h').read_text()

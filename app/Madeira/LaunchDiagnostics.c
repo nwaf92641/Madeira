@@ -592,6 +592,38 @@ static void md_feed_locked(const char *line)
         }
         return;
     }
+    /* Madeira's bounded main-thread hops (winemetal execute_on_main, Winios
+     * winios_metal_layer_for_hwnd) and the freeze detector's main-thread probe. */
+    if (md_find(line, "[madeira-main-hop]")) {
+        md_problem_locked(MD_CAT_SWAPCHAIN, "main-thread", "main thread did not answer", line, len,
+                          "A guest thread waited for the iOS main thread (a Metal layer update or a window's "
+                          "layer) and it did not answer in time. Before the bounded hop this was a permanent "
+                          "hang at device / swapchain creation with nothing logged; now the update is applied "
+                          "anyway (or the swapchain fails and the game may retry). Repeats mean the main thread "
+                          "is busy or blocked: see the [freeze] MAIN THREAD lines and the thread stacks in the log.");
+        return;
+    }
+    if (md_find(line, "[freeze] MAIN THREAD unresponsive")) {
+        md_problem_locked(MD_CAT_SWAPCHAIN, "main-thread", "main thread unresponsive", line, len,
+                          "The iOS main thread ran nothing for seconds while the app was in the foreground. "
+                          "Everything that has to touch UIKit or Core Animation waits behind it, so a game can "
+                          "stall at device or swapchain creation; the thread stacks dumped next to this line name "
+                          "what the main thread is doing.");
+        return;
+    }
+    /* DXMT's IMPLEMENT_ME / UNIMPLEMENTED: "<file>:<function> is not implemented."
+     * (d3d11_private.h). In the prebuilt DLLs the next thing it does is abort(). */
+    if ((md_find(line, "d3d11_") || md_find(line, "d3d10_") || md_find(line, "dxgi_")) &&
+        md_find(line, ".cpp:") && (md_find(line, " is not implemented.") || md_find(line, ": \"todo\"") ||
+                                   md_find(line, "runs into an unreachable path"))) {
+        md_problem_locked(MD_CAT_UNIMPLEMENTED, "d3d11", "DXMT call not implemented", line, len,
+                          "The game called a Direct3D 11 / DXGI method DXMT does not implement (named in the line). "
+                          "DXMT ends the process there (abort, exit code 3); a game with its own crash handler "
+                          "(Unity, Unreal) can instead stay alive in that handler with no frame. Methods that "
+                          "only query or annotate were given their Windows answers in "
+                          "patches/dxmt-ios-no-hang.patch; a d3d11.dll built before it still aborts.");
+        return;
+    }
     if (md_find(line, "nextDrawable #") && md_find(line, "BLOCKED")) {
         md_problem_locked(MD_CAT_PRESENT, "present", "nextDrawable blocked", line, len,
                           "CAMetalLayer.nextDrawable waited long: queued frames are not being shown, so the "
@@ -599,7 +631,8 @@ static void md_feed_locked(const char *line)
                           "being composited (a detached or hidden view), which looks like a black screen.");
         return;
     }
-    if (md_find(line, "Failed to create metal view") || md_find(line, "no exported symbols needed by DXMT")) {
+    if (md_find(line, "Failed to create metal view") || md_find(line, "no exported symbols needed by DXMT") ||
+        md_find(line, "[madeira-display] no window data for hwnd")) {
         md_problem_locked(MD_CAT_SWAPCHAIN, "swapchain", "no metal view", line, len,
                           "The swapchain got no Metal layer for its window: the app's game layer was not "
                           "registered yet, or the macdrv_functions export is missing from this build.");
@@ -675,7 +708,7 @@ void madeira_diag_feed_line(const char *line)
         !strstr(line, "[wg-parser]") && !strstr(line, "metal view") && !strstr(line, "feature level") &&
         !strstr(line, "[d3d9-modes] CreateDevice") && !strstr(line, "DXMT adapter") &&
         !strstr(line, "wine: ") && !strstr(line, "dependent assembly") && !strstr(line, "[d3d8to9] ") &&
-        !strstr(line, "cnc-ddraw"))
+        !strstr(line, "cnc-ddraw") && !strstr(line, "[freeze] MAIN THREAD"))
         return;
     pthread_mutex_lock(&md_lock);
     md_feed_locked(line);
@@ -781,9 +814,19 @@ static const char *md_stall_hint_locked(void)
     if (md.stages[MD_STAGE_SWAPCHAIN].reached)
         return "A swapchain exists but nothing was presented yet: the game is still loading, waiting for "
                "something (a video, a launcher window, input), or rendering is stuck before Present.";
+    if (md.stages[MD_STAGE_METAL_LAYER].reached)
+        return "A swapchain asked for the Metal layer and got it, but its creation was never reported as done "
+               "and nothing was presented: swapchain creation or the first Present did not finish (a [madeira-main-hop] "
+               "line means it waited for the main thread), or the game is still loading.";
     if (md.stages[MD_STAGE_DEVICE].reached)
         return "A Direct3D device exists but no swapchain was created yet: the game is loading, or it waits "
                "for something before it creates its window's swapchain.";
+    if (md.stages[MD_STAGE_GRAPHICS_API].reached)
+        return "A Direct3D runtime started creating a device, and neither the end of that nor a swapchain was "
+               "reported. A d3d11.dll without the [madeira-diag] lines (the prebuilt DLLs) never reports the "
+               "device, so this is ALSO what a game looks like that created its device and then waits or loads "
+               "before its swapchain: it does not prove device creation hung. The [madeira-main-hop], [freeze] and "
+               "\"is not implemented\" lines and the thread stacks in the log tell the two apart.";
     if (md.stages[MD_STAGE_GDI_WINDOW].reached)
         return "Only GDI windows (a launcher or a dialog) were shown: the game may be waiting for a click there.";
     if (md.stages[MD_STAGE_CHILD_PROCESS].reached)

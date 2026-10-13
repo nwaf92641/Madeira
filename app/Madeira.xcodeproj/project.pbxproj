@@ -113,7 +113,7 @@
 		A1000620 /* GameCompat.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000620 /* GameCompat.swift */; };
 		A1000621 /* GameCompatView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000621 /* GameCompatView.swift */; };
 		A1000622 /* CompatDiagnosis.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000622 /* CompatDiagnosis.swift */; };
-		A1000622 /* compat.json in Resources */ = {isa = PBXBuildFile; fileRef = A2000622 /* compat.json */; };
+		A1000623 /* compat.json in Resources */ = {isa = PBXBuildFile; fileRef = A2000623 /* compat.json */; };
 		A1000243 /* GamepadInput.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000243 /* GamepadInput.swift */; };
 		A1000244 /* Winios/WiniosGamepad.c in Sources */ = {isa = PBXBuildFile; fileRef = A2000244 /* Winios/WiniosGamepad.c */; };
 		A1000203 /* HardwareInput.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000203 /* HardwareInput.swift */; };
@@ -246,7 +246,7 @@
 		A2000620 /* GameCompat.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameCompat.swift; sourceTree = "<group>"; };
 		A2000621 /* GameCompatView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameCompatView.swift; sourceTree = "<group>"; };
 		A2000622 /* CompatDiagnosis.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompatDiagnosis.swift; sourceTree = "<group>"; };
-		A2000622 /* compat.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = compat.json; sourceTree = "<group>"; };
+		A2000623 /* compat.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = compat.json; sourceTree = "<group>"; };
 		A2000243 /* GamepadInput.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "GamepadInput.swift"; sourceTree = "<group>"; };
 		A2000244 /* Winios/WiniosGamepad.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = "Winios/WiniosGamepad.c"; sourceTree = "<group>"; };
 		A2000203 /* HardwareInput.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HardwareInput.swift; sourceTree = "<group>"; };
@@ -369,7 +369,7 @@
 				A2000620 /* GameCompat.swift */,
 				A2000621 /* GameCompatView.swift */,
 				A2000622 /* CompatDiagnosis.swift */,
-				A2000622 /* compat.json */,
+				A2000623 /* compat.json */,
 				A2000004 /* JITAllocator.c */,
 				A2000005 /* JITAllocator.h */,
 				A2000D1A /* LaunchDiagnostics.c */,
@@ -528,7 +528,7 @@
 				A1000081 /* x86_64-vcruntime in Resources */,
 				A1000040 /* prefix-template.tar.gz in Resources */,
 				A1000094 /* cacert.pem in Resources */,
-				A1000622 /* compat.json in Resources */,
+				A1000623 /* compat.json in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

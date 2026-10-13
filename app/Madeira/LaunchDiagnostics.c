@@ -13,9 +13,13 @@
 #include <time.h>
 
 #define MD_MAX_PROBLEMS 24
+#define MD_MAX_NOTES 12
 #define MD_TEXT 240
 
 struct md_stage_rec { int reached; double t; char detail[MD_TEXT]; };
+/* A line users read as an error that is not one (or not by itself): kept apart
+ * from the problems so the verdict never rests on it, and explained once. */
+struct md_note { char key[48]; char text[MD_TEXT * 2]; char example[MD_TEXT]; unsigned count; };
 struct md_problem {
     md_category cat;
     char stage[32];
@@ -36,6 +40,8 @@ static struct {
     struct md_stage_rec stages[MD_STAGE_COUNT];
     struct md_problem problems[MD_MAX_PROBLEMS];
     unsigned nproblems, dropped;
+    struct md_note notes[MD_MAX_NOTES];
+    unsigned nnotes;
     uint64_t present_base, presents;
     int present_base_set;
     int exit_status, exited;
@@ -51,13 +57,13 @@ static const char *const md_cat_names[MD_CAT_COUNT] = {
     "none", "process-failure", "missing-dll", "graphics-device-failure", "swapchain-failure",
     "shader-translation-failure", "metal-present-failure", "window-visibility", "video-init-failure",
     "unimplemented-function", "dependency-load-failure", "architecture-mismatch", "wine-init-failure",
-    "audio-init-failure", "unclassified",
+    "audio-init-failure", "engine-stall", "unclassified",
 };
 static const char *const md_cat_titles[MD_CAT_COUNT] = {
     "No problem", "Process failure", "Missing DLL", "Graphics device failure", "Swapchain failure",
     "Shader translation failure", "Metal present failure", "Window not visible", "Video / media failure",
     "Unimplemented function", "Dependency could not load", "Wrong architecture", "Wine start-up failure",
-    "Audio failure", "Unclassified error",
+    "Audio failure", "Engine stall (game thread parked)", "Unclassified error",
 };
 static const char *const md_cat_hints[MD_CAT_COUNT] = {
     "",
@@ -91,6 +97,11 @@ static const char *const md_cat_hints[MD_CAT_COUNT] = {
     "module (kernel32, start.exe) did not load. Check the path and that the file is a Windows program.",
     "An audio component failed to initialise. Some games stop, or wait silently, when XAudio2, DirectSound or "
     "the audio endpoint cannot be created; others continue without sound.",
+    "The game's main thread has been parked for over a minute on an INFINITE wait (a Wine SRW lock, "
+    "condition variable or critical section, or a FEX lock), so it cannot reach Present. The [waiters] rows "
+    "marked MAIN in the log name the lock word. Builds with the alert rescue (madeira.cfg alert-rescue-ms, "
+    "default 1000) wake a waiter whose lock word moved without a wake-up; if this still appears, the lock is "
+    "really held: the thread stacks and [hot-lock] lines name the holder.",
     "An error matched no known shape; Documents/madeira-log.txt has the context.",
 };
 
@@ -358,12 +369,115 @@ static void md_feed_diag_locked(const char *p)
     }
 }
 
+static void md_note_locked(const char *key, const char *line, size_t len, const char *text)
+{
+    unsigned i;
+    struct md_note *n;
+    size_t l = len;
+    const char *e = md_skip_tid(line, &l);
+    if (!md.active) return;
+    for (i = 0; i < md.nnotes; i++)
+        if (!strcmp(md.notes[i].key, key)) { md.notes[i].count++; return; }
+    if (md.nnotes >= MD_MAX_NOTES) return;
+    n = &md.notes[md.nnotes++];
+    memset(n, 0, sizeof *n);
+    md_copy(n->key, sizeof n->key, key, (size_t)-1);
+    md_copy(n->text, sizeof n->text, text, (size_t)-1);
+    md_copy(n->example, sizeof n->example, e, l);
+    n->count = 1;
+    if (!md.dirty) md.dirty = 1;
+}
+
+/* Engine lines (ntdll unix, the JIT pool, FEX) that read like failures. Returns
+ * 1 when the line was one of them. Only [waiters] with the game's main thread
+ * among the >60 s parkers, and a pool that could not be placed at all, are
+ * problems; everything else is a note. */
+static int md_feed_engine_locked(const char *line, size_t len)
+{
+    const char *p;
+    if ((p = md_find(line, "[waiters] parked="))) {
+        const char *m = md_find(p, "main_over60s="), *o = md_find(p, "over60s=");
+        long mo = m ? strtol(m + 13, NULL, 10) : 0, ov = o ? strtol(o + 8, NULL, 10) : 0;
+        if (mo > 0)
+            md_problem_locked(MD_CAT_ENGINE_STALL, "running", "game main thread parked", line, len, NULL);
+        else if (ov > 0)
+            md_note_locked("waiters", line, len,
+                           m ? "Threads parked on INFINITE waits for over a minute, none of them the game's main "
+                               "thread: idle worker threads (thread pools, audio, loaders waiting for work) look "
+                               "exactly like this on Windows too. Not a hang by itself."
+                             : "A thread parked on an INFINITE wait for over a minute. This build does not say "
+                               "whether it is the game's main thread (older ntdll); an idle worker looks the same.");
+        return 1;
+    }
+    if (md_find(line, "[alert-rescue] #")) {
+        md_note_locked("alert-rescue", line, len,
+                       "A wait whose lock word changed without a wake-up was returned to its caller to re-test "
+                       "the lock (a lost wake between two PE ntdll copies). Before the rescue this thread would "
+                       "have slept forever; a game that now starts but showed this line was hit by it.");
+        return 1;
+    }
+    if (md_find(line, "[alert-rescue] INFINITE alert waits")) return 1;
+    if (md_find(line, "[Wine WATCHDOG ")) {
+        md_note_locked("wine-watchdog", line, len,
+                       "A one-shot register sample of the game thread 2 s after start, logged on every launch. "
+                       "Not an error. Builds before the sample-then-log fix could leave the thread suspended if "
+                       "it held a log or allocator lock at that instant; this build resumes it first (the "
+                       "'resumed the sampled thread' line).");
+        return 1;
+    }
+    if (md_find(line, "refusing to advertise address space")) {
+        md_note_locked("va-ceiling", line, len,
+                       "ntdll tells programs the address-space ceiling this device really has instead of Windows' "
+                       "128 TB (GlobalMemoryStatusEx, GetSystemInfo). Informational; nothing is refused.");
+        return 1;
+    }
+    if (md_find(line, "<-- iOS REFUSED A FREE") || md_find(line, "PARTIALLY OCCUPIED: free")) {
+        md_note_locked("va-scan-detail", line, len,
+                       "Detail of one fixed-address attempt during an address-space scan; the scan moves on to "
+                       "the next candidate. Only a [va-scan] FAILED ... STATUS_NO_MEMORY line means an allocation "
+                       "really failed.");
+        return 1;
+    }
+    if ((p = md_find(line, "[va-scan] FAILED")) && md_find(line, "STATUS_NO_MEMORY")) {
+        md_problem_locked(MD_CAT_PROCESS, "address-space", "out of address space", line, len,
+                          "An allocation found no free address range in the window it is allowed to use and "
+                          "returned NULL to the program. A game that reserves more than this device can map "
+                          "fails here; the [furniture] census lines show what fills the space.");
+        return 1;
+    }
+    if (md_find(line, "SHRINKING to") || md_find(line, "SMALL JIT POOL") || md_find(line, "[jit-pool-placement]")) {
+        md_note_locked("jit-pool-size", line, len,
+                       "The JIT pool was sized to the largest hole free at launch. Above ~500 MB this is "
+                       "harmless; smaller pools make FEX flush its code cache more often (short stutters), "
+                       "not a black screen. Builds with JITPoolPlacement.h hold that hole from image load.");
+        return 1;
+    }
+    if (md_find(line, "cannot place a usable pool") || md_find(line, "BAD POOL: no valid placement")) {
+        md_problem_locked(MD_CAT_PROCESS, "jit-pool", "no JIT pool", line, len,
+                          "No address range could hold the JIT pool; the session cannot run x86 code. Quit and "
+                          "relaunch the app (the address space is laid out afresh).");
+        return 1;
+    }
+    if (md_find(line, "[file-fail]") && md_find(line, "status=0xc0000034")) {
+        int fex = (md_find(line, "fex-emu") || md_find(line, "FEX")) && md_find(line, ".json");
+        md_note_locked(fex ? "fex-config-probe" : "file-probe", line, len,
+                       fex ? "FEX looking for its optional configuration (Config.json, AppConfig\\<program>.json) "
+                             "under %LOCALAPPDATA%\\fex-emu; absent files mean defaults. Not an error."
+                           : "A program or DLL looked for a file that does not exist (STATUS_OBJECT_NAME_NOT_FOUND): "
+                             "optional configs, search-path probes. Programs expect this answer; only a file "
+                             "the program needs and cannot find matters, and then it says so.");
+        return 1;
+    }
+    return 0;
+}
+
 static void md_feed_locked(const char *line)
 {
     const char *p;
     size_t len = strlen(line);
 
     if ((p = md_find(line, "[madeira-diag] "))) { md_feed_diag_locked(p + 15); return; }
+    if (md_feed_engine_locked(line, len)) return;
 
     /* Wine's loader (dlls/ntdll/loader.c, import_dll). Two messages:
      *   "Library X (which is needed by Y) not found"            -> X is not there
@@ -592,6 +706,38 @@ static void md_feed_locked(const char *line)
         }
         return;
     }
+    /* Madeira's bounded main-thread hops (winemetal execute_on_main, Winios
+     * winios_metal_layer_for_hwnd) and the freeze detector's main-thread probe. */
+    if (md_find(line, "[madeira-main-hop]")) {
+        md_problem_locked(MD_CAT_SWAPCHAIN, "main-thread", "main thread did not answer", line, len,
+                          "A guest thread waited for the iOS main thread (a Metal layer update or a window's "
+                          "layer) and it did not answer in time. Before the bounded hop this was a permanent "
+                          "hang at device / swapchain creation with nothing logged; now the update is applied "
+                          "anyway (or the swapchain fails and the game may retry). Repeats mean the main thread "
+                          "is busy or blocked: see the [freeze] MAIN THREAD lines and the thread stacks in the log.");
+        return;
+    }
+    if (md_find(line, "[freeze] MAIN THREAD unresponsive")) {
+        md_problem_locked(MD_CAT_SWAPCHAIN, "main-thread", "main thread unresponsive", line, len,
+                          "The iOS main thread ran nothing for seconds while the app was in the foreground. "
+                          "Everything that has to touch UIKit or Core Animation waits behind it, so a game can "
+                          "stall at device or swapchain creation; the thread stacks dumped next to this line name "
+                          "what the main thread is doing.");
+        return;
+    }
+    /* DXMT's IMPLEMENT_ME / UNIMPLEMENTED: "<file>:<function> is not implemented."
+     * (d3d11_private.h). In the prebuilt DLLs the next thing it does is abort(). */
+    if ((md_find(line, "d3d11_") || md_find(line, "d3d10_") || md_find(line, "dxgi_")) &&
+        md_find(line, ".cpp:") && (md_find(line, " is not implemented.") || md_find(line, ": \"todo\"") ||
+                                   md_find(line, "runs into an unreachable path"))) {
+        md_problem_locked(MD_CAT_UNIMPLEMENTED, "d3d11", "DXMT call not implemented", line, len,
+                          "The game called a Direct3D 11 / DXGI method DXMT does not implement (named in the line). "
+                          "DXMT ends the process there (abort, exit code 3); a game with its own crash handler "
+                          "(Unity, Unreal) can instead stay alive in that handler with no frame. Methods that "
+                          "only query or annotate were given their Windows answers in "
+                          "patches/dxmt-ios-no-hang.patch; a d3d11.dll built before it still aborts.");
+        return;
+    }
     if (md_find(line, "nextDrawable #") && md_find(line, "BLOCKED")) {
         md_problem_locked(MD_CAT_PRESENT, "present", "nextDrawable blocked", line, len,
                           "CAMetalLayer.nextDrawable waited long: queued frames are not being shown, so the "
@@ -599,7 +745,8 @@ static void md_feed_locked(const char *line)
                           "being composited (a detached or hidden view), which looks like a black screen.");
         return;
     }
-    if (md_find(line, "Failed to create metal view") || md_find(line, "no exported symbols needed by DXMT")) {
+    if (md_find(line, "Failed to create metal view") || md_find(line, "no exported symbols needed by DXMT") ||
+        md_find(line, "[madeira-display] no window data for hwnd")) {
         md_problem_locked(MD_CAT_SWAPCHAIN, "swapchain", "no metal view", line, len,
                           "The swapchain got no Metal layer for its window: the app's game layer was not "
                           "registered yet, or the macdrv_functions export is missing from this build.");
@@ -675,7 +822,12 @@ void madeira_diag_feed_line(const char *line)
         !strstr(line, "[wg-parser]") && !strstr(line, "metal view") && !strstr(line, "feature level") &&
         !strstr(line, "[d3d9-modes] CreateDevice") && !strstr(line, "DXMT adapter") &&
         !strstr(line, "wine: ") && !strstr(line, "dependent assembly") && !strstr(line, "[d3d8to9] ") &&
-        !strstr(line, "cnc-ddraw"))
+        !strstr(line, "cnc-ddraw") && !strstr(line, "[freeze] MAIN THREAD") &&
+        !strstr(line, "[waiters]") && !strstr(line, "[alert-rescue]") && !strstr(line, "WATCHDOG") &&
+        !strstr(line, "advertise address") && !strstr(line, "OCCUPIED") && !strstr(line, "REFUSED") &&
+        !strstr(line, "[va-scan]") && !strstr(line, "SHRINKING to") && !strstr(line, "JIT POOL") &&
+        !strstr(line, "[jit-pool-placement]") && !strstr(line, "usable pool") && !strstr(line, "BAD POOL") &&
+        !strstr(line, "[file-fail]"))
         return;
     pthread_mutex_lock(&md_lock);
     md_feed_locked(line);
@@ -730,7 +882,7 @@ static md_category md_verdict_locked(void)
 {
     static const md_category order[] = {
         MD_CAT_WINE_INIT, MD_CAT_MISSING_DLL, MD_CAT_ARCH, MD_CAT_UNIMPLEMENTED, MD_CAT_DEPENDENCY,
-        MD_CAT_PROCESS, MD_CAT_DEVICE, MD_CAT_SWAPCHAIN, MD_CAT_PRESENT, MD_CAT_WINDOW, MD_CAT_SHADER,
+        MD_CAT_PROCESS, MD_CAT_ENGINE_STALL, MD_CAT_DEVICE, MD_CAT_SWAPCHAIN, MD_CAT_PRESENT, MD_CAT_WINDOW, MD_CAT_SHADER,
         MD_CAT_VIDEO, MD_CAT_AUDIO, MD_CAT_UNCLASSIFIED };
     unsigned i, j;
     if (md.stages[MD_STAGE_FIRST_PRESENT].reached) return MD_CAT_NONE;
@@ -781,9 +933,19 @@ static const char *md_stall_hint_locked(void)
     if (md.stages[MD_STAGE_SWAPCHAIN].reached)
         return "A swapchain exists but nothing was presented yet: the game is still loading, waiting for "
                "something (a video, a launcher window, input), or rendering is stuck before Present.";
+    if (md.stages[MD_STAGE_METAL_LAYER].reached)
+        return "A swapchain asked for the Metal layer and got it, but its creation was never reported as done "
+               "and nothing was presented: swapchain creation or the first Present did not finish (a [madeira-main-hop] "
+               "line means it waited for the main thread), or the game is still loading.";
     if (md.stages[MD_STAGE_DEVICE].reached)
         return "A Direct3D device exists but no swapchain was created yet: the game is loading, or it waits "
                "for something before it creates its window's swapchain.";
+    if (md.stages[MD_STAGE_GRAPHICS_API].reached)
+        return "A Direct3D runtime started creating a device, and neither the end of that nor a swapchain was "
+               "reported. A d3d11.dll without the [madeira-diag] lines (the prebuilt DLLs) never reports the "
+               "device, so this is ALSO what a game looks like that created its device and then waits or loads "
+               "before its swapchain: it does not prove device creation hung. The [madeira-main-hop], [freeze] and "
+               "\"is not implemented\" lines and the thread stacks in the log tell the two apart.";
     if (md.stages[MD_STAGE_GDI_WINDOW].reached)
         return "Only GDI windows (a launcher or a dialog) were shown: the game may be waiting for a click there.";
     if (md.stages[MD_STAGE_CHILD_PROCESS].reached)
@@ -834,6 +996,16 @@ size_t madeira_diag_render_text(char *buf, size_t cap)
         if (p->count > 1) md_put(&o, "  seen %u times\n", p->count);
         md_put(&o, "  error: %s\n", p->error);
         md_put(&o, "  hint:  %s\n", p->hint);
+    }
+    if (md.nnotes) {
+        md_put(&o, "\nEngine notes (logged, but not the cause of a black screen by themselves):\n");
+        for (i = 0; i < md.nnotes; i++) {
+            const struct md_note *n = &md.notes[i];
+            md_put(&o, "- %s\n", n->key);
+            if (n->count > 1) md_put(&o, "  seen %u times\n", n->count);
+            md_put(&o, "  line:  %s\n", n->example);
+            md_put(&o, "  means: %s\n", n->text);
+        }
     }
     md_put(&o, "\nThe full log is Documents/madeira-log.txt. This report is rebuilt from what the log and the "
                "runtime reported; it names where a launch stopped, not always why.\n");
@@ -888,6 +1060,16 @@ size_t madeira_diag_render_json(char *buf, size_t cap)
         md_put_json_string(&o, p->error);
         md_put(&o, ",\"hint\":");
         md_put_json_string(&o, p->hint);
+        md_put(&o, "}");
+    }
+    md_put(&o, "],\"notes\":[");
+    for (i = 0; i < md.nnotes; i++) {
+        md_put(&o, "%s{\"key\":", i ? "," : "");
+        md_put_json_string(&o, md.notes[i].key);
+        md_put(&o, ",\"count\":%u,\"line\":", md.notes[i].count);
+        md_put_json_string(&o, md.notes[i].example);
+        md_put(&o, ",\"means\":");
+        md_put_json_string(&o, md.notes[i].text);
         md_put(&o, "}");
     }
     md_put(&o, "]}\n");
